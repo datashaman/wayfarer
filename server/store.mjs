@@ -62,6 +62,49 @@ function publicMessage(row) {
   }
 }
 
+function publicCanonProposal(row, sources = []) {
+  return {
+    id: row.id,
+    campaignId: row.campaign_id,
+    kind: row.kind,
+    title: row.title,
+    claim: row.claim,
+    visibility: row.visibility,
+    confidence: row.confidence,
+    status: row.status,
+    extractorVersion: row.extractor_version,
+    createdAt: row.created_at,
+    createdByName: row.created_by_name ?? null,
+    sources: sources.map((source) => ({
+      messageId: source.message_id,
+      roomId: source.room_id,
+      roomName: source.room_name,
+      senderName: source.sender_name,
+      text: source.text,
+      excerpt: source.excerpt,
+      sentAt: source.sent_at,
+      sequence: source.sequence,
+    })),
+  }
+}
+
+function publicCanonEntry(row) {
+  return {
+    id: row.id,
+    proposalId: row.proposal_id,
+    campaignId: row.campaign_id,
+    kind: row.kind,
+    title: row.title,
+    claim: row.claim,
+    visibility: row.visibility,
+    revision: row.revision,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    createdByName: row.created_by_name ?? null,
+  }
+}
+
 export function createStore(databasePath) {
   if (databasePath !== ':memory:') mkdirSync(dirname(databasePath), { recursive: true })
   const database = new DatabaseSync(databasePath)
@@ -114,6 +157,49 @@ export function createStore(databasePath) {
       last_read_sequence INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL,
       PRIMARY KEY (player_id, room_id)
+    );
+    CREATE TABLE IF NOT EXISTS canon_proposals (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK(kind IN ('fact', 'character', 'relationship', 'promise', 'event', 'question', 'contradiction', 'rule')),
+      title TEXT NOT NULL,
+      claim TEXT NOT NULL,
+      visibility TEXT NOT NULL CHECK(visibility IN ('campaign', 'gm_only')),
+      confidence REAL CHECK(confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+      status TEXT NOT NULL DEFAULT 'proposed' CHECK(status IN ('proposed', 'accepted', 'disputed', 'rejected')),
+      extractor_version TEXT NOT NULL,
+      created_by_player_id TEXT REFERENCES players(id),
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS canon_proposal_sources (
+      proposal_id TEXT NOT NULL REFERENCES canon_proposals(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
+      excerpt TEXT,
+      PRIMARY KEY (proposal_id, message_id)
+    );
+    CREATE TABLE IF NOT EXISTS canon_entries (
+      id TEXT PRIMARY KEY,
+      proposal_id TEXT NOT NULL UNIQUE REFERENCES canon_proposals(id) ON DELETE RESTRICT,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      claim TEXT NOT NULL,
+      visibility TEXT NOT NULL CHECK(visibility IN ('campaign', 'gm_only')),
+      revision INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'superseded')),
+      created_by_player_id TEXT NOT NULL REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS canon_decisions (
+      id TEXT PRIMARY KEY,
+      proposal_id TEXT NOT NULL REFERENCES canon_proposals(id) ON DELETE CASCADE,
+      player_id TEXT NOT NULL REFERENCES players(id),
+      action TEXT NOT NULL CHECK(action IN ('accept', 'edit_accept', 'dispute', 'reject')),
+      reason TEXT,
+      accepted_title TEXT,
+      accepted_claim TEXT,
+      created_at TEXT NOT NULL
     );
   `)
 
@@ -244,6 +330,61 @@ export function createStore(databasePath) {
     WHERE rooms.campaign_id = ? AND instr(lower(messages.text), lower(?)) > 0
     ORDER BY messages.rowid DESC
     LIMIT 50
+  `)
+  const messageForCampaign = database.prepare(`
+    SELECT messages.id, messages.text, messages.sent_at, messages.rowid AS sequence,
+           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+    FROM messages
+    JOIN rooms ON rooms.id = messages.room_id
+    JOIN players ON players.id = messages.player_id
+    WHERE messages.id = ? AND rooms.campaign_id = ?
+  `)
+  const insertCanonProposal = database.prepare(`
+    INSERT INTO canon_proposals (
+      id, campaign_id, kind, title, claim, visibility, confidence, status,
+      extractor_version, created_by_player_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?)
+  `)
+  const insertCanonProposalSource = database.prepare(`
+    INSERT INTO canon_proposal_sources (proposal_id, message_id, excerpt) VALUES (?, ?, ?)
+  `)
+  const canonProposalById = database.prepare(`
+    SELECT canon_proposals.*, players.name AS created_by_name
+    FROM canon_proposals
+    LEFT JOIN players ON players.id = canon_proposals.created_by_player_id
+    WHERE canon_proposals.id = ? AND canon_proposals.campaign_id = ?
+  `)
+  const canonSourcesForProposal = database.prepare(`
+    SELECT canon_proposal_sources.message_id, canon_proposal_sources.excerpt,
+           messages.text, messages.sent_at, messages.rowid AS sequence,
+           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+    FROM canon_proposal_sources
+    JOIN messages ON messages.id = canon_proposal_sources.message_id
+    JOIN rooms ON rooms.id = messages.room_id
+    JOIN players ON players.id = messages.player_id
+    WHERE canon_proposal_sources.proposal_id = ?
+    ORDER BY messages.rowid
+  `)
+  const updateCanonProposalStatus = database.prepare(`
+    UPDATE canon_proposals SET status = ? WHERE id = ? AND campaign_id = ? AND status = 'proposed'
+  `)
+  const insertCanonDecision = database.prepare(`
+    INSERT INTO canon_decisions (
+      id, proposal_id, player_id, action, reason, accepted_title, accepted_claim, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const insertCanonEntry = database.prepare(`
+    INSERT INTO canon_entries (
+      id, proposal_id, campaign_id, kind, title, claim, visibility, revision,
+      status, created_by_player_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, ?, ?)
+  `)
+  const canonEntriesForCampaign = database.prepare(`
+    SELECT canon_entries.*, players.name AS created_by_name
+    FROM canon_entries
+    JOIN players ON players.id = canon_entries.created_by_player_id
+    WHERE canon_entries.campaign_id = ? AND canon_entries.status = 'active'
+    ORDER BY canon_entries.rowid DESC
   `)
 
   function createPlayer(campaignId, name, role = 'member') {
@@ -434,6 +575,57 @@ export function createStore(databasePath) {
       if (!current || current.revision !== expectedRevision) return { conflict: true, note: this.getCampaignNote(campaignId) }
       updateCampaignNote.run(body, current.revision + 1, playerId, new Date().toISOString(), campaignId)
       return { conflict: false, note: this.getCampaignNote(campaignId) }
+    },
+
+    createCanonProposal({ campaignId, playerId = null, kind, title, claim, visibility, confidence = null, extractorVersion, sources }) {
+      if (!Array.isArray(sources) || sources.length === 0) return { outcome: 'sources_required' }
+      const resolvedSources = sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) }))
+      if (resolvedSources.some((source) => !source.row)) return { outcome: 'invalid_source' }
+      const proposalId = randomUUID()
+      const createdAt = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        insertCanonProposal.run(proposalId, campaignId, kind, title, claim, visibility, confidence, extractorVersion, playerId, createdAt)
+        for (const source of resolvedSources) insertCanonProposalSource.run(proposalId, source.messageId, source.excerpt ?? null)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      const row = canonProposalById.get(proposalId, campaignId)
+      return { outcome: 'created', proposal: publicCanonProposal(row, canonSourcesForProposal.all(proposalId)) }
+    },
+
+    getCanonProposal(campaignId, proposalId) {
+      const row = canonProposalById.get(proposalId, campaignId)
+      return row ? publicCanonProposal(row, canonSourcesForProposal.all(proposalId)) : null
+    },
+
+    decideCanonProposal(campaignId, playerId, proposalId, { action, reason = null, title = null, claim = null }) {
+      const proposal = canonProposalById.get(proposalId, campaignId)
+      if (!proposal) return { outcome: 'not_found' }
+      if (proposal.status !== 'proposed') return { outcome: 'already_decided', proposal: this.getCanonProposal(campaignId, proposalId) }
+      const nextStatus = action === 'accept' || action === 'edit_accept' ? 'accepted' : action === 'dispute' ? 'disputed' : 'rejected'
+      const acceptedTitle = action === 'edit_accept' ? title : proposal.title
+      const acceptedClaim = action === 'edit_accept' ? claim : proposal.claim
+      const now = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        if (updateCanonProposalStatus.run(nextStatus, proposalId, campaignId).changes !== 1) throw new Error('canon_proposal_conflict')
+        insertCanonDecision.run(randomUUID(), proposalId, playerId, action, reason, acceptedTitle, acceptedClaim, now)
+        if (nextStatus === 'accepted') {
+          insertCanonEntry.run(randomUUID(), proposalId, campaignId, proposal.kind, acceptedTitle, acceptedClaim, proposal.visibility, playerId, now, now)
+        }
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return { outcome: nextStatus, proposal: this.getCanonProposal(campaignId, proposalId) }
+    },
+
+    listCanonEntries(campaignId) {
+      return canonEntriesForCampaign.all(campaignId).map(publicCanonEntry)
     },
 
     close() {

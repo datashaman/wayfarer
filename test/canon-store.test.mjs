@@ -1,0 +1,89 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { createStore } from '../server/store.mjs'
+
+function seededStore() {
+  const store = createStore(':memory:')
+  const owner = store.createCampaign('The Salt Road', 'Mara')
+  const roomId = owner.campaign.rooms[0].id
+  const first = store.addMessage({ roomId, playerId: owner.player.id, clientMessageId: 'message-1', text: 'The lighthouse keeper is called Ilyra.' }).message
+  const second = store.addMessage({ roomId, playerId: owner.player.id, clientMessageId: 'message-2', text: 'We promised to return before moonrise.' }).message
+  return { store, owner, first, second }
+}
+
+test('canon proposals retain campaign-scoped transcript citations', () => {
+  const { store, owner, first, second } = seededStore()
+  const other = store.createCampaign('The Glass Sea', 'Orin')
+  const otherMessage = store.addMessage({
+    roomId: other.campaign.rooms[0].id,
+    playerId: other.player.id,
+    clientMessageId: 'other-message',
+    text: 'This belongs to another campaign.',
+  }).message
+
+  const created = store.createCanonProposal({
+    campaignId: owner.campaign.id,
+    playerId: owner.player.id,
+    kind: 'promise',
+    title: 'Return before moonrise',
+    claim: 'The party promised to return to Ilyra before moonrise.',
+    visibility: 'gm_only',
+    confidence: 0.84,
+    extractorVersion: 'fixture-v1',
+    sources: [{ messageId: first.id }, { messageId: second.id, excerpt: 'promised to return' }],
+  })
+
+  assert.equal(created.outcome, 'created')
+  assert.equal(created.proposal.status, 'proposed')
+  assert.deepEqual(created.proposal.sources.map((source) => source.messageId), [first.id, second.id])
+  assert.equal(store.createCanonProposal({
+    campaignId: owner.campaign.id,
+    kind: 'fact',
+    title: 'Leaked fact',
+    claim: 'A fact from another table.',
+    visibility: 'campaign',
+    extractorVersion: 'fixture-v1',
+    sources: [{ messageId: otherMessage.id }],
+  }).outcome, 'invalid_source')
+  assert.equal(store.createCanonProposal({
+    campaignId: owner.campaign.id,
+    kind: 'fact',
+    title: 'Unsupported fact',
+    claim: 'No transcript support.',
+    visibility: 'campaign',
+    extractorVersion: 'fixture-v1',
+    sources: [],
+  }).outcome, 'sources_required')
+
+  store.close()
+})
+
+test('canon review is append-only and acceptance creates a human-authored entry', () => {
+  const { store, owner, first } = seededStore()
+  const created = store.createCanonProposal({
+    campaignId: owner.campaign.id,
+    playerId: owner.player.id,
+    kind: 'character',
+    title: 'The lighthouse keeper',
+    claim: 'The lighthouse keeper is called Ilyra.',
+    visibility: 'campaign',
+    confidence: 0.97,
+    extractorVersion: 'fixture-v1',
+    sources: [{ messageId: first.id }],
+  })
+
+  const accepted = store.decideCanonProposal(owner.campaign.id, owner.player.id, created.proposal.id, {
+    action: 'edit_accept',
+    title: 'Ilyra, lighthouse keeper',
+    claim: 'Ilyra keeps the lighthouse on the Salt Road.',
+  })
+  assert.equal(accepted.outcome, 'accepted')
+  assert.equal(store.decideCanonProposal(owner.campaign.id, owner.player.id, created.proposal.id, { action: 'reject' }).outcome, 'already_decided')
+  assert.deepEqual(store.listCanonEntries(owner.campaign.id).map((entry) => ({ title: entry.title, claim: entry.claim, revision: entry.revision })), [{
+    title: 'Ilyra, lighthouse keeper',
+    claim: 'Ilyra keeps the lighthouse on the Salt Road.',
+    revision: 0,
+  }])
+
+  store.close()
+})

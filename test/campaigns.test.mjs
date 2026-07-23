@@ -112,6 +112,60 @@ test('a campaign creator can invite another player to the table', async (t) => {
   assert.notEqual(joined.body.player.token, created.body.player.token)
 })
 
+test('new seats receive a recovery key that is not exposed by session restore', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-seat-key-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+
+  t.after(async () => {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, {
+    method: 'POST',
+    body: JSON.stringify({ playerName: 'Theo' }),
+  })
+  const restored = await json(`${origin}/api/session`, {
+    headers: { authorization: `Bearer ${joined.body.player.token}` },
+  })
+
+  assert.match(created.body.recoveryCode, /^(?:[A-F0-9]{4}-){5}[A-F0-9]{4}$/)
+  assert.match(joined.body.recoveryCode, /^(?:[A-F0-9]{4}-){5}[A-F0-9]{4}$/)
+  assert.notEqual(created.body.recoveryCode, joined.body.recoveryCode)
+  assert.equal(restored.status, 200)
+  assert.equal(restored.body.recoveryCode, undefined)
+})
+
+test('active seat names are unique within a campaign', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-seat-name-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+
+  t.after(async () => {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const duplicate = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, {
+    method: 'POST',
+    body: JSON.stringify({ playerName: '  mara  ' }),
+  })
+
+  assert.equal(duplicate.status, 409)
+  assert.equal(duplicate.body.error, 'That name already has a seat in this campaign.')
+})
+
 test('only the campaign owner can open campaign management', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-owner-'))
   const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })

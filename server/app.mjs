@@ -228,6 +228,10 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 404, { error: 'This invitation is no longer available.' })
           return
         }
+        if (joined.duplicate) {
+          sendJson(response, 409, { error: 'That name already has a seat in this campaign.' })
+          return
+        }
         sendJson(response, 201, joined)
         return
       }

@@ -14,6 +14,14 @@ function tokenHash(token) {
   return createHash('sha256').update(token).digest('hex')
 }
 
+function createRecoveryCode() {
+  return randomBytes(12).toString('hex').toUpperCase().match(/.{4}/g).join('-')
+}
+
+function recoveryHash(code) {
+  return tokenHash(code.replace(/-/g, ''))
+}
+
 function roomSlug(name) {
   return name.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'room'
 }
@@ -54,6 +62,7 @@ export function createStore(databasePath) {
       name TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('owner', 'member')),
       token_hash TEXT NOT NULL UNIQUE,
+      recovery_key_hash TEXT,
       removed_at TEXT,
       created_at TEXT NOT NULL
     );
@@ -83,6 +92,7 @@ export function createStore(databasePath) {
     database.exec("UPDATE players SET role = 'owner' WHERE rowid IN (SELECT MIN(rowid) FROM players GROUP BY campaign_id)")
   }
   if (!playerColumns.some((column) => column.name === 'removed_at')) database.exec('ALTER TABLE players ADD COLUMN removed_at TEXT')
+  if (!playerColumns.some((column) => column.name === 'recovery_key_hash')) database.exec('ALTER TABLE players ADD COLUMN recovery_key_hash TEXT')
   const roomColumns = database.prepare('PRAGMA table_info(rooms)').all()
   if (!roomColumns.some((column) => column.name === 'position')) {
     database.exec('ALTER TABLE rooms ADD COLUMN position INTEGER NOT NULL DEFAULT 0')
@@ -102,8 +112,9 @@ export function createStore(databasePath) {
   const insertCampaign = database.prepare('INSERT INTO campaigns (id, name, invite_code, created_at) VALUES (?, ?, ?, ?)')
   const updateInvitation = database.prepare('UPDATE campaigns SET invite_code = ? WHERE id = ?')
   const insertRoom = database.prepare('INSERT INTO rooms (id, campaign_id, slug, name, description, position) VALUES (?, ?, ?, ?, ?, ?)')
-  const insertPlayer = database.prepare('INSERT INTO players (id, campaign_id, name, role, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+  const insertPlayer = database.prepare('INSERT INTO players (id, campaign_id, name, role, token_hash, recovery_key_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
   const playersByCampaign = database.prepare('SELECT * FROM players WHERE campaign_id = ? AND removed_at IS NULL ORDER BY rowid')
+  const activePlayerByName = database.prepare('SELECT * FROM players WHERE campaign_id = ? AND name = ? COLLATE NOCASE AND removed_at IS NULL')
   const playerForCampaign = database.prepare('SELECT * FROM players WHERE id = ? AND campaign_id = ? AND removed_at IS NULL')
   const removePlayer = database.prepare('UPDATE players SET removed_at = ? WHERE id = ?')
   const playerByToken = database.prepare(`
@@ -133,8 +144,9 @@ export function createStore(databasePath) {
 
   function createPlayer(campaignId, name, role = 'member') {
     const token = randomBytes(32).toString('base64url')
-    const player = { id: randomUUID(), campaignId, name, role, token }
-    insertPlayer.run(player.id, campaignId, name, role, tokenHash(token), new Date().toISOString())
+    const recoveryCode = createRecoveryCode()
+    const player = { id: randomUUID(), campaignId, name, role, token, recoveryCode }
+    insertPlayer.run(player.id, campaignId, name, role, tokenHash(token), recoveryHash(recoveryCode), new Date().toISOString())
     return player
   }
 
@@ -145,9 +157,9 @@ export function createStore(databasePath) {
       try {
         insertCampaign.run(campaign.id, campaign.name, campaign.inviteCode, new Date().toISOString())
         defaultRooms.forEach(([slug, name, description], position) => insertRoom.run(randomUUID(), campaign.id, slug, name, description, position))
-        const player = createPlayer(campaign.id, playerName, 'owner')
+        const { recoveryCode, ...player } = createPlayer(campaign.id, playerName, 'owner')
         database.exec('COMMIT')
-        return { campaign: publicCampaign(campaignById.get(campaign.id), roomsByCampaign.all(campaign.id)), player }
+        return { campaign: publicCampaign(campaignById.get(campaign.id), roomsByCampaign.all(campaign.id)), player, recoveryCode }
       } catch (error) {
         database.exec('ROLLBACK')
         throw error
@@ -157,8 +169,9 @@ export function createStore(databasePath) {
     joinCampaign(inviteCode, playerName) {
       const row = campaignByInvite.get(inviteCode)
       if (!row) return null
-      const player = createPlayer(row.id, playerName)
-      return { campaign: publicCampaign(row, roomsByCampaign.all(row.id)), player }
+      if (activePlayerByName.get(row.id, playerName)) return { duplicate: true }
+      const { recoveryCode, ...player } = createPlayer(row.id, playerName)
+      return { campaign: publicCampaign(row, roomsByCampaign.all(row.id)), player, recoveryCode }
     },
 
     getSession(token) {

@@ -411,14 +411,14 @@ function CanonLedgerSheet({ session, onClose, onOpenSource }: { session: TableSe
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [onClose])
 
-  const decide = async (proposal: CanonProposal, action: 'accept' | 'edit_accept' | 'dispute' | 'reject') => {
+  const decide = async (proposal: CanonProposal, action: 'accept' | 'edit_accept' | 'dispute' | 'reject', reason?: 'incorrect' | 'secret_leak' | 'not_useful') => {
     setPending(proposal.id)
     setError('')
     try {
       const result = await api<{ proposal: CanonProposal; entries: CanonLedger['entries'] }>(`/api/campaign/canon/proposals/${proposal.id}/decisions`, {
         method: 'POST',
         headers: authorization,
-        body: JSON.stringify({ action, ...(action === 'edit_accept' ? { title: editTitle, claim: editClaim } : {}) }),
+        body: JSON.stringify({ action, reason, ...(action === 'edit_accept' ? { title: editTitle, claim: editClaim } : {}) }),
       })
       setLedger((current) => current ? {
         proposals: current.proposals.map((item) => item.id === proposal.id ? result.proposal : item),
@@ -477,7 +477,7 @@ function CanonLedgerSheet({ session, onClose, onOpenSource }: { session: TableSe
                     ) : <><h4>{proposal.title}</h4><p>{proposal.claim}</p></>}
                     <div className="canon-citations" aria-label="Transcript citations">{proposal.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span><q>{source.excerpt ?? source.text}</q></button>)}</div>
                     <div className="canon-actions">
-                      {editing?.id === proposal.id ? <><button className="primary-action" disabled={!editTitle.trim() || !editClaim.trim() || pending === proposal.id} onClick={() => void decide(proposal, 'edit_accept')}>{pending === proposal.id ? 'Recording…' : 'Accept edit'}</button><button className="folio-button" onClick={() => setEditing(null)}>Cancel</button></> : <><button className="primary-action" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'accept')}>Accept</button><button className="folio-button" onClick={() => beginEditing(proposal)}>Edit first</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'dispute')}>Dispute</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'reject')}>Discard</button></>}
+                      {editing?.id === proposal.id ? <><button className="primary-action" disabled={!editTitle.trim() || !editClaim.trim() || pending === proposal.id} onClick={() => void decide(proposal, 'edit_accept')}>{pending === proposal.id ? 'Recording…' : 'Accept edit'}</button><button className="folio-button" onClick={() => setEditing(null)}>Cancel</button></> : <><button className="primary-action" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'accept')}>Accept</button><button className="folio-button" onClick={() => beginEditing(proposal)}>Edit first</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'dispute', 'incorrect')}>Incorrect</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'reject', 'secret_leak')}>Secret leak</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'reject', 'not_useful')}>Not useful</button></>}
                     </div>
                   </article>
                 ))}

@@ -10,6 +10,7 @@
     "start": "node server.mjs",
     "test": "node --test",
     "test:e2e": "playwright test",
+    "eval:canon": "node --env-file-if-exists=.env.local scripts/eval-canon.mjs",
     "lint": "eslint ."
   },
   "dependencies": {

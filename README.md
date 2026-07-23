@@ -37,6 +37,8 @@ npm run test:e2e
 
 To enable owner-triggered Living Canon suggestions, copy `.env.example` to `.env.local` and set `OPENAI_API_KEY`. The server sends at most the latest 100 campaign messages to the configured model when the owner explicitly chooses **Find passages**. Suggestions start GM-only, cite their transcript sources, and cannot become canon until the owner accepts or edits them. Responses are requested with API storage disabled. `OPENAI_CANON_MODEL` defaults to `gpt-5.6-luna` and can be overridden.
 
+Run `npm run eval:canon` with a configured key to check the live extractor against promises, banter, corrections, transcript prompt injection, citation integrity, and GM-only visibility. Deterministic safety checks remain part of `npm test`; the live evaluation is separate because it calls the configured model.
+
 `npm run test:e2e` starts isolated in-memory room and web servers, then verifies invitation, offline unread catch-up, paginated history, search, shared-note, and two-browser WebRTC voice flows with Playwright. Voice tests use synthetic Web Audio microphone streams and exercise real media tracks and peer negotiation without recording host audio.
 
 Campaign data is stored in `data/wayfarer.sqlite` by default. Set `DATABASE_PATH` when you need an isolated database, such as `DATABASE_PATH=/tmp/wayfarer.sqlite npm start`.

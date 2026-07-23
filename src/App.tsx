@@ -1,6 +1,9 @@
 import {
+  Archive,
   BookOpen,
   Check,
+  ChevronDown,
+  ChevronUp,
   Copy,
   Hash,
   Headphones,
@@ -11,6 +14,8 @@ import {
   Radio,
   RefreshCw,
   Send,
+  Settings,
+  UserMinus,
   Users,
   X,
 } from 'lucide-react'
@@ -19,6 +24,8 @@ import { RealtimeClient } from './lib/realtime'
 import {
   createEvent,
   type ConnectionState,
+  type Campaign,
+  type CampaignManagement,
   type CampaignRoom,
   type Participant,
   type RoomMessage,
@@ -77,7 +84,7 @@ function Avatar({ participant, size = 'regular' }: { participant: Participant; s
   )
 }
 
-function EntryGate({ inviteCode, onEnter }: { inviteCode: string | null; onEnter: (session: TableSession) => void }) {
+function EntryGate({ inviteCode, notice, onEnter }: { inviteCode: string | null; notice?: string; onEnter: (session: TableSession) => void }) {
   const [playerName, setPlayerName] = useState('')
   const [campaignName, setCampaignName] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -109,6 +116,7 @@ function EntryGate({ inviteCode, onEnter }: { inviteCode: string | null; onEnter
         <span className="campaign-kicker">Wayfarer's Table</span>
         <h1>{inviteCode ? 'Join the campaign' : 'Open a new campaign'}</h1>
         <p>{inviteCode ? 'Choose the name the party will see at the table.' : 'Name the campaign and take the first seat.'}</p>
+        {notice && <div className="entry-notice" role="status">{notice}</div>}
         <form onSubmit={submit}>
           {!inviteCode && (
             <>
@@ -306,9 +314,166 @@ function VoiceTable({
   )
 }
 
+function CampaignFolio({
+  session,
+  onClose,
+  onCampaign,
+  onCopyInvite,
+}: {
+  session: TableSession
+  onClose: () => void
+  onCampaign: (campaign: Campaign) => void
+  onCopyInvite: () => void
+}) {
+  const [management, setManagement] = useState<CampaignManagement | null>(null)
+  const [error, setError] = useState('')
+  const [pending, setPending] = useState('')
+  const [addingRoom, setAddingRoom] = useState(false)
+  const [newRoomName, setNewRoomName] = useState('')
+  const [newRoomDescription, setNewRoomDescription] = useState('')
+  const [editingRoom, setEditingRoom] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [confirming, setConfirming] = useState('')
+  const token = session.player.token
+  const authorization = { authorization: `Bearer ${token}` }
+
+  useEffect(() => {
+    void api<CampaignManagement>('/api/campaign/manage', { headers: { authorization: `Bearer ${token}` } })
+      .then(setManagement)
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'Unable to open the campaign folio.'))
+  }, [token])
+
+  const run = async (key: string, action: () => Promise<void>) => {
+    setError('')
+    setPending(key)
+    try {
+      await action()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The campaign could not be updated.')
+    } finally {
+      setPending('')
+    }
+  }
+
+  const createRoom = (event: FormEvent) => {
+    event.preventDefault()
+    if (!newRoomName.trim()) return
+    void run('create-room', async () => {
+      const result = await api<{ campaign: Campaign }>('/api/campaign/rooms', {
+        method: 'POST', headers: authorization, body: JSON.stringify({ name: newRoomName, description: newRoomDescription }),
+      })
+      onCampaign(result.campaign)
+      setNewRoomName('')
+      setNewRoomDescription('')
+      setAddingRoom(false)
+    })
+  }
+
+  const beginEdit = (room: CampaignRoom) => {
+    setEditingRoom(room.id)
+    setEditName(room.name)
+    setEditDescription(room.description)
+    setConfirming('')
+  }
+
+  const saveRoom = (event: FormEvent, roomId: string) => {
+    event.preventDefault()
+    if (!editName.trim()) return
+    void run(`edit-${roomId}`, async () => {
+      const result = await api<{ campaign: Campaign }>(`/api/campaign/rooms/${roomId}`, {
+        method: 'PATCH', headers: authorization, body: JSON.stringify({ name: editName, description: editDescription }),
+      })
+      onCampaign(result.campaign)
+      setEditingRoom(null)
+    })
+  }
+
+  const moveRoom = (index: number, offset: number) => {
+    const roomIds = session.campaign.rooms.map((room) => room.id)
+    const destination = index + offset
+    if (destination < 0 || destination >= roomIds.length) return
+    ;[roomIds[index], roomIds[destination]] = [roomIds[destination], roomIds[index]]
+    void run('reorder', async () => {
+      const result = await api<{ campaign: Campaign }>('/api/campaign/rooms/reorder', {
+        method: 'POST', headers: authorization, body: JSON.stringify({ roomIds }),
+      })
+      onCampaign(result.campaign)
+    })
+  }
+
+  const archiveRoom = (room: CampaignRoom) => {
+    const key = `archive-${room.id}`
+    if (confirming !== key) { setConfirming(key); return }
+    void run(key, async () => {
+      const result = await api<{ campaign: Campaign }>(`/api/campaign/rooms/${room.id}`, { method: 'DELETE', headers: authorization })
+      onCampaign(result.campaign)
+      setConfirming('')
+    })
+  }
+
+  const rotateInvitation = () => {
+    if (confirming !== 'invitation') { setConfirming('invitation'); return }
+    void run('invitation', async () => {
+      const result = await api<{ campaign: Campaign }>('/api/campaign/invitation', { method: 'POST', headers: authorization })
+      onCampaign(result.campaign)
+      setConfirming('')
+    })
+  }
+
+  const removePlayer = (playerId: string) => {
+    const key = `remove-${playerId}`
+    if (confirming !== key) { setConfirming(key); return }
+    void run(key, async () => {
+      const result = await api<CampaignManagement>(`/api/campaign/players/${playerId}`, { method: 'DELETE', headers: authorization })
+      setManagement(result)
+      setConfirming('')
+    })
+  }
+
+  return (
+    <div className="campaign-folio-layer" role="dialog" aria-modal="true" aria-label="Campaign folio">
+      <button className="drawer-scrim" onClick={onClose} aria-label="Close campaign folio" />
+      <aside className="campaign-folio">
+        <div className="drawer-heading"><span>Campaign folio</span><button className="icon-button" onClick={onClose} aria-label="Close campaign folio"><X size={18} /></button></div>
+        <div className="folio-scroll">
+          {error && <div className="folio-error" role="alert">{error}</div>}
+
+          <section className="folio-section" aria-labelledby="invitation-heading">
+            <div className="folio-section-heading"><div><span className="eyebrow">Invitation</span><h2 id="invitation-heading">Bring players to the table</h2></div></div>
+            <p>Replacing the invitation immediately closes the previous link.</p>
+            <div className="folio-actions">
+              <button className="folio-button" onClick={onCopyInvite}><Copy size={15} /> Copy invitation</button>
+              <button className={`folio-button ${confirming === 'invitation' ? 'folio-button--danger' : ''}`} onClick={rotateInvitation} disabled={pending === 'invitation'}><RefreshCw size={15} />{pending === 'invitation' ? 'Replacing…' : confirming === 'invitation' ? 'Confirm replacement' : 'Replace invitation'}</button>
+            </div>
+          </section>
+
+          <section className="folio-section" aria-labelledby="folio-rooms-heading">
+            <div className="folio-section-heading"><div><span className="eyebrow">Campaign ledger</span><h2 id="folio-rooms-heading">Rooms</h2></div><button className="folio-small-action" onClick={() => { setAddingRoom((current) => !current); setEditingRoom(null); setConfirming('') }}>{addingRoom ? 'Cancel' : 'Add room'}</button></div>
+            {addingRoom && <form className="folio-form" onSubmit={createRoom}><label htmlFor="new-room-name">Room name</label><input id="new-room-name" value={newRoomName} onChange={(event) => setNewRoomName(event.target.value)} maxLength={40} autoFocus /><label htmlFor="new-room-description">Purpose</label><input id="new-room-description" value={newRoomDescription} onChange={(event) => setNewRoomDescription(event.target.value)} maxLength={120} /><button className="primary-action" type="submit" disabled={!newRoomName.trim() || pending === 'create-room'}>{pending === 'create-room' ? 'Adding…' : 'Add to ledger'}</button></form>}
+            <div className="folio-room-list">
+              {session.campaign.rooms.map((room, index) => editingRoom === room.id ? (
+                <form className="folio-form folio-room-edit" onSubmit={(event) => saveRoom(event, room.id)} key={room.id}><label htmlFor={`room-name-${room.id}`}>Room name</label><input id={`room-name-${room.id}`} value={editName} onChange={(event) => setEditName(event.target.value)} maxLength={40} autoFocus /><label htmlFor={`room-description-${room.id}`}>Purpose</label><input id={`room-description-${room.id}`} value={editDescription} onChange={(event) => setEditDescription(event.target.value)} maxLength={120} /><div className="folio-actions"><button className="primary-action" type="submit" disabled={!editName.trim() || pending === `edit-${room.id}`}>Save room</button><button className="folio-button" type="button" onClick={() => setEditingRoom(null)}>Cancel</button></div></form>
+              ) : (
+                <div className="folio-room" key={room.id}><div className="folio-room-copy"><strong><Hash size={13} />{room.name}</strong><span>{room.description || 'No purpose recorded'}</span></div><div className="folio-row-actions"><button onClick={() => moveRoom(index, -1)} disabled={index === 0 || pending === 'reorder'} aria-label={`Move ${room.name} up`}><ChevronUp size={15} /></button><button onClick={() => moveRoom(index, 1)} disabled={index === session.campaign.rooms.length - 1 || pending === 'reorder'} aria-label={`Move ${room.name} down`}><ChevronDown size={15} /></button><button onClick={() => beginEdit(room)} aria-label={`Edit ${room.name}`}><Settings size={15} /></button><button className={confirming === `archive-${room.id}` ? 'danger-action' : ''} onClick={() => archiveRoom(room)} disabled={session.campaign.rooms.length === 1 || pending === `archive-${room.id}`} aria-label={confirming === `archive-${room.id}` ? `Confirm archive ${room.name}` : `Archive ${room.name}`}><Archive size={15} /></button></div></div>
+              ))}
+            </div>
+          </section>
+
+          <section className="folio-section" aria-labelledby="folio-party-heading">
+            <div className="folio-section-heading"><div><span className="eyebrow">Seats</span><h2 id="folio-party-heading">Party</h2></div></div>
+            {!management ? <span className="folio-loading">Reading the ledger…</span> : <div className="folio-player-list">{management.players.map((player) => <div className="folio-player" key={player.id}><Avatar participant={{ playerId: player.id, name: player.name, muted: false }} size="small" /><span><strong>{player.name}</strong><small>{player.role === 'owner' ? 'Campaign owner' : 'Player'}</small></span>{player.role !== 'owner' && <button className={confirming === `remove-${player.id}` ? 'danger-action' : ''} onClick={() => removePlayer(player.id)} disabled={pending === `remove-${player.id}`} aria-label={confirming === `remove-${player.id}` ? `Confirm remove ${player.name}` : `Remove ${player.name}`}><UserMinus size={15} /></button>}</div>)}</div>}
+          </section>
+        </div>
+      </aside>
+    </div>
+  )
+}
+
 function App() {
   const inviteCode = new URLSearchParams(location.search).get('campaign')
   const [session, setSession] = useState<TableSession | null>(null)
+  const [entryNotice, setEntryNotice] = useState('')
   const [restoringSession, setRestoringSession] = useState(() => Boolean(localStorage.getItem('wayfarer-token')))
   const [activeRoom, setActiveRoom] = useState('')
   const activeRoomRef = useRef(activeRoom)
@@ -326,6 +491,7 @@ function App() {
   const [voiceError, setVoiceError] = useState('')
   const [mobileLedger, setMobileLedger] = useState(false)
   const [mobileTable, setMobileTable] = useState(false)
+  const [campaignFolio, setCampaignFolio] = useState(false)
   const [inviteCopyState, setInviteCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const clientRef = useRef<RealtimeClient | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -336,6 +502,7 @@ function App() {
   const recoveryAttemptsRef = useRef(new Map<string, number>())
   const recoveryTimersRef = useRef(new Map<string, number>())
   const timelineRef = useRef<HTMLDivElement>(null)
+  const realtimePlayer = session?.player
   const rooms = session?.campaign.rooms ?? []
   const playerId = session?.player.id ?? ''
   const displayName = session?.player.name ?? ''
@@ -343,14 +510,14 @@ function App() {
   const activeRoomData = rooms.find((room) => room.id === activeRoom) ?? rooms[0]
 
   useEffect(() => {
-    if (!session) return
-    void api<RuntimeConfig>('/api/config', { headers: { authorization: `Bearer ${session.player.token}` } })
+    if (!realtimePlayer) return
+    void api<RuntimeConfig>('/api/config', { headers: { authorization: `Bearer ${realtimePlayer.token}` } })
       .then((config) => {
         iceServersRef.current = config.iceServers
         setVoiceConfigReady(true)
       })
       .catch(() => setVoiceError('Voice configuration could not be loaded. Reload the table to try again.'))
-  }, [session])
+  }, [realtimePlayer])
 
   useEffect(() => {
     const token = localStorage.getItem('wayfarer-token')
@@ -371,8 +538,8 @@ function App() {
   useEffect(() => { timelineRef.current?.scrollTo({ top: timelineRef.current.scrollHeight, behavior: 'smooth' }) }, [messages])
 
   useEffect(() => {
-    if (!session || !activeRoomRef.current) return
-    const client = new RealtimeClient(websocketUrl(session.player.token))
+    if (!realtimePlayer || !activeRoomRef.current) return
+    const client = new RealtimeClient(websocketUrl(realtimePlayer.token))
     clientRef.current = client
     const peerMap = peersRef.current
 
@@ -411,7 +578,7 @@ function App() {
       const existingTimer = recoveryTimersRef.current.get(peerId)
       if (existingTimer !== undefined) window.clearTimeout(existingTimer)
 
-      const isRecoveryLeader = session.player.id.localeCompare(peerId) < 0
+      const isRecoveryLeader = realtimePlayer.id.localeCompare(peerId) < 0
       const recoveryDelay = isRecoveryLeader ? delay : Math.max(delay, 12_000)
       const timer = window.setTimeout(async () => {
         recoveryTimersRef.current.delete(peerId)
@@ -486,6 +653,36 @@ function App() {
     }
 
     const handleEvent = async (event: ServerEvent) => {
+      if (event.type === 'session.revoked') {
+        localStorage.removeItem('wayfarer-token')
+        client.close()
+        setEntryNotice('Your seat was removed from this campaign.')
+        setSession(null)
+        setActiveRoom('')
+        activeRoomRef.current = ''
+        return
+      }
+      if (event.type === 'campaign.updated') {
+        const campaign = event.payload.campaign
+        setSession((current) => current ? { ...current, campaign } : current)
+        const url = new URL(location.href)
+        url.searchParams.set('campaign', campaign.inviteCode)
+        history.replaceState({}, '', url)
+        if (!campaign.rooms.some((room) => room.id === activeRoomRef.current)) {
+          const roomId = campaign.rooms[0]?.id ?? ''
+          activeRoomRef.current = roomId
+          setActiveRoom(roomId)
+          setMessages([])
+          setParticipants([])
+          setVoiceParticipants([])
+          setPeerConnectionStates({})
+          streamRef.current?.getTracks().forEach((track) => track.stop())
+          streamRef.current = null
+          setJoinedVoice(false)
+          if (roomId) client.send(createEvent('room.subscribe', roomId, {}))
+        }
+        return
+      }
       if (event.roomId !== activeRoomRef.current) return
       if (event.type === 'room.snapshot') {
         setMessages(event.payload.messages)
@@ -496,7 +693,7 @@ function App() {
       } else if (event.type === 'chat.message') {
         setMessages((current) => current.some((message) => message.id === event.payload.id) ? current : [...current, event.payload])
       } else if (event.type === 'voice.roster') {
-        setVoiceParticipants([...event.payload.participants, { playerId: session.player.id, name: session.player.name, muted: false }])
+        setVoiceParticipants([...event.payload.participants, { playerId: realtimePlayer.id, name: realtimePlayer.name, muted: false }])
         for (const participant of event.payload.participants) {
           const peer = createPeer(participant.playerId)
           const offer = await peer.createOffer()
@@ -549,7 +746,7 @@ function App() {
       streamRef.current?.getTracks().forEach((track) => track.stop())
       streamRef.current = null
     }
-  }, [session])
+  }, [realtimePlayer])
 
   useEffect(() => {
     streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = !muted })
@@ -573,8 +770,16 @@ function App() {
     activeRoomRef.current = roomId
     setActiveRoom(roomId)
     setSession(entered)
+    setEntryNotice('')
     const url = new URL(location.href)
     url.searchParams.set('campaign', entered.campaign.inviteCode)
+    history.replaceState({}, '', url)
+  }
+
+  const updateCampaign = (campaign: Campaign) => {
+    setSession((current) => current ? { ...current, campaign } : current)
+    const url = new URL(location.href)
+    url.searchParams.set('campaign', campaign.inviteCode)
     history.replaceState({}, '', url)
   }
 
@@ -679,7 +884,7 @@ function App() {
   }
 
   if (restoringSession) return <main className="entry-gate"><span className="entry-wait">Returning to the table…</span></main>
-  if (!session) return <EntryGate inviteCode={inviteCode} onEnter={enterTable} />
+  if (!session) return <EntryGate inviteCode={inviteCode} notice={entryNotice} onEnter={enterTable} />
   if (!activeRoomData) return null
 
   return (
@@ -693,6 +898,7 @@ function App() {
         <div className="campaign-actions">
           {connection !== 'live' && <span className="connection-state"><i />{connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span>}
           <button className="text-button invite-button" onClick={copyInvite}>{inviteCopyState === 'copied' ? <Check size={15} /> : <Copy size={15} />}{inviteCopyState === 'copied' ? 'Copied' : inviteCopyState === 'failed' ? 'Copy failed' : 'Invite players'}</button>
+          {session.player.role === 'owner' && <button className="icon-button" onClick={() => setCampaignFolio(true)} aria-label="Open campaign folio"><Settings size={18} /></button>}
           <button className="icon-button mobile-only" onClick={() => setMobileTable(true)} aria-label="Open voice table"><Users size={19} /></button>
         </div>
       </header>
@@ -729,6 +935,8 @@ function App() {
           <div className="mobile-table-drawer"><div className="drawer-heading"><span>Voice table</span><button className="icon-button" onClick={() => setMobileTable(false)} aria-label="Close voice table"><X size={18} /></button></div><VoiceTable joined={joinedVoice} joining={joiningVoice} muted={muted} pushToTalk={pushToTalk} participants={voiceParticipants} peerConnectionStates={peerConnectionStates} currentPlayerId={playerId} configReady={voiceConfigReady} error={voiceError} onJoin={joinVoice} onRetry={retryVoice} onToggleMute={() => setMuted((current) => !current)} onTogglePushToTalk={togglePushToTalk} onLeave={leaveVoice} /></div>
         </div>
       )}
+
+      {campaignFolio && <CampaignFolio session={session} onClose={() => setCampaignFolio(false)} onCampaign={updateCampaign} onCopyInvite={copyInvite} />}
 
       <div className="voice-dock mobile-only">
         {!joinedVoice ? <button className="primary-action" onClick={joinVoice} disabled={joiningVoice || connection !== 'live' || !voiceConfigReady}><Headphones size={17} />{joiningVoice ? 'Joining…' : voiceConfigReady ? 'Join voice' : 'Preparing voice…'}</button> : <><button className={`dock-mic ${muted ? 'dock-mic--muted' : ''}`} onClick={() => setMuted((current) => !current)} aria-label={muted ? 'Unmute' : 'Mute'}>{muted ? <MicOff size={18} /> : <Mic size={18} />}</button><span>{Object.values(peerConnectionStates).includes('failed') ? 'Voice issue' : Object.values(peerConnectionStates).includes('recovering') ? 'Reconnecting voice…' : muted ? 'Muted' : `${voiceParticipants.length} in voice`}</span><button className="quiet-icon" onClick={() => setMobileTable(true)} aria-label="Voice settings"><PanelRight size={17} /></button></>}

@@ -3,7 +3,7 @@ import type { ClientEvent, ConnectionState, ServerEvent } from '../types/protoco
 type EventHandler = (event: ServerEvent) => void
 type StateHandler = (state: ConnectionState) => void
 
-/** Thin RFC 6455 client. Authentication is supplied by the browser's secure cookie. */
+/** Thin RFC 6455 client. The caller supplies an authenticated WebSocket URL. */
 export class RealtimeClient {
   private socket?: WebSocket
   private eventHandlers = new Set<EventHandler>()

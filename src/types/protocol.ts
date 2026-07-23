@@ -36,6 +36,12 @@ export type PlayerSession = {
   token: string
 }
 
+export type CampaignMember = Omit<PlayerSession, 'token'>
+
+export type CampaignManagement = {
+  players: CampaignMember[]
+}
+
 export type TableSession = {
   campaign: Campaign
   player: PlayerSession

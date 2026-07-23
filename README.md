@@ -21,6 +21,7 @@ npm run build
 - Responsive campaign, room, player, transcript, and voice-table interface
 - Name entry, live room membership, and room switching
 - Campaign creation, invitation links, and stable campaign-scoped player sessions
+- Owner-only campaign folio for invitation replacement, player removal, and room management
 - SQLite-backed rooms and transcripts that survive server restarts
 - WebSocket text chat between connected players
 - WebRTC peer-to-peer voice with mute, leave, and push-to-talk controls

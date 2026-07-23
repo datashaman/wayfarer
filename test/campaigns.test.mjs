@@ -427,6 +427,39 @@ test('room changes reach every connected campaign member', async (t) => {
   assert.deepEqual(memberEvent.payload.campaign, ownerEvent.payload.campaign)
 })
 
+test('campaign members cannot perform owner mutations', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-member-auth-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+
+  t.after(async () => {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, {
+    method: 'POST',
+    body: JSON.stringify({ playerName: 'Theo' }),
+  })
+  const authorization = { authorization: `Bearer ${joined.body.player.token}` }
+  const room = created.body.campaign.rooms[0]
+  const attempts = await Promise.all([
+    json(`${origin}/api/campaign/invitation`, { method: 'POST', headers: authorization }),
+    json(`${origin}/api/campaign/players/${created.body.player.id}`, { method: 'DELETE', headers: authorization }),
+    json(`${origin}/api/campaign/rooms`, { method: 'POST', headers: authorization, body: JSON.stringify({ name: 'Hidden Room' }) }),
+    json(`${origin}/api/campaign/rooms/${room.id}`, { method: 'PATCH', headers: authorization, body: JSON.stringify({ name: 'Renamed Room' }) }),
+    json(`${origin}/api/campaign/rooms/reorder`, { method: 'POST', headers: authorization, body: JSON.stringify({ roomIds: created.body.campaign.rooms.map(({ id }) => id) }) }),
+    json(`${origin}/api/campaign/rooms/${room.id}`, { method: 'DELETE', headers: authorization }),
+  ])
+
+  assert.deepEqual(attempts.map(({ status }) => status), [403, 403, 403, 403, 403, 403])
+})
+
 test('authenticated campaign members exchange room messages', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-chat-'))
   const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })

@@ -77,6 +77,10 @@ The invitation action belongs beside the campaign identity and copies a campaign
 
 New tables begin with a campaign name and player name. Invitation links reduce entry to the player name only. Keep this as a focused, single-card gateway with inline errors and one primary action; never prefill fictional campaigns or players.
 
+### Campaign folio
+
+Owner-only campaign administration opens as a right-side folio so play remains the dominant surface. Group invitation, room-ledger, and party-seat controls into bordered sections. Use inline edit and two-step destructive confirmation; avoid detached settings pages and modal alert dialogs. At 480px and below the folio fills the viewport and action groups stack.
+
 ### Campaign ledger
 
 Left rail containing rooms, online party members, characters, and the local profile. Active rooms use a soot surface, subtle border, and wax hash icon. Unread state uses a compact wax counter.

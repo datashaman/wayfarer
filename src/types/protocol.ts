@@ -32,6 +32,7 @@ export type PlayerSession = {
   id: Id
   campaignId: Id
   name: string
+  role: 'owner' | 'member'
   token: string
 }
 

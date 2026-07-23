@@ -112,6 +112,44 @@ test('a campaign creator can invite another player to the table', async (t) => {
   assert.notEqual(joined.body.player.token, created.body.player.token)
 })
 
+test('only the campaign owner can open campaign management', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-owner-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+
+  t.after(async () => {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, {
+    method: 'POST',
+    body: JSON.stringify({ playerName: 'Theo' }),
+  })
+
+  assert.equal(created.body.player.role, 'owner')
+  assert.equal(joined.body.player.role, 'member')
+
+  const ownerView = await json(`${origin}/api/campaign/manage`, {
+    headers: { authorization: `Bearer ${created.body.player.token}` },
+  })
+  const memberView = await json(`${origin}/api/campaign/manage`, {
+    headers: { authorization: `Bearer ${joined.body.player.token}` },
+  })
+
+  assert.equal(ownerView.status, 200)
+  assert.deepEqual(ownerView.body.players.map(({ name, role }) => ({ name, role })), [
+    { name: 'Mara', role: 'owner' },
+    { name: 'Theo', role: 'member' },
+  ])
+  assert.equal(memberView.status, 403)
+})
+
 test('authenticated campaign members exchange room messages', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-chat-'))
   const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })

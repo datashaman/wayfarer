@@ -49,10 +49,24 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
     }
 
     try {
+      const token = request.headers.authorization?.replace(/^Bearer\s+/i, '') ?? ''
+      const requestSession = token ? store.getSession(token) : null
+
       if (request.method === 'GET' && request.url === '/api/config') {
-        const token = request.headers.authorization?.replace(/^Bearer\s+/i, '') ?? ''
-        const session = token ? store.getSession(token) : null
-        sendJson(response, session ? 200 : 401, session ? { iceServers } : { error: 'Session not found.' })
+        sendJson(response, requestSession ? 200 : 401, requestSession ? { iceServers } : { error: 'Session not found.' })
+        return
+      }
+
+      if (request.method === 'GET' && request.url === '/api/campaign/manage') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'Only the campaign owner can manage this table.' })
+          return
+        }
+        sendJson(response, 200, store.getCampaignManagement(requestSession.campaign.id))
         return
       }
 
@@ -86,9 +100,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
       }
 
       if (request.method === 'GET' && request.url === '/api/session') {
-        const token = request.headers.authorization?.replace(/^Bearer\s+/i, '') ?? ''
-        const session = token ? store.getSession(token) : null
-        sendJson(response, session ? 200 : 401, session ?? { error: 'Session not found.' })
+        sendJson(response, requestSession ? 200 : 401, requestSession ?? { error: 'Session not found.' })
         return
       }
 

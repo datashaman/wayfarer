@@ -23,6 +23,16 @@ function publicCampaign(row, rooms) {
   }
 }
 
+function publicPlayer(row, token) {
+  return {
+    id: row.id,
+    campaignId: row.campaign_id,
+    name: row.name,
+    role: row.role,
+    ...(token ? { token } : {}),
+  }
+}
+
 export function createStore(databasePath) {
   if (databasePath !== ':memory:') mkdirSync(dirname(databasePath), { recursive: true })
   const database = new DatabaseSync(databasePath)
@@ -38,6 +48,7 @@ export function createStore(databasePath) {
       id TEXT PRIMARY KEY,
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('owner', 'member')),
       token_hash TEXT NOT NULL UNIQUE,
       created_at TEXT NOT NULL
     );
@@ -59,12 +70,19 @@ export function createStore(databasePath) {
     );
   `)
 
+  const playerColumns = database.prepare('PRAGMA table_info(players)').all()
+  if (!playerColumns.some((column) => column.name === 'role')) {
+    database.exec("ALTER TABLE players ADD COLUMN role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('owner', 'member'))")
+    database.exec("UPDATE players SET role = 'owner' WHERE rowid IN (SELECT MIN(rowid) FROM players GROUP BY campaign_id)")
+  }
+
   const campaignByInvite = database.prepare('SELECT * FROM campaigns WHERE invite_code = ?')
   const campaignById = database.prepare('SELECT * FROM campaigns WHERE id = ?')
   const roomsByCampaign = database.prepare('SELECT * FROM rooms WHERE campaign_id = ? ORDER BY rowid')
   const insertCampaign = database.prepare('INSERT INTO campaigns (id, name, invite_code, created_at) VALUES (?, ?, ?, ?)')
   const insertRoom = database.prepare('INSERT INTO rooms (id, campaign_id, slug, name, description) VALUES (?, ?, ?, ?, ?)')
-  const insertPlayer = database.prepare('INSERT INTO players (id, campaign_id, name, token_hash, created_at) VALUES (?, ?, ?, ?, ?)')
+  const insertPlayer = database.prepare('INSERT INTO players (id, campaign_id, name, role, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+  const playersByCampaign = database.prepare('SELECT * FROM players WHERE campaign_id = ? ORDER BY rowid')
   const playerByToken = database.prepare(`
     SELECT players.*, campaigns.name AS campaign_name, campaigns.invite_code
     FROM players JOIN campaigns ON campaigns.id = players.campaign_id
@@ -85,10 +103,10 @@ export function createStore(databasePath) {
     ) ORDER BY sequence ASC
   `)
 
-  function createPlayer(campaignId, name) {
+  function createPlayer(campaignId, name, role = 'member') {
     const token = randomBytes(32).toString('base64url')
-    const player = { id: randomUUID(), campaignId, name, token }
-    insertPlayer.run(player.id, campaignId, name, tokenHash(token), new Date().toISOString())
+    const player = { id: randomUUID(), campaignId, name, role, token }
+    insertPlayer.run(player.id, campaignId, name, role, tokenHash(token), new Date().toISOString())
     return player
   }
 
@@ -99,7 +117,7 @@ export function createStore(databasePath) {
       try {
         insertCampaign.run(campaign.id, campaign.name, campaign.inviteCode, new Date().toISOString())
         for (const [slug, name, description] of defaultRooms) insertRoom.run(randomUUID(), campaign.id, slug, name, description)
-        const player = createPlayer(campaign.id, playerName)
+        const player = createPlayer(campaign.id, playerName, 'owner')
         database.exec('COMMIT')
         return { campaign: publicCampaign(campaignById.get(campaign.id), roomsByCampaign.all(campaign.id)), player }
       } catch (error) {
@@ -121,8 +139,12 @@ export function createStore(databasePath) {
       const campaignRow = campaignById.get(playerRow.campaign_id)
       return {
         campaign: publicCampaign(campaignRow, roomsByCampaign.all(campaignRow.id)),
-        player: { id: playerRow.id, campaignId: playerRow.campaign_id, name: playerRow.name, token },
+        player: publicPlayer(playerRow, token),
       }
+    },
+
+    getCampaignManagement(campaignId) {
+      return { players: playersByCampaign.all(campaignId).map((row) => publicPlayer(row)) }
     },
 
     getRoom(roomId, campaignId) {

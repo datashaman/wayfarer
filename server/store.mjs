@@ -123,6 +123,7 @@ export function createStore(databasePath) {
   const playerForCampaign = database.prepare('SELECT * FROM players WHERE id = ? AND campaign_id = ? AND removed_at IS NULL')
   const removePlayer = database.prepare('UPDATE players SET removed_at = ? WHERE id = ?')
   const updatePlayerCredentials = database.prepare('UPDATE players SET token_hash = ?, recovery_key_hash = ? WHERE id = ?')
+  const updateRecoveryKey = database.prepare('UPDATE players SET recovery_key_hash = ? WHERE id = ?')
   const playerByToken = database.prepare(`
     SELECT players.*, campaigns.name AS campaign_name, campaigns.invite_code
     FROM players JOIN campaigns ON campaigns.id = players.campaign_id
@@ -193,6 +194,14 @@ export function createStore(databasePath) {
         player: publicPlayer(playerRow, token),
         recoveryCode: nextRecoveryCode,
       }
+    },
+
+    resetRecoveryKey(campaignId, playerId) {
+      const player = playerForCampaign.get(playerId, campaignId)
+      if (!player) return null
+      const recoveryCode = createRecoveryCode()
+      updateRecoveryKey.run(recoveryHash(recoveryCode), playerId)
+      return recoveryCode
     },
 
     getSession(token) {

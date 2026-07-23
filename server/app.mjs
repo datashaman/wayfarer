@@ -203,6 +203,21 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         return
       }
 
+      const recoveryReset = request.url?.match(/^\/api\/campaign\/players\/([^/]+)\/recovery$/)
+      if (request.method === 'POST' && recoveryReset) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'Only the campaign owner can manage this table.' })
+          return
+        }
+        const recoveryCode = store.resetRecoveryKey(requestSession.campaign.id, recoveryReset[1])
+        sendJson(response, recoveryCode ? 200 : 404, recoveryCode ? { recoveryCode } : { error: 'Player not found.' })
+        return
+      }
+
       if (request.method === 'POST' && request.url === '/api/campaigns') {
         const body = await readJson(request)
         const campaignName = cleanName(body.campaignName, 80)

@@ -1420,6 +1420,49 @@ textarea:focus-visible {
   font-size: 9px;
 }
 
+.canon-history {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--border-soft);
+  list-style: none;
+}
+
+.canon-history li {
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+}
+
+.canon-history span,
+.canon-history strong,
+.canon-history p,
+.canon-history small {
+  display: block;
+}
+
+.canon-history span {
+  color: var(--parchment-muted);
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.canon-history strong {
+  margin-top: 4px;
+  color: var(--parchment-dim);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 12px;
+}
+
+.canon-history p {
+  margin: 3px 0;
+  color: var(--parchment-muted);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .canon-empty {
   display: flex;
   align-items: center;

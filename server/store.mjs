@@ -88,7 +88,7 @@ function publicCanonProposal(row, sources = []) {
   }
 }
 
-function publicCanonEntry(row) {
+function publicCanonEntry(row, sources = []) {
   return {
     id: row.id,
     proposalId: row.proposal_id,
@@ -98,10 +98,35 @@ function publicCanonEntry(row) {
     claim: row.claim,
     visibility: row.visibility,
     revision: row.revision,
-    status: row.status,
+    status: row.status === 'active' ? 'active' : row.retired_reason ?? 'superseded',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     createdByName: row.created_by_name ?? null,
+    sources: sources.map((source) => ({
+      messageId: source.message_id,
+      roomId: source.room_id,
+      roomName: source.room_name,
+      senderName: source.sender_name,
+      text: source.text,
+      excerpt: source.excerpt,
+      sentAt: source.sent_at,
+      sequence: source.sequence,
+    })),
+  }
+}
+
+function publicCanonRevision(row) {
+  return {
+    id: row.id,
+    entryId: row.entry_id,
+    revision: row.revision,
+    action: row.action,
+    title: row.title,
+    claim: row.claim,
+    visibility: row.visibility,
+    reason: row.reason,
+    createdAt: row.created_at,
+    createdByName: row.created_by_name,
   }
 }
 
@@ -188,6 +213,7 @@ export function createStore(databasePath) {
       visibility TEXT NOT NULL CHECK(visibility IN ('campaign', 'gm_only')),
       revision INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'superseded')),
+      retired_reason TEXT CHECK(retired_reason IS NULL OR retired_reason IN ('superseded', 'retracted')),
       created_by_player_id TEXT NOT NULL REFERENCES players(id),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -202,6 +228,19 @@ export function createStore(databasePath) {
       accepted_claim TEXT,
       accepted_visibility TEXT CHECK(accepted_visibility IS NULL OR accepted_visibility IN ('campaign', 'gm_only')),
       created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS canon_entry_revisions (
+      id TEXT PRIMARY KEY,
+      entry_id TEXT NOT NULL REFERENCES canon_entries(id) ON DELETE CASCADE,
+      revision INTEGER NOT NULL,
+      action TEXT NOT NULL CHECK(action IN ('accepted', 'revised', 'superseded', 'retracted')),
+      title TEXT NOT NULL,
+      claim TEXT NOT NULL,
+      visibility TEXT NOT NULL CHECK(visibility IN ('campaign', 'gm_only')),
+      reason TEXT,
+      player_id TEXT NOT NULL REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      UNIQUE(entry_id, revision)
     );
   `)
 
@@ -229,6 +268,20 @@ export function createStore(databasePath) {
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS canon_proposals_extraction_key ON canon_proposals(campaign_id, extraction_key) WHERE extraction_key IS NOT NULL')
   const canonDecisionColumns = database.prepare('PRAGMA table_info(canon_decisions)').all()
   if (!canonDecisionColumns.some((column) => column.name === 'accepted_visibility')) database.exec("ALTER TABLE canon_decisions ADD COLUMN accepted_visibility TEXT CHECK(accepted_visibility IS NULL OR accepted_visibility IN ('campaign', 'gm_only'))")
+  const canonEntryColumns = database.prepare('PRAGMA table_info(canon_entries)').all()
+  if (!canonEntryColumns.some((column) => column.name === 'retired_reason')) database.exec("ALTER TABLE canon_entries ADD COLUMN retired_reason TEXT CHECK(retired_reason IS NULL OR retired_reason IN ('superseded', 'retracted'))")
+  database.exec(`
+    INSERT OR IGNORE INTO canon_entry_revisions (
+      id, entry_id, revision, action, title, claim, visibility, reason, player_id, created_at
+    )
+    SELECT lower(hex(randomblob(16))), canon_entries.id, canon_entries.revision, 'accepted',
+           canon_entries.title, canon_entries.claim, canon_entries.visibility, 'Imported from the existing canon ledger.',
+           canon_entries.created_by_player_id, canon_entries.created_at
+    FROM canon_entries
+    WHERE NOT EXISTS (
+      SELECT 1 FROM canon_entry_revisions WHERE canon_entry_revisions.entry_id = canon_entries.id
+    )
+  `)
   database.exec("INSERT OR IGNORE INTO campaign_notes (campaign_id) SELECT id FROM campaigns")
   database.exec(`
     DELETE FROM messages
@@ -411,12 +464,52 @@ export function createStore(databasePath) {
       status, created_by_player_id, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, ?, ?)
   `)
+  const canonEntryById = database.prepare(`
+    SELECT canon_entries.*, players.name AS created_by_name
+    FROM canon_entries
+    JOIN players ON players.id = canon_entries.created_by_player_id
+    WHERE canon_entries.id = ? AND canon_entries.campaign_id = ?
+  `)
   const canonEntriesForCampaign = database.prepare(`
     SELECT canon_entries.*, players.name AS created_by_name
     FROM canon_entries
     JOIN players ON players.id = canon_entries.created_by_player_id
     WHERE canon_entries.campaign_id = ? AND canon_entries.status = 'active'
     ORDER BY canon_entries.rowid DESC
+  `)
+  const canonSourcesForEntry = database.prepare(`
+    SELECT canon_proposal_sources.message_id, canon_proposal_sources.excerpt,
+           messages.text, messages.sent_at, messages.rowid AS sequence,
+           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+    FROM canon_entries
+    JOIN canon_proposal_sources ON canon_proposal_sources.proposal_id = canon_entries.proposal_id
+    JOIN messages ON messages.id = canon_proposal_sources.message_id
+    JOIN rooms ON rooms.id = messages.room_id
+    JOIN players ON players.id = messages.player_id
+    WHERE canon_entries.id = ?
+    ORDER BY messages.rowid
+  `)
+  const insertCanonEntryRevision = database.prepare(`
+    INSERT INTO canon_entry_revisions (
+      id, entry_id, revision, action, title, claim, visibility, reason, player_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const updateCanonEntry = database.prepare(`
+    UPDATE canon_entries
+    SET title = ?, claim = ?, visibility = ?, revision = revision + 1, updated_at = ?
+    WHERE id = ? AND campaign_id = ? AND revision = ? AND status = 'active'
+  `)
+  const retractCanonEntry = database.prepare(`
+    UPDATE canon_entries
+    SET status = 'superseded', retired_reason = 'retracted', revision = revision + 1, updated_at = ?
+    WHERE id = ? AND campaign_id = ? AND revision = ? AND status = 'active'
+  `)
+  const canonRevisionsForEntry = database.prepare(`
+    SELECT canon_entry_revisions.*, players.name AS created_by_name
+    FROM canon_entry_revisions
+    JOIN players ON players.id = canon_entry_revisions.player_id
+    WHERE canon_entry_revisions.entry_id = ?
+    ORDER BY canon_entry_revisions.revision DESC
   `)
 
   function createPlayer(campaignId, name, role = 'member') {
@@ -675,7 +768,9 @@ export function createStore(databasePath) {
         if (updateCanonProposalStatus.run(nextStatus, proposalId, campaignId).changes !== 1) throw new Error('canon_proposal_conflict')
         insertCanonDecision.run(randomUUID(), proposalId, playerId, action, reason, acceptedTitle, acceptedClaim, acceptedVisibility, now)
         if (nextStatus === 'accepted') {
-          insertCanonEntry.run(randomUUID(), proposalId, campaignId, proposal.kind, acceptedTitle, acceptedClaim, acceptedVisibility, playerId, now, now)
+          const entryId = randomUUID()
+          insertCanonEntry.run(entryId, proposalId, campaignId, proposal.kind, acceptedTitle, acceptedClaim, acceptedVisibility, playerId, now, now)
+          insertCanonEntryRevision.run(randomUUID(), entryId, 0, 'accepted', acceptedTitle, acceptedClaim, acceptedVisibility, reason, playerId, now)
         }
         database.exec('COMMIT')
       } catch (error) {
@@ -688,7 +783,53 @@ export function createStore(databasePath) {
     listCanonEntries(campaignId, { includeGmOnly = false } = {}) {
       return canonEntriesForCampaign.all(campaignId)
         .filter((row) => includeGmOnly || row.visibility === 'campaign')
-        .map(publicCanonEntry)
+        .map((row) => publicCanonEntry(row, canonSourcesForEntry.all(row.id)))
+    },
+
+    getCanonEntry(campaignId, entryId, { includeGmOnly = false } = {}) {
+      const row = canonEntryById.get(entryId, campaignId)
+      if (!row || (!includeGmOnly && row.visibility !== 'campaign')) return null
+      return publicCanonEntry(row, canonSourcesForEntry.all(entryId))
+    },
+
+    reviseCanonEntry(campaignId, playerId, entryId, { action, title, claim, visibility, reason = null, expectedRevision }) {
+      const current = canonEntryById.get(entryId, campaignId)
+      if (!current) return { outcome: 'not_found' }
+      if (current.status !== 'active' || current.revision !== expectedRevision) return { outcome: 'conflict', entry: this.getCanonEntry(campaignId, entryId, { includeGmOnly: true }) }
+      const now = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        if (updateCanonEntry.run(title, claim, visibility, now, entryId, campaignId, expectedRevision).changes !== 1) throw new Error('canon_entry_conflict')
+        insertCanonEntryRevision.run(randomUUID(), entryId, expectedRevision + 1, action, title, claim, visibility, reason, playerId, now)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return { outcome: action, entry: this.getCanonEntry(campaignId, entryId, { includeGmOnly: true }) }
+    },
+
+    retractCanonEntry(campaignId, playerId, entryId, { reason, expectedRevision }) {
+      const current = canonEntryById.get(entryId, campaignId)
+      if (!current) return { outcome: 'not_found' }
+      if (current.status !== 'active' || current.revision !== expectedRevision) return { outcome: 'conflict', entry: this.getCanonEntry(campaignId, entryId, { includeGmOnly: true }) }
+      const now = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        if (retractCanonEntry.run(now, entryId, campaignId, expectedRevision).changes !== 1) throw new Error('canon_entry_conflict')
+        insertCanonEntryRevision.run(randomUUID(), entryId, expectedRevision + 1, 'retracted', current.title, current.claim, current.visibility, reason, playerId, now)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return { outcome: 'retracted', entry: this.getCanonEntry(campaignId, entryId, { includeGmOnly: true }) }
+    },
+
+    listCanonEntryHistory(campaignId, entryId, { includeGmOnly = false } = {}) {
+      const entry = this.getCanonEntry(campaignId, entryId, { includeGmOnly })
+      if (!entry) return null
+      return { entry, revisions: canonRevisionsForEntry.all(entryId).map(publicCanonRevision) }
     },
 
     close() {

@@ -990,6 +990,36 @@ test('canon proposals require cited campaign messages and owner review', async (
   const memberUpdate = await memberCanonUpdated
   assert.equal(memberUpdate.payload.entries[0].title, 'Ilyra, lighthouse keeper')
   assert.equal(memberUpdate.payload.entries.some((entry) => entry.visibility === 'gm_only'), false)
+  assert.equal(memberUpdate.payload.entries[0].sources[0].messageId, message.id)
+
+  const entry = accepted.body.entries[0]
+  const memberRevisionUpdated = nextEvent(memberSocket, 'campaign.canon_updated')
+  const superseded = await json(`${origin}/api/campaign/canon/entries/${entry.id}`, {
+    method: 'PATCH',
+    headers: ownerAuthorization,
+    body: JSON.stringify({ action: 'supersede', title: 'Ilyra of the Glass Coast', claim: 'Ilyra now keeps the eastern lighthouse.', visibility: 'campaign', revision: 0, reason: 'The campaign advanced two years.' }),
+  })
+  assert.equal(superseded.status, 200)
+  assert.equal(superseded.body.entry.revision, 1)
+  assert.equal((await memberRevisionUpdated).payload.entries[0].title, 'Ilyra of the Glass Coast')
+  const stale = await json(`${origin}/api/campaign/canon/entries/${entry.id}`, {
+    method: 'PATCH',
+    headers: ownerAuthorization,
+    body: JSON.stringify({ action: 'revise', title: 'Stale', claim: 'Stale wording.', visibility: 'campaign', revision: 0 }),
+  })
+  assert.equal(stale.status, 409)
+  const history = await json(`${origin}/api/campaign/canon/entries/${entry.id}/history`, { headers: memberAuthorization })
+  assert.deepEqual(history.body.revisions.map((revision) => revision.action), ['superseded', 'accepted'])
+
+  const memberRetraction = nextEvent(memberSocket, 'campaign.canon_updated')
+  const retracted = await json(`${origin}/api/campaign/canon/entries/${entry.id}`, {
+    method: 'DELETE',
+    headers: ownerAuthorization,
+    body: JSON.stringify({ revision: 1, reason: 'The table retconned Ilyra.' }),
+  })
+  assert.equal(retracted.status, 200)
+  assert.equal(retracted.body.entry.status, 'retracted')
+  assert.equal((await memberRetraction).payload.entries.length, 0)
   const repeated = await json(`${origin}/api/campaign/canon/proposals/${privateProposal.body.proposal.id}/decisions`, {
     method: 'POST',
     headers: ownerAuthorization,

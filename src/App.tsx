@@ -33,6 +33,8 @@ import {
   type ConnectionState,
   type Campaign,
   type CanonLedger,
+  type CanonEntry,
+  type CanonEntryRevision,
   type CanonProposal,
   type CanonProposalSource,
   type CampaignManagement,
@@ -396,6 +398,12 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
   const [editTitle, setEditTitle] = useState('')
   const [editClaim, setEditClaim] = useState('')
   const [editVisibility, setEditVisibility] = useState<'campaign' | 'gm_only'>('gm_only')
+  const [entryMode, setEntryMode] = useState<{ entry: CanonEntry; action: 'revise' | 'supersede' | 'retract' } | null>(null)
+  const [entryTitle, setEntryTitle] = useState('')
+  const [entryClaim, setEntryClaim] = useState('')
+  const [entryVisibility, setEntryVisibility] = useState<'campaign' | 'gm_only'>('gm_only')
+  const [entryReason, setEntryReason] = useState('')
+  const [entryHistory, setEntryHistory] = useState<Record<string, CanonEntryRevision[]>>({})
   const [error, setError] = useState('')
   const authorization = { authorization: `Bearer ${session.player.token}` }
 
@@ -452,8 +460,60 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     }
   }
 
+  const beginEntryAction = (entry: CanonEntry, action: 'revise' | 'supersede' | 'retract') => {
+    setEntryMode({ entry, action })
+    setEntryTitle(entry.title)
+    setEntryClaim(entry.claim)
+    setEntryVisibility(entry.visibility)
+    setEntryReason('')
+  }
+
+  const saveEntryAction = async () => {
+    if (!entryMode) return
+    setPending(entryMode.entry.id)
+    setError('')
+    try {
+      const retracting = entryMode.action === 'retract'
+      const result = await api<CanonLedger & { entry: CanonEntry }>(`/api/campaign/canon/entries/${entryMode.entry.id}`, {
+        method: retracting ? 'DELETE' : 'PATCH',
+        headers: authorization,
+        body: JSON.stringify(retracting
+          ? { revision: entryMode.entry.revision, reason: entryReason }
+          : { action: entryMode.action, title: entryTitle, claim: entryClaim, visibility: entryVisibility, revision: entryMode.entry.revision, reason: entryReason }),
+      })
+      onLedger({ proposals: result.proposals, entries: result.entries })
+      setEntryMode(null)
+      setEntryHistory((current) => {
+        if (!(entryMode.entry.id in current)) return current
+        const next = { ...current }
+        delete next[entryMode.entry.id]
+        return next
+      })
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The canon entry could not be changed.')
+    } finally {
+      setPending('')
+    }
+  }
+
+  const toggleHistory = async (entry: CanonEntry) => {
+    if (entryHistory[entry.id]) {
+      setEntryHistory((current) => {
+        const next = { ...current }
+        delete next[entry.id]
+        return next
+      })
+      return
+    }
+    try {
+      const result = await api<{ revisions: CanonEntryRevision[] }>(`/api/campaign/canon/entries/${entry.id}/history`, { headers: authorization })
+      setEntryHistory((current) => ({ ...current, [entry.id]: result.revisions }))
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The canon history could not be opened.')
+    }
+  }
+
   const pendingProposals = ledger?.proposals.filter((proposal) => proposal.status === 'proposed') ?? []
-  const proposalById = new Map(ledger?.proposals.map((proposal) => [proposal.id, proposal]))
 
   return (
     <div className="canon-layer" role="dialog" aria-modal="true" aria-labelledby="canon-ledger-heading">
@@ -488,10 +548,19 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
               <section className="canon-section" aria-labelledby="accepted-canon-heading">
                 <div className="canon-section-title"><h3 id="accepted-canon-heading">Accepted canon</h3><span>{ledger.entries.length}</span></div>
                 {!ledger.entries.length && <div className="canon-empty"><BookOpen size={18} /><span>No passages have been accepted yet.</span></div>}
-                {ledger.entries.map((entry) => {
-                  const proposal = proposalById.get(entry.proposalId)
-                  return <article className="canon-entry" key={entry.id}><div className="canon-card-meta"><span>{entry.kind}</span><span>{entry.visibility === 'gm_only' ? 'GM only' : 'Whole campaign'}</span></div><h4>{entry.title}</h4><p>{entry.claim}</p>{proposal && <div className="canon-citations">{proposal.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span></button>)}</div>}<small>Accepted by {entry.createdByName ?? 'the campaign owner'}</small></article>
-                })}
+                {ledger.entries.map((entry) => <article className="canon-entry" key={entry.id}>
+                  <div className="canon-card-meta"><span>{entry.kind}</span><span>{entry.visibility === 'gm_only' ? 'GM only' : 'Whole campaign'}</span><span>Revision {entry.revision}</span></div>
+                  {entryMode?.entry.id === entry.id ? <div className="canon-edit">
+                    <strong>{entryMode.action === 'retract' ? 'Retract this passage?' : entryMode.action === 'supersede' ? 'Supersede this version' : 'Revise this passage'}</strong>
+                    {entryMode.action !== 'retract' && <><label htmlFor={`entry-title-${entry.id}`}>Canon title</label><input id={`entry-title-${entry.id}`} value={entryTitle} onChange={(event) => setEntryTitle(event.target.value)} maxLength={80} /><label htmlFor={`entry-claim-${entry.id}`}>Canon wording</label><textarea id={`entry-claim-${entry.id}`} value={entryClaim} onChange={(event) => setEntryClaim(event.target.value)} maxLength={2_000} /><label htmlFor={`entry-visibility-${entry.id}`}>Who can read this?</label><select id={`entry-visibility-${entry.id}`} value={entryVisibility} onChange={(event) => setEntryVisibility(event.target.value as 'campaign' | 'gm_only')}><option value="gm_only">Keep GM-only</option><option value="campaign">Share with party</option></select></>}
+                    <label htmlFor={`entry-reason-${entry.id}`}>{entryMode.action === 'revise' ? 'Reason (optional)' : 'Reason'}</label><input id={`entry-reason-${entry.id}`} value={entryReason} onChange={(event) => setEntryReason(event.target.value)} maxLength={500} placeholder={entryMode.action === 'retract' ? 'Why should the table stop relying on this?' : 'What changed?'} />
+                    <div className="canon-actions"><button className={entryMode.action === 'retract' ? 'folio-button folio-button--danger' : 'primary-action'} disabled={pending === entry.id || !entryTitle.trim() || !entryClaim.trim() || (entryMode.action !== 'revise' && !entryReason.trim())} onClick={() => void saveEntryAction()}>{pending === entry.id ? 'Recording…' : entryMode.action === 'retract' ? 'Confirm retraction' : entryMode.action === 'supersede' ? 'Record new version' : 'Save revision'}</button><button className="folio-button" onClick={() => setEntryMode(null)}>Cancel</button></div>
+                  </div> : <><h4>{entry.title}</h4><p>{entry.claim}</p></>}
+                  <div className="canon-citations">{entry.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span></button>)}</div>
+                  <small>Accepted by {entry.createdByName ?? 'the campaign owner'}</small>
+                  <div className="canon-actions"><button className="folio-button" onClick={() => void toggleHistory(entry)}>{entryHistory[entry.id] ? 'Hide history' : 'History'}</button>{session.player.role === 'owner' && <><button className="folio-button" onClick={() => beginEntryAction(entry, 'revise')}>Edit</button><button className="folio-button" onClick={() => beginEntryAction(entry, 'supersede')}>Supersede</button><button className="folio-button" onClick={() => beginEntryAction(entry, 'retract')}>Retract</button></>}</div>
+                  {entryHistory[entry.id] && <ol className="canon-history">{entryHistory[entry.id].map((revision) => <li key={revision.id}><span>Revision {revision.revision} · {revision.action}</span><strong>{revision.title}</strong><p>{revision.claim}</p><small>{revision.createdByName}{revision.reason ? ` · ${revision.reason}` : ''}</small></li>)}</ol>}
+                </article>)}
               </section>
             </>
           )}

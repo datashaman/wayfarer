@@ -89,3 +89,44 @@ test('canon review is append-only and acceptance creates a human-authored entry'
 
   store.close()
 })
+
+test('canon revisions preserve supersession and retraction history', () => {
+  const { store, owner, first } = seededStore()
+  const proposal = store.createCanonProposal({
+    campaignId: owner.campaign.id,
+    playerId: owner.player.id,
+    kind: 'character',
+    title: 'Ilyra',
+    claim: 'Ilyra keeps the lighthouse.',
+    visibility: 'gm_only',
+    confidence: 0.9,
+    extractorVersion: 'fixture-v1',
+    sources: [{ messageId: first.id }],
+  }).proposal
+  store.decideCanonProposal(owner.campaign.id, owner.player.id, proposal.id, { action: 'accept', visibility: 'campaign' })
+  const entry = store.listCanonEntries(owner.campaign.id)[0]
+
+  const revised = store.reviseCanonEntry(owner.campaign.id, owner.player.id, entry.id, {
+    action: 'revised', title: 'Ilyra of the Salt Road', claim: 'Ilyra keeps the western lighthouse.',
+    visibility: 'campaign', reason: 'Clarified the location.', expectedRevision: 0,
+  })
+  assert.equal(revised.entry.revision, 1)
+  assert.equal(store.reviseCanonEntry(owner.campaign.id, owner.player.id, entry.id, {
+    action: 'revised', title: 'Stale edit', claim: 'This should not save.', visibility: 'campaign', expectedRevision: 0,
+  }).outcome, 'conflict')
+  const superseded = store.reviseCanonEntry(owner.campaign.id, owner.player.id, entry.id, {
+    action: 'superseded', title: 'Ilyra of the Glass Coast', claim: 'Ilyra now keeps the eastern lighthouse.',
+    visibility: 'campaign', reason: 'The campaign advanced two years.', expectedRevision: 1,
+  })
+  assert.equal(superseded.entry.revision, 2)
+
+  const retracted = store.retractCanonEntry(owner.campaign.id, owner.player.id, entry.id, { reason: 'The table retconned Ilyra.', expectedRevision: 2 })
+  assert.equal(retracted.entry.status, 'retracted')
+  assert.equal(store.listCanonEntries(owner.campaign.id).length, 0)
+  const history = store.listCanonEntryHistory(owner.campaign.id, entry.id)
+  assert.deepEqual(history.revisions.map((revision) => revision.action), ['retracted', 'superseded', 'revised', 'accepted'])
+  assert.equal(history.revisions[1].reason, 'The campaign advanced two years.')
+  assert.equal(history.entry.sources[0].messageId, first.id)
+
+  store.close()
+})

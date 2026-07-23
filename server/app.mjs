@@ -299,6 +299,91 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         return
       }
 
+      const canonEntryHistory = request.url?.match(/^\/api\/campaign\/canon\/entries\/([^/]+)\/history$/)
+      if (request.method === 'GET' && canonEntryHistory) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        const history = store.listCanonEntryHistory(requestSession.campaign.id, canonEntryHistory[1], { includeGmOnly: requestSession.player.role === 'owner' })
+        sendJson(response, history ? 200 : 404, history ?? { error: 'Canon entry not found.' })
+        return
+      }
+
+      const canonEntryMutation = request.url?.match(/^\/api\/campaign\/canon\/entries\/([^/]+)$/)
+      if (request.method === 'PATCH' && canonEntryMutation) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'Only the campaign owner can revise canon.' })
+          return
+        }
+        const body = await readJson(request)
+        const action = body.action === 'revise' || body.action === 'supersede' ? body.action : null
+        const title = cleanCanonText(body.title, 80)
+        const claim = cleanCanonText(body.claim, 2_000)
+        const visibility = canonVisibilities.has(body.visibility) ? body.visibility : null
+        const expectedRevision = Number.isInteger(body.revision) && body.revision >= 0 ? body.revision : null
+        const reason = body.reason === undefined || body.reason === null || body.reason === '' ? null : cleanCanonText(body.reason, 500)
+        if (!action || !title || !claim || !visibility || expectedRevision === null || reason === undefined || (action === 'supersede' && !reason)) {
+          sendJson(response, 400, { error: 'Canon revision fields are invalid.' })
+          return
+        }
+        const historyAction = action === 'revise' ? 'revised' : 'superseded'
+        const result = store.reviseCanonEntry(requestSession.campaign.id, requestSession.player.id, canonEntryMutation[1], { action: historyAction, title, claim, visibility, reason, expectedRevision })
+        if (result.outcome === 'not_found') {
+          sendJson(response, 404, { error: 'Canon entry not found.' })
+          return
+        }
+        if (result.outcome === 'conflict') {
+          sendJson(response, 409, { error: 'This canon entry changed before your revision was saved.', entry: result.entry })
+          return
+        }
+        broadcastCanon(requestSession.campaign.id)
+        sendJson(response, 200, {
+          entry: result.entry,
+          proposals: store.listCanonProposals(requestSession.campaign.id, { includeGmOnly: true }),
+          entries: store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true }),
+        })
+        return
+      }
+
+      if (request.method === 'DELETE' && canonEntryMutation) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'Only the campaign owner can retract canon.' })
+          return
+        }
+        const body = await readJson(request)
+        const expectedRevision = Number.isInteger(body.revision) && body.revision >= 0 ? body.revision : null
+        const reason = cleanCanonText(body.reason, 500)
+        if (expectedRevision === null || !reason) {
+          sendJson(response, 400, { error: 'A current revision and retraction reason are required.' })
+          return
+        }
+        const result = store.retractCanonEntry(requestSession.campaign.id, requestSession.player.id, canonEntryMutation[1], { reason, expectedRevision })
+        if (result.outcome === 'not_found') {
+          sendJson(response, 404, { error: 'Canon entry not found.' })
+          return
+        }
+        if (result.outcome === 'conflict') {
+          sendJson(response, 409, { error: 'This canon entry changed before it could be retracted.', entry: result.entry })
+          return
+        }
+        broadcastCanon(requestSession.campaign.id)
+        sendJson(response, 200, {
+          entry: result.entry,
+          proposals: store.listCanonProposals(requestSession.campaign.id, { includeGmOnly: true }),
+          entries: store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true }),
+        })
+        return
+      }
+
       if (request.method === 'GET' && request.url === '/api/campaign/activity') {
         if (!requestSession) {
           sendJson(response, 401, { error: 'Session not found.' })

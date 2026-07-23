@@ -117,10 +117,24 @@ export type CanonEntry = {
   claim: string
   visibility: CanonVisibility
   revision: number
-  status: 'active' | 'superseded'
+  status: 'active' | 'superseded' | 'retracted'
   createdAt: string
   updatedAt: string
   createdByName: string | null
+  sources: CanonProposalSource[]
+}
+
+export type CanonEntryRevision = {
+  id: Id
+  entryId: Id
+  revision: number
+  action: 'accepted' | 'revised' | 'superseded' | 'retracted'
+  title: string
+  claim: string
+  visibility: CanonVisibility
+  reason: string | null
+  createdAt: string
+  createdByName: string
 }
 
 export type CanonLedger = {

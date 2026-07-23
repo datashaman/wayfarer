@@ -39,6 +39,8 @@ To enable owner-triggered Living Canon suggestions, copy `.env.example` to `.env
 
 Run `npm run eval:canon` with a configured key to check the live extractor against promises, banter, corrections, transcript prompt injection, citation integrity, and GM-only visibility. Deterministic safety checks remain part of `npm test`; the live evaluation is separate because it calls the configured model.
 
+The campaign owner can publish accepted canon to the party or keep it private, revise or supersede it with immutable history, and retract it without erasing the audit trail. The owner-only continuity brief finds up to three cited loose threads from accepted canon and recent play. Feedback is recorded as useful, incorrect, secret leak, or not useful. Run `npm run eval:continuity` to exercise the live brief generator; `OPENAI_CONTINUITY_MODEL` defaults to the canon model and can be configured independently.
+
 `npm run test:e2e` starts isolated in-memory room and web servers, then verifies invitation, offline unread catch-up, paginated history, search, shared-note, and two-browser WebRTC voice flows with Playwright. Voice tests use synthetic Web Audio microphone streams and exercise real media tracks and peer negotiation without recording host audio.
 
 Campaign data is stored in `data/wayfarer.sqlite` by default. Set `DATABASE_PATH` when you need an isolated database, such as `DATABASE_PATH=/tmp/wayfarer.sqlite npm start`.

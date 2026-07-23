@@ -130,6 +130,17 @@ function publicCanonRevision(row) {
   }
 }
 
+function publicContinuityBrief(row, threads = []) {
+  return {
+    id: row.id,
+    campaignId: row.campaign_id,
+    generatorVersion: row.generator_version,
+    createdAt: row.created_at,
+    createdByName: row.created_by_name,
+    threads,
+  }
+}
+
 export function createStore(databasePath) {
   if (databasePath !== ':memory:') mkdirSync(dirname(databasePath), { recursive: true })
   const database = new DatabaseSync(databasePath)
@@ -241,6 +252,35 @@ export function createStore(databasePath) {
       player_id TEXT NOT NULL REFERENCES players(id),
       created_at TEXT NOT NULL,
       UNIQUE(entry_id, revision)
+    );
+    CREATE TABLE IF NOT EXISTS continuity_briefs (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      generator_version TEXT NOT NULL,
+      created_by_player_id TEXT NOT NULL REFERENCES players(id),
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS continuity_threads (
+      id TEXT PRIMARY KEY,
+      brief_id TEXT NOT NULL REFERENCES continuity_briefs(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      why_it_matters TEXT NOT NULL,
+      confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1)
+    );
+    CREATE TABLE IF NOT EXISTS continuity_thread_sources (
+      thread_id TEXT NOT NULL REFERENCES continuity_threads(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
+      excerpt TEXT,
+      PRIMARY KEY (thread_id, message_id)
+    );
+    CREATE TABLE IF NOT EXISTS continuity_feedback (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES continuity_threads(id) ON DELETE CASCADE,
+      player_id TEXT NOT NULL REFERENCES players(id),
+      rating TEXT NOT NULL CHECK(rating IN ('useful', 'incorrect', 'secret_leak', 'not_useful')),
+      created_at TEXT NOT NULL
     );
   `)
 
@@ -510,6 +550,49 @@ export function createStore(databasePath) {
     JOIN players ON players.id = canon_entry_revisions.player_id
     WHERE canon_entry_revisions.entry_id = ?
     ORDER BY canon_entry_revisions.revision DESC
+  `)
+  const insertContinuityBrief = database.prepare(`
+    INSERT INTO continuity_briefs (id, campaign_id, generator_version, created_by_player_id, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `)
+  const insertContinuityThread = database.prepare(`
+    INSERT INTO continuity_threads (id, brief_id, position, title, summary, why_it_matters, confidence)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `)
+  const insertContinuitySource = database.prepare(`
+    INSERT INTO continuity_thread_sources (thread_id, message_id, excerpt) VALUES (?, ?, ?)
+  `)
+  const latestContinuityBrief = database.prepare(`
+    SELECT continuity_briefs.*, players.name AS created_by_name
+    FROM continuity_briefs
+    JOIN players ON players.id = continuity_briefs.created_by_player_id
+    WHERE continuity_briefs.campaign_id = ?
+    ORDER BY continuity_briefs.rowid DESC LIMIT 1
+  `)
+  const continuityThreadsForBrief = database.prepare(`
+    SELECT * FROM continuity_threads WHERE brief_id = ? ORDER BY position
+  `)
+  const continuitySourcesForThread = database.prepare(`
+    SELECT continuity_thread_sources.message_id, continuity_thread_sources.excerpt,
+           messages.text, messages.sent_at, messages.rowid AS sequence,
+           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+    FROM continuity_thread_sources
+    JOIN messages ON messages.id = continuity_thread_sources.message_id
+    JOIN rooms ON rooms.id = messages.room_id
+    JOIN players ON players.id = messages.player_id
+    WHERE continuity_thread_sources.thread_id = ?
+    ORDER BY messages.rowid
+  `)
+  const continuityFeedbackForThread = database.prepare(`
+    SELECT rating, created_at FROM continuity_feedback WHERE thread_id = ? ORDER BY rowid DESC LIMIT 1
+  `)
+  const continuityThreadForCampaign = database.prepare(`
+    SELECT continuity_threads.* FROM continuity_threads
+    JOIN continuity_briefs ON continuity_briefs.id = continuity_threads.brief_id
+    WHERE continuity_threads.id = ? AND continuity_briefs.campaign_id = ?
+  `)
+  const insertContinuityFeedback = database.prepare(`
+    INSERT INTO continuity_feedback (id, thread_id, player_id, rating, created_at) VALUES (?, ?, ?, ?, ?)
   `)
 
   function createPlayer(campaignId, name, role = 'member') {
@@ -830,6 +913,63 @@ export function createStore(databasePath) {
       const entry = this.getCanonEntry(campaignId, entryId, { includeGmOnly })
       if (!entry) return null
       return { entry, revisions: canonRevisionsForEntry.all(entryId).map(publicCanonRevision) }
+    },
+
+    createContinuityBrief({ campaignId, playerId, generatorVersion, threads }) {
+      const resolved = threads.map((thread) => ({
+        ...thread,
+        sources: thread.sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) })),
+      }))
+      if (resolved.some((thread) => thread.sources.some((source) => !source.row))) return { outcome: 'invalid_source' }
+      const briefId = randomUUID()
+      const createdAt = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        insertContinuityBrief.run(briefId, campaignId, generatorVersion, playerId, createdAt)
+        resolved.forEach((thread, position) => {
+          const threadId = randomUUID()
+          insertContinuityThread.run(threadId, briefId, position, thread.title, thread.summary, thread.whyItMatters, thread.confidence)
+          for (const source of thread.sources) insertContinuitySource.run(threadId, source.messageId, source.excerpt ?? null)
+        })
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return { outcome: 'created', brief: this.getLatestContinuityBrief(campaignId) }
+    },
+
+    getLatestContinuityBrief(campaignId) {
+      const row = latestContinuityBrief.get(campaignId)
+      if (!row) return null
+      const threads = continuityThreadsForBrief.all(row.id).map((thread) => {
+        const feedback = continuityFeedbackForThread.get(thread.id)
+        return {
+          id: thread.id,
+          title: thread.title,
+          summary: thread.summary,
+          whyItMatters: thread.why_it_matters,
+          confidence: thread.confidence,
+          feedback: feedback ? { rating: feedback.rating, createdAt: feedback.created_at } : null,
+          sources: continuitySourcesForThread.all(thread.id).map((source) => ({
+            messageId: source.message_id,
+            roomId: source.room_id,
+            roomName: source.room_name,
+            senderName: source.sender_name,
+            text: source.text,
+            excerpt: source.excerpt,
+            sentAt: source.sent_at,
+            sequence: source.sequence,
+          })),
+        }
+      })
+      return publicContinuityBrief(row, threads)
+    },
+
+    recordContinuityFeedback(campaignId, playerId, threadId, rating) {
+      if (!continuityThreadForCampaign.get(threadId, campaignId)) return null
+      insertContinuityFeedback.run(randomUUID(), threadId, playerId, rating, new Date().toISOString())
+      return this.getLatestContinuityBrief(campaignId)
     },
 
     close() {

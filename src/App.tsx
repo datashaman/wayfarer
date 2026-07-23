@@ -37,6 +37,8 @@ import {
   type CanonEntryRevision,
   type CanonProposal,
   type CanonProposalSource,
+  type ContinuityBrief,
+  type ContinuityFeedbackRating,
   type CampaignManagement,
   type CampaignNote,
   type CampaignRoom,
@@ -404,6 +406,9 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
   const [entryVisibility, setEntryVisibility] = useState<'campaign' | 'gm_only'>('gm_only')
   const [entryReason, setEntryReason] = useState('')
   const [entryHistory, setEntryHistory] = useState<Record<string, CanonEntryRevision[]>>({})
+  const [continuityBrief, setContinuityBrief] = useState<ContinuityBrief | null>(null)
+  const [continuityLoaded, setContinuityLoaded] = useState(false)
+  const [continuityPending, setContinuityPending] = useState(false)
   const [error, setError] = useState('')
   const authorization = { authorization: `Bearer ${session.player.token}` }
 
@@ -413,6 +418,14 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
       .then(onLedger)
       .catch((reason) => setError(reason instanceof Error ? reason.message : 'The canon ledger could not be opened.'))
   }, [ledger, onLedger, session.player.token])
+
+  useEffect(() => {
+    if (session.player.role !== 'owner' || continuityLoaded) return
+    void api<{ brief: ContinuityBrief | null }>('/api/campaign/continuity', { headers: { authorization: `Bearer ${session.player.token}` } })
+      .then(({ brief }) => setContinuityBrief(brief))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'The continuity brief could not be opened.'))
+      .finally(() => setContinuityLoaded(true))
+  }, [continuityLoaded, session.player.role, session.player.token])
 
   useEffect(() => {
     const closeOnEscape = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') onClose() }
@@ -513,6 +526,34 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     }
   }
 
+  const prepareContinuityBrief = async () => {
+    setContinuityPending(true)
+    setError('')
+    try {
+      const result = await api<{ brief: ContinuityBrief }>('/api/campaign/continuity/extract', { method: 'POST', headers: authorization })
+      setContinuityBrief(result.brief)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The continuity brief could not be prepared.')
+    } finally {
+      setContinuityPending(false)
+    }
+  }
+
+  const rateContinuityThread = async (threadId: string, rating: ContinuityFeedbackRating) => {
+    setPending(threadId)
+    setError('')
+    try {
+      const result = await api<{ brief: ContinuityBrief }>(`/api/campaign/continuity/threads/${threadId}/feedback`, {
+        method: 'POST', headers: authorization, body: JSON.stringify({ rating }),
+      })
+      setContinuityBrief(result.brief)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The continuity feedback could not be recorded.')
+    } finally {
+      setPending('')
+    }
+  }
+
   const pendingProposals = ledger?.proposals.filter((proposal) => proposal.status === 'proposed') ?? []
 
   return (
@@ -562,6 +603,15 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
                   {entryHistory[entry.id] && <ol className="canon-history">{entryHistory[entry.id].map((revision) => <li key={revision.id}><span>Revision {revision.revision} · {revision.action}</span><strong>{revision.title}</strong><p>{revision.claim}</p><small>{revision.createdByName}{revision.reason ? ` · ${revision.reason}` : ''}</small></li>)}</ol>}
                 </article>)}
               </section>
+              {session.player.role === 'owner' && <section className="canon-section" aria-labelledby="continuity-heading">
+                <div className="canon-section-title"><h3 id="continuity-heading">Session continuity</h3><button className="folio-small-action" onClick={() => void prepareContinuityBrief()} disabled={continuityPending}>{continuityPending ? 'Reading…' : continuityBrief ? 'Refresh brief' : 'Prepare brief'}</button></div>
+                {!continuityBrief && continuityLoaded && <div className="canon-empty"><BookMarked size={18} /><span>No private continuity brief has been prepared.</span></div>}
+                {continuityBrief && <><p className="continuity-note">Private to the campaign owner · prepared {new Date(continuityBrief.createdAt).toLocaleString()}</p>{!continuityBrief.threads.length && <div className="canon-empty"><Check size={18} /><span>No well-supported loose threads were found.</span></div>}{continuityBrief.threads.map((thread) => <article className="continuity-card" key={thread.id}>
+                  <div className="canon-card-meta"><span>GM only</span><span>{Math.round(thread.confidence * 100)}% confidence</span></div><h4>{thread.title}</h4><p>{thread.summary}</p><strong>Why it matters</strong><p>{thread.whyItMatters}</p>
+                  <div className="canon-citations">{thread.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open continuity citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span><q>{source.excerpt ?? source.text}</q></button>)}</div>
+                  <div className="canon-actions" aria-label={`Feedback for ${thread.title}`}><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'useful')}>Useful</button><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'incorrect')}>Incorrect</button><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'secret_leak')}>Secret leak</button><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'not_useful')}>Not useful</button>{thread.feedback && <span className="continuity-feedback">Recorded: {thread.feedback.rating.replace('_', ' ')}</span>}</div>
+                </article>)}</>}
+              </section>}
             </>
           )}
         </div>

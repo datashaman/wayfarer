@@ -64,13 +64,14 @@ function cleanDescription(value, maximum) {
 const canonKinds = new Set(['fact', 'character', 'relationship', 'promise', 'event', 'question', 'contradiction', 'rule'])
 const canonVisibilities = new Set(['campaign', 'gm_only'])
 const canonDecisionActions = new Set(['accept', 'edit_accept', 'dispute', 'reject'])
+const continuityRatings = new Set(['useful', 'incorrect', 'secret_leak', 'not_useful'])
 
 function cleanCanonText(value, maximum) {
   const text = typeof value === 'string' ? value.trim() : ''
   return text && text.length <= maximum ? text : null
 }
 
-export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers, allowedOrigins, trustProxy = false, rateLimits = {}, canonExtractor = null } = {}) {
+export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers, allowedOrigins, trustProxy = false, rateLimits = {}, canonExtractor = null, continuityGenerator = null } = {}) {
   const store = createStore(databasePath)
   const clients = new Map()
   const originAllowlist = new Set(allowedOrigins ?? (dev ? developmentOrigins : []))
@@ -381,6 +382,81 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           proposals: store.listCanonProposals(requestSession.campaign.id, { includeGmOnly: true }),
           entries: store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true }),
         })
+        return
+      }
+
+      if (request.method === 'GET' && request.url === '/api/campaign/continuity') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'The continuity brief is private to the campaign owner.' })
+          return
+        }
+        sendJson(response, 200, { brief: store.getLatestContinuityBrief(requestSession.campaign.id) })
+        return
+      }
+
+      if (request.method === 'POST' && request.url === '/api/campaign/continuity/extract') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'Only the campaign owner can prepare a continuity brief.' })
+          return
+        }
+        if (!continuityGenerator) {
+          sendJson(response, 503, { error: 'Continuity briefs are not configured.' })
+          return
+        }
+        const acceptedCanon = store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true })
+        const recentMessages = store.listRecentCampaignMessages(requestSession.campaign.id, 100)
+        const messages = [...new Map([
+          ...recentMessages,
+          ...acceptedCanon.flatMap((entry) => entry.sources.map((source) => ({
+            id: source.messageId, roomId: source.roomId, roomName: source.roomName,
+            senderName: source.senderName, text: source.text, sentAt: source.sentAt, sequence: source.sequence,
+          }))),
+        ].map((message) => [message.id, message])).values()]
+        if (!messages.length) {
+          sendJson(response, 400, { error: 'The transcript needs at least one message before a brief can be prepared.' })
+          return
+        }
+        const threads = await continuityGenerator.generate({ campaignId: requestSession.campaign.id, messages, acceptedCanon })
+        const result = store.createContinuityBrief({
+          campaignId: requestSession.campaign.id,
+          playerId: requestSession.player.id,
+          generatorVersion: continuityGenerator.version,
+          threads,
+        })
+        if (result.outcome === 'invalid_source') {
+          sendJson(response, 400, { error: 'Every continuity citation must belong to this campaign.' })
+          return
+        }
+        sendJson(response, 200, { brief: result.brief })
+        return
+      }
+
+      const continuityFeedback = request.url?.match(/^\/api\/campaign\/continuity\/threads\/([^/]+)\/feedback$/)
+      if (request.method === 'POST' && continuityFeedback) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'The continuity brief is private to the campaign owner.' })
+          return
+        }
+        const body = await readJson(request)
+        const rating = continuityRatings.has(body.rating) ? body.rating : null
+        if (!rating) {
+          sendJson(response, 400, { error: 'Continuity feedback is invalid.' })
+          return
+        }
+        const brief = store.recordContinuityFeedback(requestSession.campaign.id, requestSession.player.id, continuityFeedback[1], rating)
+        sendJson(response, brief ? 200 : 404, brief ? { brief } : { error: 'Continuity thread not found.' })
         return
       }
 

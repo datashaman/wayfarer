@@ -1302,6 +1302,7 @@ textarea:focus-visible {
 
 .canon-card,
 .canon-entry,
+.continuity-card,
 .canon-empty {
   margin-bottom: 10px;
   padding: 16px;
@@ -1328,7 +1329,8 @@ textarea:focus-visible {
 }
 
 .canon-card h4,
-.canon-entry h4 {
+.canon-entry h4,
+.continuity-card h4 {
   margin: 0 0 5px;
   color: var(--parchment);
   font-family: Georgia, "Times New Roman", serif;
@@ -1337,12 +1339,35 @@ textarea:focus-visible {
 }
 
 .canon-card > p,
-.canon-entry > p {
+.canon-entry > p,
+.continuity-card > p {
   margin: 0 0 12px;
   color: var(--parchment-soft);
   font-family: Georgia, "Times New Roman", serif;
   font-size: 13px;
   line-height: 1.55;
+}
+
+.continuity-card > strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--parchment-dim);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.continuity-note {
+  margin: -2px 0 10px;
+  color: var(--parchment-muted);
+  font-size: 9px;
+}
+
+.continuity-feedback {
+  align-self: center;
+  color: var(--moss);
+  font-size: 9px;
+  text-transform: capitalize;
 }
 
 .canon-citations {

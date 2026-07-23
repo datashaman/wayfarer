@@ -142,6 +142,27 @@ export type CanonLedger = {
   entries: CanonEntry[]
 }
 
+export type ContinuityFeedbackRating = 'useful' | 'incorrect' | 'secret_leak' | 'not_useful'
+
+export type ContinuityThread = {
+  id: Id
+  title: string
+  summary: string
+  whyItMatters: string
+  confidence: number
+  feedback: { rating: ContinuityFeedbackRating; createdAt: string } | null
+  sources: CanonProposalSource[]
+}
+
+export type ContinuityBrief = {
+  id: Id
+  campaignId: Id
+  generatorVersion: string
+  createdAt: string
+  createdByName: string
+  threads: ContinuityThread[]
+}
+
 export type ClientVoiceSignal = Envelope<
   'voice.offer' | 'voice.answer',
   { targetPlayerId: Id; sdp: RTCSessionDescriptionInit }

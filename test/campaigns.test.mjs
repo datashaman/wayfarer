@@ -1096,6 +1096,57 @@ test('the owner manually extracts idempotent GM-only canon suggestions', async (
   assert.deepEqual(extractedInput.existingCanon, [])
 })
 
+test('continuity briefs are owner-private, canon-aware, cited, and rateable', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-continuity-'))
+  let generatorInput
+  const continuityGenerator = {
+    version: 'fixture-continuity-v1',
+    async generate(input) {
+      generatorInput = input
+      return [{ title: 'Return before moonrise', summary: 'The party promised to return.', whyItMatters: 'The promise remains unresolved.', confidence: 0.9, sources: [{ messageId: input.messages[0].id, excerpt: 'promised to return' }] }]
+    },
+  }
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite'), continuityGenerator })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+  let ownerSocket
+  t.after(async () => {
+    ownerSocket?.close()
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, { method: 'POST', body: JSON.stringify({ campaignName: 'The Moon Road', playerName: 'Mara' }) })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, { method: 'POST', body: JSON.stringify({ playerName: 'Theo' }) })
+  const ownerAuthorization = { authorization: `Bearer ${created.body.player.token}` }
+  const memberAuthorization = { authorization: `Bearer ${joined.body.player.token}` }
+  const roomId = created.body.campaign.rooms[0].id
+  ownerSocket = await openSocket(`ws://127.0.0.1:${port}/ws?token=${created.body.player.token}`)
+  const snapshot = nextEvent(ownerSocket, 'room.snapshot')
+  ownerSocket.send(JSON.stringify({ type: 'room.subscribe', id: crypto.randomUUID(), roomId, sentAt: new Date().toISOString(), payload: {} }))
+  await snapshot
+  const messageEvent = nextEvent(ownerSocket, 'chat.message')
+  ownerSocket.send(JSON.stringify({ type: 'chat.send', id: crypto.randomUUID(), roomId, sentAt: new Date().toISOString(), payload: { clientMessageId: crypto.randomUUID(), text: 'We promised to return before moonrise.' } }))
+  const message = (await messageEvent).payload
+  const proposal = await json(`${origin}/api/campaign/canon/proposals`, {
+    method: 'POST', headers: ownerAuthorization,
+    body: JSON.stringify({ kind: 'promise', title: 'Return before moonrise', claim: 'The party promised to return.', visibility: 'gm_only', confidence: 0.9, extractorVersion: 'fixture-v1', sources: [{ messageId: message.id }] }),
+  })
+  await json(`${origin}/api/campaign/canon/proposals/${proposal.body.proposal.id}/decisions`, { method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ action: 'accept', visibility: 'gm_only' }) })
+
+  assert.equal((await json(`${origin}/api/campaign/continuity`, { headers: memberAuthorization })).status, 403)
+  assert.equal((await json(`${origin}/api/campaign/continuity/extract`, { method: 'POST', headers: memberAuthorization })).status, 403)
+  const generated = await json(`${origin}/api/campaign/continuity/extract`, { method: 'POST', headers: ownerAuthorization })
+  assert.equal(generated.status, 200)
+  assert.equal(generated.body.brief.threads[0].sources[0].messageId, message.id)
+  assert.equal(generatorInput.acceptedCanon.length, 1)
+  assert.equal(generatorInput.acceptedCanon[0].visibility, 'gm_only')
+
+  const feedback = await json(`${origin}/api/campaign/continuity/threads/${generated.body.brief.threads[0].id}/feedback`, { method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ rating: 'useful' }) })
+  assert.equal(feedback.status, 200)
+  assert.equal(feedback.body.brief.threads[0].feedback.rating, 'useful')
+})
+
 test('room transcript survives a server restart', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-history-'))
   const databasePath = join(directory, 'table.sqlite')

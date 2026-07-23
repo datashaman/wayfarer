@@ -130,3 +130,20 @@ test('canon revisions preserve supersession and retraction history', () => {
 
   store.close()
 })
+
+test('continuity briefs retain cited threads and append owner feedback', () => {
+  const { store, owner, second } = seededStore()
+  const created = store.createContinuityBrief({
+    campaignId: owner.campaign.id,
+    playerId: owner.player.id,
+    generatorVersion: 'fixture-continuity-v1',
+    threads: [{ title: 'Return before moonrise', summary: 'The party promised to return.', whyItMatters: 'The promise remains unresolved.', confidence: 0.9, sources: [{ messageId: second.id, excerpt: 'promised to return' }] }],
+  })
+  assert.equal(created.outcome, 'created')
+  assert.equal(created.brief.threads[0].sources[0].messageId, second.id)
+  assert.equal(created.brief.threads[0].feedback, null)
+  const rated = store.recordContinuityFeedback(owner.campaign.id, owner.player.id, created.brief.threads[0].id, 'useful')
+  assert.equal(rated.threads[0].feedback.rating, 'useful')
+  assert.equal(store.recordContinuityFeedback(owner.campaign.id, owner.player.id, 'unknown-thread', 'useful'), null)
+  store.close()
+})

@@ -25,6 +25,7 @@ npm run test:e2e
 - Accountless seat recovery with one-time keys and cross-device QR links
 - Owner-only campaign folio for invitation replacement, player removal, seat-key reset, and room management
 - SQLite-backed rooms and transcripts that survive server restarts
+- Campaign-wide unread activity, transcript search, and revision-safe shared notes
 - WebSocket text chat between connected players
 - WebRTC peer-to-peer voice with mute, leave, and push-to-talk controls
 - Accessible labels, keyboard focus states, live message announcements, and reduced-motion support
@@ -36,6 +37,28 @@ npm run test:e2e
 `npm run test:e2e` starts isolated in-memory room and web servers, then verifies with Playwright that a second browser can join through the invitation and receive broadcast text.
 
 Campaign data is stored in `data/wayfarer.sqlite` by default. Set `DATABASE_PATH` when you need an isolated database, such as `DATABASE_PATH=/tmp/wayfarer.sqlite npm start`.
+
+## Production operations
+
+The server exposes `GET /api/health` for readiness checks. It verifies that the SQLite connection can execute a query and returns `200 {"status":"ok"}` when ready.
+
+Production requests are same-origin by default. If the web client is hosted on another origin, list each exact HTTP origin explicitly:
+
+```sh
+ALLOWED_ORIGINS='https://table.example.com,https://play.example.com' npm start
+```
+
+Public campaign creation, invitation join, and seat recovery routes have in-memory IP rate limits. Run a single server process, or enforce equivalent shared limits at the reverse proxy when scaling horizontally. Set `TRUST_PROXY=1` only when the server is directly behind a trusted proxy that replaces `X-Forwarded-For`; never enable it when clients can connect directly.
+
+Back up a live database with SQLite's online backup command so the main database and WAL are captured consistently:
+
+```sh
+mkdir -p backups
+sqlite3 data/wayfarer.sqlite ".backup 'backups/wayfarer-$(date +%Y-%m-%d).sqlite'"
+sqlite3 backups/wayfarer-$(date +%Y-%m-%d).sqlite 'PRAGMA integrity_check;'
+```
+
+Store backups outside the application host, encrypt them at rest, and test a restore regularly. Do not copy only `wayfarer.sqlite` while the server is running; committed data may still be in its `-wal` file.
 
 ## Protocol boundary
 

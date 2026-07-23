@@ -34,3 +34,20 @@ export function parseIceServers(value) {
     }
   })
 }
+
+export function parseAllowedOrigins(value) {
+  if (!value) return undefined
+  return value.split(',').map((item) => {
+    const origin = item.trim()
+    let parsed
+    try {
+      parsed = new URL(origin)
+    } catch {
+      throw new Error('ALLOWED_ORIGINS must contain comma-separated HTTP origins.')
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin !== origin) {
+      throw new Error('ALLOWED_ORIGINS must contain comma-separated HTTP origins.')
+    }
+    return origin
+  })
+}

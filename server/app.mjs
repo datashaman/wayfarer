@@ -17,12 +17,29 @@ const mime = {
 
 function sendJson(response, status, body) {
   response.writeHead(status, {
-    'access-control-allow-origin': '*',
     'access-control-allow-headers': 'authorization, content-type',
     'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     'content-type': 'application/json; charset=utf-8',
   })
   response.end(JSON.stringify(body))
+}
+
+const developmentOrigins = ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://127.0.0.1:5192']
+const defaultRateLimits = {
+  campaigns: { max: 10, windowMs: 10 * 60_000 },
+  joins: { max: 30, windowMs: 10 * 60_000 },
+  recoveries: { max: 10, windowMs: 10 * 60_000 },
+}
+
+function requestOriginAllowed(request, allowedOrigins) {
+  const origin = request.headers.origin
+  if (!origin) return true
+  try {
+    if (new URL(origin).host === request.headers.host) return true
+  } catch {
+    return false
+  }
+  return allowedOrigins.has(origin)
 }
 
 async function readJson(request) {
@@ -44,16 +61,58 @@ function cleanDescription(value, maximum) {
   return description.length <= maximum ? description : null
 }
 
-export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers } = {}) {
+export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers, allowedOrigins, trustProxy = false, rateLimits = {} } = {}) {
   const store = createStore(databasePath)
   const clients = new Map()
+  const originAllowlist = new Set(allowedOrigins ?? (dev ? developmentOrigins : []))
+  const limits = { ...defaultRateLimits, ...rateLimits }
+  const rateBuckets = new Map()
+
+  function requestAddress(request) {
+    if (trustProxy) return request.headers['x-forwarded-for']?.split(',')[0].trim() || request.socket.remoteAddress || 'unknown'
+    return request.socket.remoteAddress || 'unknown'
+  }
+
+  function rateLimited(request, response, name) {
+    const now = Date.now()
+    if (rateBuckets.size > 1_000) for (const [key, bucket] of rateBuckets) if (bucket.resetAt <= now) rateBuckets.delete(key)
+    const limit = limits[name]
+    const key = `${name}:${requestAddress(request)}`
+    let bucket = rateBuckets.get(key)
+    if (!bucket || bucket.resetAt <= now) {
+      bucket = { count: 0, resetAt: now + limit.windowMs }
+      rateBuckets.set(key, bucket)
+    }
+    bucket.count += 1
+    response.setHeader('x-ratelimit-limit', limit.max)
+    response.setHeader('x-ratelimit-remaining', Math.max(0, limit.max - bucket.count))
+    if (bucket.count <= limit.max) return false
+    response.setHeader('retry-after', Math.max(1, Math.ceil((bucket.resetAt - now) / 1_000)))
+    sendJson(response, 429, { error: 'Too many attempts. Wait before trying again.' })
+    return true
+  }
+
   const server = createServer(async (request, response) => {
+    if (!requestOriginAllowed(request, originAllowlist)) {
+      sendJson(response, 403, { error: 'Origin not allowed.' })
+      return
+    }
+    if (request.headers.origin) {
+      response.setHeader('access-control-allow-origin', request.headers.origin)
+      response.setHeader('vary', 'Origin')
+    }
     if (request.method === 'OPTIONS') {
       sendJson(response, 204, {})
       return
     }
 
     try {
+      if (request.method === 'GET' && request.url === '/api/health') {
+        const healthy = store.health()
+        sendJson(response, healthy ? 200 : 503, { status: healthy ? 'ok' : 'unavailable' })
+        return
+      }
+
       const token = request.headers.authorization?.replace(/^Bearer\s+/i, '') ?? ''
       const requestSession = token ? store.getSession(token) : null
 
@@ -264,6 +323,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
       }
 
       if (request.method === 'POST' && request.url === '/api/campaigns') {
+        if (rateLimited(request, response, 'campaigns')) return
         const body = await readJson(request)
         const campaignName = cleanName(body.campaignName, 80)
         const playerName = cleanName(body.playerName, 40)
@@ -277,6 +337,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
 
       const invitation = request.url?.match(/^\/api\/invitations\/([a-z0-9]{10})\/join$/)
       if (request.method === 'POST' && invitation) {
+        if (rateLimited(request, response, 'joins')) return
         const body = await readJson(request)
         const playerName = cleanName(body.playerName, 40)
         if (!playerName) {
@@ -298,6 +359,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
 
       const recovery = request.url?.match(/^\/api\/invitations\/([a-z0-9]{10})\/recover$/)
       if (request.method === 'POST' && recovery) {
+        if (rateLimited(request, response, 'recoveries')) return
         const body = await readJson(request)
         const playerName = cleanName(body.playerName, 40)
         const recoveryCode = typeof body.recoveryCode === 'string' && body.recoveryCode.length <= 64 ? body.recoveryCode : ''
@@ -354,6 +416,10 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
     server,
     path: '/ws',
     verifyClient({ req }, done) {
+      if (!requestOriginAllowed(req, originAllowlist)) {
+        done(false, 403, 'Origin not allowed')
+        return
+      }
       const token = new URL(req.url, 'http://localhost').searchParams.get('token') ?? ''
       const session = token ? store.getSession(token) : null
       if (!session) {

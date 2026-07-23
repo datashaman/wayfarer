@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { WebSocket } from 'ws'
 import { createRoomServer } from '../server/app.mjs'
-import { parseIceServers } from '../server/config.mjs'
+import { parseAllowedOrigins, parseIceServers } from '../server/config.mjs'
 
 async function json(url, options = {}) {
   const response = await fetch(url, {
@@ -77,6 +77,47 @@ test('invalid ICE server configuration is rejected', () => {
     () => parseIceServers('[{"urls":["https://not-an-ice-server.example"]}]'),
     /STUN or TURN URL/,
   )
+})
+
+test('allowed browser origins are parsed and validated', () => {
+  assert.deepEqual(parseAllowedOrigins('https://table.example,https://play.example:8443'), ['https://table.example', 'https://play.example:8443'])
+  assert.equal(parseAllowedOrigins(undefined), undefined)
+  assert.throws(() => parseAllowedOrigins('table.example'), /HTTP origins/)
+  assert.throws(() => parseAllowedOrigins('https://table.example/path'), /HTTP origins/)
+})
+
+test('health checks, exact-origin CORS, and public rate limits protect the server boundary', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-boundary-'))
+  const app = createRoomServer({
+    databasePath: join(directory, 'table.sqlite'),
+    allowedOrigins: ['https://table.example'],
+    rateLimits: { campaigns: { max: 1, windowMs: 60_000 } },
+  })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+
+  t.after(async () => {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const health = await fetch(`${origin}/api/health`)
+  const allowed = await fetch(`${origin}/api/health`, { headers: { origin: 'https://table.example' } })
+  const blocked = await fetch(`${origin}/api/health`, { headers: { origin: 'https://attacker.example' } })
+  const create = () => fetch(`${origin}/api/campaigns`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ campaignName: 'The Long Road', playerName: 'Mara' }),
+  })
+  const first = await create()
+  const limited = await create()
+
+  assert.equal(health.status, 200)
+  assert.deepEqual(await health.json(), { status: 'ok' })
+  assert.equal(allowed.headers.get('access-control-allow-origin'), 'https://table.example')
+  assert.equal(blocked.status, 403)
+  assert.equal(first.status, 201)
+  assert.equal(limited.status, 429)
+  assert.equal(limited.headers.get('retry-after'), '60')
 })
 
 test('a campaign creator can invite another player to the table', async (t) => {

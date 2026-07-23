@@ -12,7 +12,7 @@ export default defineConfig({
   webServer: [
     {
       command: 'PORT=8792 DATABASE_PATH=:memory: node server.mjs --dev',
-      url: 'http://127.0.0.1:8792/api/config',
+      url: 'http://127.0.0.1:8792/api/health',
       reuseExistingServer: false,
       timeout: 30_000,
     },

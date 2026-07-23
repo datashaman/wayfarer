@@ -1,11 +1,14 @@
 import { createRoomServer } from './server/app.mjs'
-import { parseIceServers } from './server/config.mjs'
+import { parseAllowedOrigins, parseIceServers } from './server/config.mjs'
 
 const port = Number(process.env.PORT ?? 8787)
+const dev = process.argv.includes('--dev')
 const app = createRoomServer({
   databasePath: process.env.DATABASE_PATH,
-  dev: process.argv.includes('--dev'),
+  dev,
   iceServers: parseIceServers(process.env.ICE_SERVERS),
+  allowedOrigins: parseAllowedOrigins(process.env.ALLOWED_ORIGINS),
+  trustProxy: process.env.TRUST_PROXY === '1',
 })
 
 await app.listen(port)

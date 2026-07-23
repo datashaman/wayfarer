@@ -186,6 +186,10 @@ export function createStore(databasePath) {
   }
 
   return {
+    health() {
+      return database.prepare('SELECT 1 AS healthy').get().healthy === 1
+    },
+
     createCampaign(campaignName, playerName) {
       const campaign = { id: randomUUID(), name: campaignName, inviteCode: randomBytes(5).toString('hex') }
       database.exec('BEGIN IMMEDIATE')

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.playwright-mcp/
+
+.DS_Store
+*.log
+*.local
+*.tsbuildinfo
+
+.env
+.env.*
+!.env.example

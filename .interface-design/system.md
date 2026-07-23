@@ -71,7 +71,7 @@ Use an 8px base spacing unit, with 4px allowed for micro-gaps and optical correc
 
 Persistent top-level context containing the campaign identity, connection state, search, help, and mobile drawer controls. Keep it compact at 64px desktop and 58px mobile.
 
-The invitation action belongs beside the campaign identity and copies a campaign-scoped join URL. Confirm completion briefly in the same control; do not expose raw tokens or add a separate setup panel.
+The invitation action belongs beside the campaign identity and opens a narrow invitation folio available to every seated player. Show the campaign name, join QR, campaign-scoped link, copy action, and native share action when supported. This is a player-facing handoff surface, not a setup panel; it must never include session or recovery credentials.
 
 ### Campaign entry
 

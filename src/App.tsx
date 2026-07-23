@@ -12,9 +12,11 @@ import {
   Mic,
   MicOff,
   PanelRight,
+  QrCode,
   Radio,
   RefreshCw,
   Send,
+  Share2,
   Settings,
   UserMinus,
   Users,
@@ -128,6 +130,14 @@ function recoveryUrl(inviteCode: string, seed: RecoverySeed) {
   return url.toString()
 }
 
+function campaignInviteUrl(inviteCode: string) {
+  const url = new URL(location.href)
+  url.search = ''
+  url.searchParams.set('campaign', inviteCode)
+  url.hash = ''
+  return url.toString()
+}
+
 function SeatKeyPanel({ inviteCode, playerName, recoveryCode, onDone, compact = false }: RecoverySeed & { inviteCode: string; onDone: () => void; compact?: boolean }) {
   const [qrDataUrl, setQrDataUrl] = useState('')
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
@@ -166,6 +176,70 @@ function SeatKeyPanel({ inviteCode, playerName, recoveryCode, onDone, compact = 
       </div>
       <button className="primary-action seat-key-done" type="button" onClick={onDone}>{compact ? 'Done' : 'I saved my seat key'}</button>
     </section>
+  )
+}
+
+function InvitationSheet({ campaign, onClose }: { campaign: Campaign; onClose: () => void }) {
+  const [qrDataUrl, setQrDataUrl] = useState('')
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const [shareError, setShareError] = useState('')
+  const url = campaignInviteUrl(campaign.inviteCode)
+  const canShare = typeof navigator.share === 'function'
+
+  useEffect(() => {
+    let active = true
+    void QRCode.toDataURL(url, {
+      errorCorrectionLevel: 'M', margin: 2, width: 216,
+      color: { dark: '#12100d', light: '#e9dfca' },
+    }).then((image) => { if (active) setQrDataUrl(image) })
+    return () => { active = false }
+  }, [url])
+
+  useEffect(() => {
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [onClose])
+
+  const copyInvitation = async () => {
+    const copied = await copyText(url)
+    setCopyState(copied ? 'copied' : 'failed')
+    window.setTimeout(() => setCopyState('idle'), 1_800)
+  }
+
+  const shareInvitation = async () => {
+    setShareError('')
+    try {
+      await navigator.share({ title: campaign.name, text: `Join ${campaign.name} at Wayfarer's Table.`, url })
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') return
+      setShareError('This browser could not open its share menu. Copy the invitation instead.')
+    }
+  }
+
+  return (
+    <div className="invite-sheet-layer" role="dialog" aria-modal="true" aria-labelledby="invite-sheet-heading">
+      <button className="drawer-scrim" onClick={onClose} aria-label="Close invitation" />
+      <aside className="invite-sheet">
+        <div className="drawer-heading"><span>Campaign invitation</span><button className="icon-button" onClick={onClose} aria-label="Close invitation"><X size={18} /></button></div>
+        <div className="invite-sheet-body">
+          <div className="campaign-sigil invite-sheet-sigil" aria-hidden="true"><BookOpen size={21} /></div>
+          <span className="eyebrow">Wayfarer's Table</span>
+          <h1 id="invite-sheet-heading">{campaign.name}</h1>
+          <p>Scan to join as a new player, or send the invitation link.</p>
+          <div className="invite-qr">
+            {qrDataUrl ? <img src={qrDataUrl} alt={`QR code to join ${campaign.name}`} /> : <span>Preparing invitation…</span>}
+          </div>
+          <div className="invite-link"><span>Invitation link</span><code>{url}</code></div>
+          {shareError && <div className="entry-error" role="alert">{shareError}</div>}
+          <div className="invite-sheet-actions">
+            <button className="primary-action" type="button" onClick={copyInvitation}>{copyState === 'copied' ? <Check size={16} /> : <Copy size={16} />}{copyState === 'copied' ? 'Invitation copied' : copyState === 'failed' ? 'Copy failed' : 'Copy invitation'}</button>
+            {canShare && <button className="folio-button" type="button" onClick={shareInvitation}><Share2 size={15} /> Share…</button>}
+          </div>
+          <small className="invite-note">Anyone with this invitation can take a new seat. The campaign owner can replace it at any time.</small>
+        </div>
+      </aside>
+    </div>
   )
 }
 
@@ -425,12 +499,12 @@ function CampaignFolio({
   session,
   onClose,
   onCampaign,
-  onCopyInvite,
+  onOpenInvitation,
 }: {
   session: TableSession
   onClose: () => void
   onCampaign: (campaign: Campaign) => void
-  onCopyInvite: () => void
+  onOpenInvitation: () => void
 }) {
   const [management, setManagement] = useState<CampaignManagement | null>(null)
   const [error, setError] = useState('')
@@ -561,7 +635,7 @@ function CampaignFolio({
             <div className="folio-section-heading"><div><span className="eyebrow">Invitation</span><h2 id="invitation-heading">Bring players to the table</h2></div></div>
             <p>Replacing the invitation immediately closes the previous link.</p>
             <div className="folio-actions">
-              <button className="folio-button" onClick={onCopyInvite}><Copy size={15} /> Copy invitation</button>
+              <button className="folio-button" onClick={onOpenInvitation}><QrCode size={15} /> Open invitation</button>
               <button className={`folio-button ${confirming === 'invitation' ? 'folio-button--danger' : ''}`} onClick={rotateInvitation} disabled={pending === 'invitation'}><RefreshCw size={15} />{pending === 'invitation' ? 'Replacing…' : confirming === 'invitation' ? 'Confirm replacement' : 'Replace invitation'}</button>
             </div>
           </section>
@@ -616,7 +690,7 @@ function App() {
   const [mobileLedger, setMobileLedger] = useState(false)
   const [mobileTable, setMobileTable] = useState(false)
   const [campaignFolio, setCampaignFolio] = useState(false)
-  const [inviteCopyState, setInviteCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const [invitationSheet, setInvitationSheet] = useState(false)
   const clientRef = useRef<RealtimeClient | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const peersRef = useRef(new Map<string, RTCPeerConnection>())
@@ -908,15 +982,6 @@ function App() {
     history.replaceState({}, '', url)
   }
 
-  const copyInvite = async () => {
-    if (!session) return
-    const url = new URL(location.href)
-    url.searchParams.set('campaign', session.campaign.inviteCode)
-    const copied = await copyText(url.toString())
-    setInviteCopyState(copied ? 'copied' : 'failed')
-    window.setTimeout(() => setInviteCopyState('idle'), 1_800)
-  }
-
   const leaveVoice = () => {
     clientRef.current?.send(createEvent('voice.leave', activeRoomRef.current, {}))
     streamRef.current?.getTracks().forEach((track) => track.stop())
@@ -1009,7 +1074,7 @@ function App() {
         </div>
         <div className="campaign-actions">
           {connection !== 'live' && <span className="connection-state"><i />{connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span>}
-          <button className="text-button invite-button" onClick={copyInvite}>{inviteCopyState === 'copied' ? <Check size={15} /> : <Copy size={15} />}{inviteCopyState === 'copied' ? 'Copied' : inviteCopyState === 'failed' ? 'Copy failed' : 'Invite players'}</button>
+          <button className="text-button invite-button" onClick={() => setInvitationSheet(true)}><QrCode size={15} />Invite players</button>
           {session.player.role === 'owner' && <button className="icon-button" onClick={() => setCampaignFolio(true)} aria-label="Open campaign folio"><Settings size={18} /></button>}
           <button className="icon-button mobile-only" onClick={() => setMobileTable(true)} aria-label="Open voice table"><Users size={19} /></button>
         </div>
@@ -1048,7 +1113,8 @@ function App() {
         </div>
       )}
 
-      {campaignFolio && <CampaignFolio session={session} onClose={() => setCampaignFolio(false)} onCampaign={updateCampaign} onCopyInvite={copyInvite} />}
+      {campaignFolio && <CampaignFolio session={session} onClose={() => setCampaignFolio(false)} onCampaign={updateCampaign} onOpenInvitation={() => { setCampaignFolio(false); setInvitationSheet(true) }} />}
+      {invitationSheet && <InvitationSheet campaign={session.campaign} onClose={() => setInvitationSheet(false)} />}
 
       <div className="voice-dock mobile-only">
         {!joinedVoice ? <button className="primary-action" onClick={joinVoice} disabled={joiningVoice || connection !== 'live' || !voiceConfigReady}><Headphones size={17} />{joiningVoice ? 'Joining…' : voiceConfigReady ? 'Join voice' : 'Preparing voice…'}</button> : <><button className={`dock-mic ${muted ? 'dock-mic--muted' : ''}`} onClick={() => setMuted((current) => !current)} aria-label={muted ? 'Unmute' : 'Mute'}>{muted ? <MicOff size={18} /> : <Mic size={18} />}</button><span>{Object.values(peerConnectionStates).includes('failed') ? 'Voice issue' : Object.values(peerConnectionStates).includes('recovering') ? 'Reconnecting voice…' : muted ? 'Muted' : `${voiceParticipants.length} in voice`}</span><button className="quiet-icon" onClick={() => setMobileTable(true)} aria-label="Voice settings"><PanelRight size={17} /></button></>}

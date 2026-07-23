@@ -1134,6 +1134,124 @@ textarea:focus-visible {
   inset: 0;
 }
 
+.invite-sheet-layer {
+  position: fixed;
+  z-index: 44;
+  inset: 0;
+}
+
+.invite-sheet-layer .drawer-scrim {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  background: rgb(10 8 6 / 0.72);
+}
+
+.invite-sheet {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  width: min(400px, 94vw);
+  grid-template-rows: 54px minmax(0, 1fr);
+  border-left: 1px solid var(--border-strong);
+  background: var(--soot-925);
+}
+
+.invite-sheet-body {
+  min-height: 0;
+  padding: 32px 28px;
+  overflow-y: auto;
+}
+
+.invite-sheet-sigil {
+  width: 42px;
+  height: 42px;
+  margin-bottom: 24px;
+}
+
+.invite-sheet-body h1 {
+  margin: 7px 0 8px;
+  color: var(--parchment);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 27px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.invite-sheet-body > p {
+  margin: 0 0 24px;
+  color: var(--parchment-dim);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.invite-qr {
+  display: grid;
+  min-height: 218px;
+  place-items: center;
+  margin-bottom: 20px;
+  color: var(--parchment-muted);
+  font-size: 11px;
+}
+
+.invite-qr img {
+  display: block;
+  width: 216px;
+  height: 216px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-small);
+}
+
+.invite-link {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--soot-900);
+}
+
+.invite-link span {
+  color: var(--parchment-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.invite-link code {
+  overflow: hidden;
+  color: var(--parchment-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.invite-sheet-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.invite-sheet-actions .primary-action {
+  flex: 1;
+}
+
+.invite-note {
+  display: block;
+  color: var(--parchment-muted);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 .campaign-folio-layer .drawer-scrim {
   position: absolute;
   inset: 0;
@@ -1448,6 +1566,14 @@ textarea:focus-visible {
     width: 100%;
   }
 
+  .invite-sheet {
+    width: 100%;
+  }
+
+  .invite-sheet-body {
+    padding: 24px 20px;
+  }
+
   .folio-section {
     padding: 20px 16px;
   }
@@ -1543,6 +1669,10 @@ textarea:focus-visible {
   .desktop-help,
   .room-actions {
     display: none;
+  }
+
+  .invite-sheet-sigil {
+    display: grid;
   }
 
   .campaign-kicker {

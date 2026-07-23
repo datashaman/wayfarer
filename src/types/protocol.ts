@@ -92,6 +92,11 @@ export type ServerEvent =
   | Envelope<'error', { code: string; message: string; retryable: boolean }>
 
 export type ConnectionState = 'offline' | 'connecting' | 'live' | 'reconnecting'
+export type VoiceConnectionState = 'connecting' | 'connected' | 'recovering' | 'failed'
+
+export type RuntimeConfig = {
+  iceServers: RTCIceServer[]
+}
 
 type ClientPayloadMap = {
   'room.subscribe': Record<string, never>

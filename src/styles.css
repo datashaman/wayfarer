@@ -744,9 +744,8 @@ textarea:focus-visible {
   cursor: not-allowed;
 }
 
-.voice-error {
-  max-width: 760px;
-  margin: 0 auto 8px;
+.voice-table-error {
+  margin: 12px 4px 0;
   padding: 8px 10px;
   border: 1px solid rgb(207 114 95 / 0.35);
   border-radius: var(--radius-small);
@@ -806,6 +805,12 @@ textarea:focus-visible {
   background: rgb(145 169 117 / 0.06);
 }
 
+.voice-live--issue {
+  border-color: rgb(207 114 95 / 0.32);
+  color: #e2a293;
+  background: rgb(207 114 95 / 0.07);
+}
+
 .seat-list {
   display: grid;
   gap: 3px;
@@ -830,6 +835,14 @@ textarea:focus-visible {
 .seat--you {
   border-color: var(--border);
   background: var(--soot-875);
+}
+
+.seat--failed {
+  border-color: rgb(207 114 95 / 0.25);
+}
+
+.seat--failed .seat-copy span {
+  color: #e2a293;
 }
 
 .seat-copy strong,
@@ -987,6 +1000,26 @@ textarea:focus-visible {
 .voice-control--active {
   border-color: rgb(145 169 117 / 0.35);
   color: var(--moss);
+}
+
+.retry-voice {
+  display: flex;
+  min-height: 34px;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid rgb(207 114 95 / 0.3);
+  border-radius: var(--radius-small);
+  background: rgb(207 114 95 / 0.06);
+  color: #e2a293;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.retry-voice:hover {
+  background: rgb(207 114 95 / 0.11);
 }
 
 .leave-button {

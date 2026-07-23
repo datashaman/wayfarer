@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { WebSocket } from 'ws'
 import { createRoomServer } from '../server/app.mjs'
+import { parseIceServers } from '../server/config.mjs'
 
 async function json(url, options = {}) {
   const response = await fetch(url, {
@@ -42,6 +43,41 @@ function closeSocket(socket) {
     socket.close()
   })
 }
+
+test('runtime voice configuration exposes the configured ICE servers', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-config-'))
+  const iceServers = [
+    { urls: ['stun:stun.example.com:3478'] },
+    { urls: ['turns:turn.example.com:5349'], username: 'wayfarer', credential: 'secret' },
+  ]
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite'), iceServers })
+  const port = await app.listen(0)
+
+  t.after(async () => {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const unauthorized = await fetch(`http://127.0.0.1:${port}/api/config`)
+  assert.equal(unauthorized.status, 401)
+
+  const created = await json(`http://127.0.0.1:${port}/api/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({ campaignName: 'The Long Winter', playerName: 'Mara' }),
+  })
+  const response = await fetch(`http://127.0.0.1:${port}/api/config`, {
+    headers: { authorization: `Bearer ${created.body.player.token}` },
+  })
+  assert.equal(response.status, 200)
+  assert.deepEqual((await response.json()).iceServers, iceServers)
+})
+
+test('invalid ICE server configuration is rejected', () => {
+  assert.throws(
+    () => parseIceServers('[{"urls":["https://not-an-ice-server.example"]}]'),
+    /STUN or TURN URL/,
+  )
+})
 
 test('a campaign creator can invite another player to the table', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-campaign-'))

@@ -9,6 +9,7 @@ import {
   MicOff,
   PanelRight,
   Radio,
+  RefreshCw,
   Send,
   Users,
   X,
@@ -21,8 +22,10 @@ import {
   type CampaignRoom,
   type Participant,
   type RoomMessage,
+  type RuntimeConfig,
   type ServerEvent,
   type TableSession,
+  type VoiceConnectionState,
 } from './types/protocol'
 
 const avatarPalette = ['#b96b4b', '#7f9364', '#8b7fa4', '#ad8754', '#6d8794', '#a87955']
@@ -221,9 +224,12 @@ function VoiceTable({
   muted,
   pushToTalk,
   participants,
-  connectedPlayerIds,
+  peerConnectionStates,
   currentPlayerId,
+  configReady,
+  error,
   onJoin,
+  onRetry,
   onToggleMute,
   onTogglePushToTalk,
   onLeave,
@@ -233,37 +239,45 @@ function VoiceTable({
   muted: boolean
   pushToTalk: boolean
   participants: Participant[]
-  connectedPlayerIds: string[]
+  peerConnectionStates: Record<string, VoiceConnectionState>
   currentPlayerId: string
+  configReady: boolean
+  error: string
   onJoin: () => void
+  onRetry: () => void
   onToggleMute: () => void
   onTogglePushToTalk: () => void
   onLeave: () => void
 }) {
+  const hasFailedPeer = Object.values(peerConnectionStates).includes('failed')
+  const seatStatus = (participant: Participant) => {
+    if (participant.playerId === currentPlayerId) return muted ? 'Muted' : 'Microphone on'
+    if (!joined) return 'In voice'
+    const state = peerConnectionStates[participant.playerId] ?? 'connecting'
+    return state === 'connected'
+      ? participant.muted ? 'Muted · connected' : 'Connected'
+      : state === 'recovering' ? 'Reconnecting…'
+        : state === 'failed' ? 'Connection failed' : 'Connecting…'
+  }
+
   return (
     <aside className="table-presence" aria-label="Voice table">
       <div className="table-presence-heading">
         <div><span className="eyebrow">Voice table</span><h2>{participants.length} seated</h2></div>
-        {joined && <span className="voice-live voice-live--on"><Radio size={13} /> In voice</span>}
+        {joined && <span className={`voice-live ${hasFailedPeer ? 'voice-live--issue' : 'voice-live--on'}`}><Radio size={13} /> {hasFailedPeer ? 'Voice issue' : 'In voice'}</span>}
       </div>
+
+      {error && <div className="voice-table-error" role="alert">{error}</div>}
 
       <div className="seat-list">
         {participants.map((participant) => (
-          <div className={`seat ${participant.playerId === currentPlayerId ? 'seat--you' : ''}`} key={participant.playerId}>
+          <div className={`seat ${participant.playerId === currentPlayerId ? 'seat--you' : ''} ${peerConnectionStates[participant.playerId] === 'failed' ? 'seat--failed' : ''}`} key={participant.playerId}>
             <Avatar participant={participant} />
             <div className="seat-copy">
               <strong>{participant.name}{participant.playerId === currentPlayerId ? ' · you' : ''}</strong>
-              <span>
-                {participant.muted
-                  ? 'Muted'
-                  : participant.playerId === currentPlayerId
-                    ? 'Microphone on'
-                    : !joined
-                      ? 'In voice'
-                      : connectedPlayerIds.includes(participant.playerId) ? 'Connected' : 'Connecting…'}
-              </span>
+              <span>{seatStatus(participant)}</span>
             </div>
-            {participant.muted ? <MicOff size={15} /> : <Mic size={15} />}
+            {(participant.playerId === currentPlayerId ? muted : participant.muted) ? <MicOff size={15} /> : <Mic size={15} />}
           </div>
         ))}
 
@@ -273,11 +287,12 @@ function VoiceTable({
       </div>
 
       {!joined ? (
-        <button className="primary-action primary-action--wide" onClick={onJoin} disabled={joining}>
-          <Headphones size={17} /> {joining ? 'Joining…' : 'Join voice'}
+        <button className="primary-action primary-action--wide" onClick={onJoin} disabled={joining || !configReady}>
+          <Headphones size={17} /> {joining ? 'Joining…' : configReady ? 'Join voice' : 'Preparing voice…'}
         </button>
       ) : (
         <div className="voice-panel-controls">
+          {hasFailedPeer && <button className="retry-voice" onClick={onRetry}><RefreshCw size={15} /> Retry voice</button>}
           <button className={`voice-control ${muted ? 'voice-control--danger' : ''}`} onClick={onToggleMute}>
             {muted ? <MicOff size={17} /> : <Mic size={17} />}{muted ? 'Unmute' : 'Mute'}
           </button>
@@ -300,7 +315,8 @@ function App() {
   const [messages, setMessages] = useState<RoomMessage[]>([])
   const [participants, setParticipants] = useState<Participant[]>([])
   const [voiceParticipants, setVoiceParticipants] = useState<Participant[]>([])
-  const [connectedPlayerIds, setConnectedPlayerIds] = useState<string[]>([])
+  const [peerConnectionStates, setPeerConnectionStates] = useState<Record<string, VoiceConnectionState>>({})
+  const [voiceConfigReady, setVoiceConfigReady] = useState(false)
   const [connection, setConnection] = useState<ConnectionState>('offline')
   const [draft, setDraft] = useState(() => localStorage.getItem('wayfarer-draft') ?? '')
   const [joinedVoice, setJoinedVoice] = useState(false)
@@ -310,18 +326,31 @@ function App() {
   const [voiceError, setVoiceError] = useState('')
   const [mobileLedger, setMobileLedger] = useState(false)
   const [mobileTable, setMobileTable] = useState(false)
-  const [inviteCopied, setInviteCopied] = useState(false)
+  const [inviteCopyState, setInviteCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const clientRef = useRef<RealtimeClient | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const peersRef = useRef(new Map<string, RTCPeerConnection>())
   const audioRef = useRef(new Map<string, HTMLAudioElement>())
   const candidatesRef = useRef(new Map<string, RTCIceCandidateInit[]>())
+  const iceServersRef = useRef<RTCIceServer[]>([])
+  const recoveryAttemptsRef = useRef(new Map<string, number>())
+  const recoveryTimersRef = useRef(new Map<string, number>())
   const timelineRef = useRef<HTMLDivElement>(null)
   const rooms = session?.campaign.rooms ?? []
   const playerId = session?.player.id ?? ''
   const displayName = session?.player.name ?? ''
   const currentPlayer: Participant = { playerId, name: displayName, muted }
   const activeRoomData = rooms.find((room) => room.id === activeRoom) ?? rooms[0]
+
+  useEffect(() => {
+    if (!session) return
+    void api<RuntimeConfig>('/api/config', { headers: { authorization: `Bearer ${session.player.token}` } })
+      .then((config) => {
+        iceServersRef.current = config.iceServers
+        setVoiceConfigReady(true)
+      })
+      .catch(() => setVoiceError('Voice configuration could not be loaded. Reload the table to try again.'))
+  }, [session])
 
   useEffect(() => {
     const token = localStorage.getItem('wayfarer-token')
@@ -347,20 +376,77 @@ function App() {
     clientRef.current = client
     const peerMap = peersRef.current
 
+    const setPeerState = (peerId: string, state: VoiceConnectionState) => {
+      setPeerConnectionStates((current) => current[peerId] === state ? current : { ...current, [peerId]: state })
+    }
+
+    const clearRecovery = (peerId: string) => {
+      const timer = recoveryTimersRef.current.get(peerId)
+      if (timer !== undefined) window.clearTimeout(timer)
+      recoveryTimersRef.current.delete(peerId)
+      recoveryAttemptsRef.current.delete(peerId)
+    }
+
     const closePeer = (peerId: string) => {
-      peerMap.get(peerId)?.close()
+      const peer = peerMap.get(peerId)
       peerMap.delete(peerId)
+      peer?.close()
+      clearRecovery(peerId)
       const audio = audioRef.current.get(peerId)
       if (audio) { audio.pause(); audio.srcObject = null; audio.remove() }
       audioRef.current.delete(peerId)
       candidatesRef.current.delete(peerId)
-      setConnectedPlayerIds((current) => current.filter((id) => id !== peerId))
+      setPeerConnectionStates((current) => {
+        if (!(peerId in current)) return current
+        const next = { ...current }
+        delete next[peerId]
+        return next
+      })
+    }
+
+    const scheduleRecovery = (peerId: string, peer: RTCPeerConnection, delay: number) => {
+      if (peerMap.get(peerId) !== peer || peer.connectionState === 'closed') return
+      setPeerState(peerId, 'recovering')
+
+      const existingTimer = recoveryTimersRef.current.get(peerId)
+      if (existingTimer !== undefined) window.clearTimeout(existingTimer)
+
+      const isRecoveryLeader = session.player.id.localeCompare(peerId) < 0
+      const recoveryDelay = isRecoveryLeader ? delay : Math.max(delay, 12_000)
+      const timer = window.setTimeout(async () => {
+        recoveryTimersRef.current.delete(peerId)
+        if (peerMap.get(peerId) !== peer || peer.connectionState === 'connected' || peer.connectionState === 'closed') return
+
+        if (!isRecoveryLeader) {
+          setPeerState(peerId, 'failed')
+          return
+        }
+
+        const attempt = (recoveryAttemptsRef.current.get(peerId) ?? 0) + 1
+        recoveryAttemptsRef.current.set(peerId, attempt)
+        if (attempt > 2) {
+          setPeerState(peerId, 'failed')
+          return
+        }
+
+        try {
+          peer.restartIce()
+          const offer = await peer.createOffer({ iceRestart: true })
+          await peer.setLocalDescription(offer)
+          client.send(createEvent('voice.offer', activeRoomRef.current, { targetPlayerId: peerId, sdp: offer }))
+          scheduleRecovery(peerId, peer, attempt === 1 ? 5_000 : 8_000)
+        } catch {
+          scheduleRecovery(peerId, peer, 1_000)
+        }
+      }, recoveryDelay)
+      recoveryTimersRef.current.set(peerId, timer)
     }
 
     const createPeer = (peerId: string) => {
       const existing = peerMap.get(peerId)
       if (existing) return existing
-      const peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+      const peer = new RTCPeerConnection({ iceServers: iceServersRef.current })
+      setPeerState(peerId, 'connecting')
       streamRef.current?.getTracks().forEach((track) => peer.addTrack(track, streamRef.current!))
       peer.onicecandidate = ({ candidate }) => {
         if (candidate) client.send(createEvent('voice.ice_candidate', activeRoomRef.current, { targetPlayerId: peerId, candidate: candidate.toJSON() }))
@@ -378,11 +464,16 @@ function App() {
       }
       peer.onconnectionstatechange = () => {
         if (peer.connectionState === 'connected') {
-          setConnectedPlayerIds((current) => current.includes(peerId) ? current : [...current, peerId])
-        } else if (['disconnected', 'failed', 'closed'].includes(peer.connectionState)) {
-          setConnectedPlayerIds((current) => current.filter((id) => id !== peerId))
+          clearRecovery(peerId)
+          setPeerState(peerId, 'connected')
+          setVoiceError('')
+        } else if (peer.connectionState === 'disconnected') {
+          scheduleRecovery(peerId, peer, 1_500)
+        } else if (peer.connectionState === 'failed') {
+          scheduleRecovery(peerId, peer, 0)
+        } else if (['new', 'connecting'].includes(peer.connectionState)) {
+          setPeerConnectionStates((current) => current[peerId] === 'recovering' ? current : { ...current, [peerId]: 'connecting' })
         }
-        if (['failed', 'closed'].includes(peer.connectionState)) closePeer(peerId)
       }
       peerMap.set(peerId, peer)
       return peer
@@ -437,7 +528,9 @@ function App() {
       }
     }
 
-    const unsubscribeEvent = client.onEvent((event) => { void handleEvent(event) })
+    const unsubscribeEvent = client.onEvent((event) => {
+      void handleEvent(event).catch(() => setVoiceError('A voice connection could not be negotiated. Retry voice to reconnect.'))
+    })
     const unsubscribeState = client.onState((state) => {
       setConnection(state)
       if (state === 'live') {
@@ -489,9 +582,22 @@ function App() {
     if (!session) return
     const url = new URL(location.href)
     url.searchParams.set('campaign', session.campaign.inviteCode)
-    await navigator.clipboard.writeText(url.toString())
-    setInviteCopied(true)
-    window.setTimeout(() => setInviteCopied(false), 1_800)
+    let copied: boolean
+    try {
+      await navigator.clipboard.writeText(url.toString())
+      copied = true
+    } catch {
+      const field = document.createElement('textarea')
+      field.value = url.toString()
+      field.style.position = 'fixed'
+      field.style.opacity = '0'
+      document.body.append(field)
+      field.select()
+      copied = document.execCommand('copy')
+      field.remove()
+    }
+    setInviteCopyState(copied ? 'copied' : 'failed')
+    window.setTimeout(() => setInviteCopyState('idle'), 1_800)
   }
 
   const leaveVoice = () => {
@@ -500,13 +606,34 @@ function App() {
     streamRef.current = null
     peersRef.current.forEach((peer) => peer.close())
     peersRef.current.clear()
+    recoveryTimersRef.current.forEach((timer) => window.clearTimeout(timer))
+    recoveryTimersRef.current.clear()
+    recoveryAttemptsRef.current.clear()
     audioRef.current.forEach((audio) => { audio.pause(); audio.remove() })
     audioRef.current.clear()
     setVoiceParticipants((current) => current.filter((participant) => participant.playerId !== playerId))
-    setConnectedPlayerIds([])
+    setPeerConnectionStates({})
     setJoinedVoice(false)
     setMuted(false)
     setPushToTalk(false)
+  }
+
+  const retryVoice = () => {
+    if (!joinedVoice || !streamRef.current || connection !== 'live') return
+    setVoiceError('')
+    clientRef.current?.send(createEvent('voice.leave', activeRoomRef.current, {}))
+    peersRef.current.forEach((peer) => peer.close())
+    peersRef.current.clear()
+    recoveryTimersRef.current.forEach((timer) => window.clearTimeout(timer))
+    recoveryTimersRef.current.clear()
+    recoveryAttemptsRef.current.clear()
+    candidatesRef.current.clear()
+    audioRef.current.forEach((audio) => { audio.pause(); audio.srcObject = null; audio.remove() })
+    audioRef.current.clear()
+    setPeerConnectionStates({})
+    window.setTimeout(() => {
+      if (streamRef.current && clientRef.current) clientRef.current.send(createEvent('voice.join', activeRoomRef.current, {}))
+    }, 200)
   }
 
   const changeRoom = (roomId: string) => {
@@ -517,12 +644,12 @@ function App() {
     setMessages([])
     setParticipants([])
     setVoiceParticipants([])
-    setConnectedPlayerIds([])
+    setPeerConnectionStates({})
     if (connection === 'live') clientRef.current?.send(createEvent('room.subscribe', roomId, {}))
   }
 
   const joinVoice = async () => {
-    if (joiningVoice || connection !== 'live') return
+    if (joiningVoice || connection !== 'live' || !voiceConfigReady) return
     setVoiceError('')
     setJoiningVoice(true)
     try {
@@ -565,7 +692,7 @@ function App() {
         </div>
         <div className="campaign-actions">
           {connection !== 'live' && <span className="connection-state"><i />{connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span>}
-          <button className="text-button invite-button" onClick={copyInvite}>{inviteCopied ? <Check size={15} /> : <Copy size={15} />}{inviteCopied ? 'Copied' : 'Invite players'}</button>
+          <button className="text-button invite-button" onClick={copyInvite}>{inviteCopyState === 'copied' ? <Check size={15} /> : <Copy size={15} />}{inviteCopyState === 'copied' ? 'Copied' : inviteCopyState === 'failed' ? 'Copy failed' : 'Invite players'}</button>
           <button className="icon-button mobile-only" onClick={() => setMobileTable(true)} aria-label="Open voice table"><Users size={19} /></button>
         </div>
       </header>
@@ -580,7 +707,6 @@ function App() {
           )}
         </div>
         <div className="composer-wrap">
-          {voiceError && <div className="voice-error" role="alert">{voiceError}</div>}
           <form className="composer" onSubmit={sendMessage}>
             <textarea rows={1} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={handleComposerKeyDown} maxLength={2_000} placeholder={`Message #${activeRoomData.name}`} aria-label={`Message ${activeRoomData.name}`} disabled={connection !== 'live'} />
             <div className="composer-footer"><span>Enter to send · Shift + Enter for a new line</span><button className="send-button" type="submit" disabled={!draft.trim() || connection !== 'live'} aria-label="Send message"><Send size={16} /></button></div>
@@ -588,7 +714,7 @@ function App() {
         </div>
       </main>
 
-      <VoiceTable joined={joinedVoice} joining={joiningVoice} muted={muted} pushToTalk={pushToTalk} participants={voiceParticipants} connectedPlayerIds={connectedPlayerIds} currentPlayerId={playerId} onJoin={joinVoice} onToggleMute={() => setMuted((current) => !current)} onTogglePushToTalk={togglePushToTalk} onLeave={leaveVoice} />
+      <VoiceTable joined={joinedVoice} joining={joiningVoice} muted={muted} pushToTalk={pushToTalk} participants={voiceParticipants} peerConnectionStates={peerConnectionStates} currentPlayerId={playerId} configReady={voiceConfigReady} error={voiceError} onJoin={joinVoice} onRetry={retryVoice} onToggleMute={() => setMuted((current) => !current)} onTogglePushToTalk={togglePushToTalk} onLeave={leaveVoice} />
 
       {mobileLedger && (
         <div className="drawer-layer mobile-only" role="dialog" aria-modal="true" aria-label="Campaign navigation">
@@ -600,12 +726,12 @@ function App() {
       {mobileTable && (
         <div className="drawer-layer drawer-layer--right mobile-only" role="dialog" aria-modal="true" aria-label="Voice table controls">
           <button className="drawer-scrim" onClick={() => setMobileTable(false)} aria-label="Close voice table" />
-          <div className="mobile-table-drawer"><div className="drawer-heading"><span>Voice table</span><button className="icon-button" onClick={() => setMobileTable(false)} aria-label="Close voice table"><X size={18} /></button></div><VoiceTable joined={joinedVoice} joining={joiningVoice} muted={muted} pushToTalk={pushToTalk} participants={voiceParticipants} connectedPlayerIds={connectedPlayerIds} currentPlayerId={playerId} onJoin={joinVoice} onToggleMute={() => setMuted((current) => !current)} onTogglePushToTalk={togglePushToTalk} onLeave={leaveVoice} /></div>
+          <div className="mobile-table-drawer"><div className="drawer-heading"><span>Voice table</span><button className="icon-button" onClick={() => setMobileTable(false)} aria-label="Close voice table"><X size={18} /></button></div><VoiceTable joined={joinedVoice} joining={joiningVoice} muted={muted} pushToTalk={pushToTalk} participants={voiceParticipants} peerConnectionStates={peerConnectionStates} currentPlayerId={playerId} configReady={voiceConfigReady} error={voiceError} onJoin={joinVoice} onRetry={retryVoice} onToggleMute={() => setMuted((current) => !current)} onTogglePushToTalk={togglePushToTalk} onLeave={leaveVoice} /></div>
         </div>
       )}
 
       <div className="voice-dock mobile-only">
-        {!joinedVoice ? <button className="primary-action" onClick={joinVoice} disabled={joiningVoice || connection !== 'live'}><Headphones size={17} />{joiningVoice ? 'Joining…' : 'Join voice'}</button> : <><button className={`dock-mic ${muted ? 'dock-mic--muted' : ''}`} onClick={() => setMuted((current) => !current)} aria-label={muted ? 'Unmute' : 'Mute'}>{muted ? <MicOff size={18} /> : <Mic size={18} />}</button><span>{muted ? 'Muted' : `${voiceParticipants.length} in voice`}</span><button className="quiet-icon" onClick={() => setMobileTable(true)} aria-label="Voice settings"><PanelRight size={17} /></button></>}
+        {!joinedVoice ? <button className="primary-action" onClick={joinVoice} disabled={joiningVoice || connection !== 'live' || !voiceConfigReady}><Headphones size={17} />{joiningVoice ? 'Joining…' : voiceConfigReady ? 'Join voice' : 'Preparing voice…'}</button> : <><button className={`dock-mic ${muted ? 'dock-mic--muted' : ''}`} onClick={() => setMuted((current) => !current)} aria-label={muted ? 'Unmute' : 'Mute'}>{muted ? <MicOff size={18} /> : <Mic size={18} />}</button><span>{Object.values(peerConnectionStates).includes('failed') ? 'Voice issue' : Object.values(peerConnectionStates).includes('recovering') ? 'Reconnecting voice…' : muted ? 'Muted' : `${voiceParticipants.length} in voice`}</span><button className="quiet-icon" onClick={() => setMobileTable(true)} aria-label="Voice settings"><PanelRight size={17} /></button></>}
       </div>
     </div>
   )

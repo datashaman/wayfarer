@@ -1,9 +1,11 @@
 import { createRoomServer } from './server/app.mjs'
+import { parseIceServers } from './server/config.mjs'
 
 const port = Number(process.env.PORT ?? 8787)
 const app = createRoomServer({
   databasePath: process.env.DATABASE_PATH,
   dev: process.argv.includes('--dev'),
+  iceServers: parseIceServers(process.env.ICE_SERVERS),
 })
 
 await app.listen(port)

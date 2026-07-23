@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocket, WebSocketServer } from 'ws'
+import { defaultIceServers } from './config.mjs'
 import { createStore } from './store.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -38,7 +39,7 @@ function cleanName(value, maximum) {
   return name && name.length <= maximum ? name : null
 }
 
-export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false } = {}) {
+export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers } = {}) {
   const store = createStore(databasePath)
   const clients = new Map()
   const server = createServer(async (request, response) => {
@@ -48,6 +49,13 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
     }
 
     try {
+      if (request.method === 'GET' && request.url === '/api/config') {
+        const token = request.headers.authorization?.replace(/^Bearer\s+/i, '') ?? ''
+        const session = token ? store.getSession(token) : null
+        sendJson(response, session ? 200 : 401, session ? { iceServers } : { error: 'Session not found.' })
+        return
+      }
+
       if (request.method === 'POST' && request.url === '/api/campaigns') {
         const body = await readJson(request)
         const campaignName = cleanName(body.campaignName, 80)

@@ -222,6 +222,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 400, { error: 'Every citation must belong to this campaign.' })
           return
         }
+        broadcastCanon(requestSession.campaign.id)
         sendJson(response, 201, { proposal: result.proposal })
         return
       }
@@ -252,6 +253,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           extractorVersion: canonExtractor.version,
           ...draft,
         })
+        broadcastCanon(requestSession.campaign.id)
         sendJson(response, 200, {
           proposals: store.listCanonProposals(requestSession.campaign.id, { includeGmOnly: true }),
           entries: existingCanon,
@@ -276,11 +278,14 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           : cleanCanonText(body.reason, 500)
         const title = action === 'edit_accept' ? cleanCanonText(body.title, 80) : null
         const claim = action === 'edit_accept' ? cleanCanonText(body.claim, 2_000) : null
-        if (!action || reason === undefined || (action === 'edit_accept' && (!title || !claim))) {
+        const visibility = action === 'accept' || action === 'edit_accept'
+          ? canonVisibilities.has(body.visibility) ? body.visibility : null
+          : null
+        if (!action || reason === undefined || (action === 'edit_accept' && (!title || !claim)) || ((action === 'accept' || action === 'edit_accept') && !visibility)) {
           sendJson(response, 400, { error: 'Canon decision fields are invalid.' })
           return
         }
-        const result = store.decideCanonProposal(requestSession.campaign.id, requestSession.player.id, canonDecision[1], { action, reason, title, claim })
+        const result = store.decideCanonProposal(requestSession.campaign.id, requestSession.player.id, canonDecision[1], { action, reason, title, claim, visibility })
         if (result.outcome === 'not_found') {
           sendJson(response, 404, { error: 'Canon proposal not found.' })
           return
@@ -289,6 +294,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 409, { error: 'This proposal was already decided.', proposal: result.proposal })
           return
         }
+        broadcastCanon(requestSession.campaign.id)
         sendJson(response, 200, { proposal: result.proposal, entries: store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true }) })
         return
       }
@@ -627,6 +633,17 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
 
   function broadcastCampaignEvent(campaignId, event) {
     for (const [socket, client] of clients) if (client.campaign.id === campaignId) send(socket, event)
+  }
+
+  function broadcastCanon(campaignId) {
+    for (const [socket, client] of clients) {
+      if (client.campaign.id !== campaignId) continue
+      const includeGmOnly = client.player.role === 'owner'
+      send(socket, envelope('campaign.canon_updated', campaignId, {
+        proposals: store.listCanonProposals(campaignId, { includeGmOnly }),
+        entries: store.listCanonEntries(campaignId, { includeGmOnly }),
+      }))
+    }
   }
 
   function presenceSnapshot(roomId) {

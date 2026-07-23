@@ -904,9 +904,11 @@ test('canon proposals require cited campaign messages and owner review', async (
   const port = await app.listen(0)
   const origin = `http://127.0.0.1:${port}`
   let ownerSocket
+  let memberSocket
 
   t.after(async () => {
     ownerSocket?.close()
+    memberSocket?.close()
     await app.close()
     await rm(directory, { recursive: true, force: true })
   })
@@ -923,9 +925,13 @@ test('canon proposals require cited campaign messages and owner review', async (
   const memberAuthorization = { authorization: `Bearer ${joined.body.player.token}` }
   const roomId = created.body.campaign.rooms[0].id
   ownerSocket = await openSocket(`ws://127.0.0.1:${port}/ws?token=${created.body.player.token}`)
+  memberSocket = await openSocket(`ws://127.0.0.1:${port}/ws?token=${joined.body.player.token}`)
   const snapshot = nextEvent(ownerSocket, 'room.snapshot')
   ownerSocket.send(JSON.stringify({ type: 'room.subscribe', id: crypto.randomUUID(), roomId, sentAt: new Date().toISOString(), payload: {} }))
   await snapshot
+  const memberSnapshot = nextEvent(memberSocket, 'room.snapshot')
+  memberSocket.send(JSON.stringify({ type: 'room.subscribe', id: crypto.randomUUID(), roomId, sentAt: new Date().toISOString(), payload: {} }))
+  await memberSnapshot
   const messageEvent = nextEvent(ownerSocket, 'chat.message')
   ownerSocket.send(JSON.stringify({
     type: 'chat.send',
@@ -972,14 +978,19 @@ test('canon proposals require cited campaign messages and owner review', async (
   })
   assert.equal(memberDecision.status, 403)
 
-  const accepted = await json(`${origin}/api/campaign/canon/proposals/${shared.body.proposal.id}/decisions`, {
+  const memberCanonUpdated = nextEvent(memberSocket, 'campaign.canon_updated')
+  const accepted = await json(`${origin}/api/campaign/canon/proposals/${privateProposal.body.proposal.id}/decisions`, {
     method: 'POST',
     headers: ownerAuthorization,
-    body: JSON.stringify({ action: 'edit_accept', title: 'Ilyra, lighthouse keeper', claim: 'Ilyra keeps the lighthouse.' }),
+    body: JSON.stringify({ action: 'edit_accept', title: 'Ilyra, lighthouse keeper', claim: 'Ilyra keeps the lighthouse.', visibility: 'campaign' }),
   })
   assert.equal(accepted.status, 200)
   assert.equal(accepted.body.entries[0].title, 'Ilyra, lighthouse keeper')
-  const repeated = await json(`${origin}/api/campaign/canon/proposals/${shared.body.proposal.id}/decisions`, {
+  assert.equal(accepted.body.entries[0].visibility, 'campaign')
+  const memberUpdate = await memberCanonUpdated
+  assert.equal(memberUpdate.payload.entries[0].title, 'Ilyra, lighthouse keeper')
+  assert.equal(memberUpdate.payload.entries.some((entry) => entry.visibility === 'gm_only'), false)
+  const repeated = await json(`${origin}/api/campaign/canon/proposals/${privateProposal.body.proposal.id}/decisions`, {
     method: 'POST',
     headers: ownerAuthorization,
     body: JSON.stringify({ action: 'reject' }),

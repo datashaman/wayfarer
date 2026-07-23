@@ -38,7 +38,7 @@ test('the owner reviews a cited canon proposal and returns to its source', async
   expect(closeBox!.height).toBeGreaterThanOrEqual(34)
   await expect(ledger.getByText('Ilyra', { exact: true })).toBeVisible()
   await expect(ledger.getByText('AI suggestion')).toBeVisible()
-  await ledger.getByRole('button', { name: 'Accept', exact: true }).click()
+  await ledger.getByRole('button', { name: 'Share with party' }).click()
   await expect(ledger.getByRole('heading', { name: 'Accepted canon' })).toBeVisible()
   await expect(ledger.getByText('Accepted by Mara')).toBeVisible()
   await ledger.getByRole('button', { name: 'Open citation from Mara in fireside' }).click()

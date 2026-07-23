@@ -1398,6 +1398,7 @@ textarea:focus-visible {
 }
 
 .canon-edit input,
+.canon-edit select,
 .canon-edit textarea {
   width: 100%;
   padding: 9px 10px;

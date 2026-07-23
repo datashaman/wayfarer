@@ -200,6 +200,7 @@ export function createStore(databasePath) {
       reason TEXT,
       accepted_title TEXT,
       accepted_claim TEXT,
+      accepted_visibility TEXT CHECK(accepted_visibility IS NULL OR accepted_visibility IN ('campaign', 'gm_only')),
       created_at TEXT NOT NULL
     );
   `)
@@ -226,6 +227,8 @@ export function createStore(databasePath) {
   const canonProposalColumns = database.prepare('PRAGMA table_info(canon_proposals)').all()
   if (!canonProposalColumns.some((column) => column.name === 'extraction_key')) database.exec('ALTER TABLE canon_proposals ADD COLUMN extraction_key TEXT')
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS canon_proposals_extraction_key ON canon_proposals(campaign_id, extraction_key) WHERE extraction_key IS NOT NULL')
+  const canonDecisionColumns = database.prepare('PRAGMA table_info(canon_decisions)').all()
+  if (!canonDecisionColumns.some((column) => column.name === 'accepted_visibility')) database.exec("ALTER TABLE canon_decisions ADD COLUMN accepted_visibility TEXT CHECK(accepted_visibility IS NULL OR accepted_visibility IN ('campaign', 'gm_only'))")
   database.exec("INSERT OR IGNORE INTO campaign_notes (campaign_id) SELECT id FROM campaigns")
   database.exec(`
     DELETE FROM messages
@@ -399,8 +402,8 @@ export function createStore(databasePath) {
   `)
   const insertCanonDecision = database.prepare(`
     INSERT INTO canon_decisions (
-      id, proposal_id, player_id, action, reason, accepted_title, accepted_claim, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      id, proposal_id, player_id, action, reason, accepted_title, accepted_claim, accepted_visibility, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertCanonEntry = database.prepare(`
     INSERT INTO canon_entries (
@@ -658,20 +661,21 @@ export function createStore(databasePath) {
         .map((row) => publicCanonProposal(row, canonSourcesForProposal.all(row.id)))
     },
 
-    decideCanonProposal(campaignId, playerId, proposalId, { action, reason = null, title = null, claim = null }) {
+    decideCanonProposal(campaignId, playerId, proposalId, { action, reason = null, title = null, claim = null, visibility = null }) {
       const proposal = canonProposalById.get(proposalId, campaignId)
       if (!proposal) return { outcome: 'not_found' }
       if (proposal.status !== 'proposed') return { outcome: 'already_decided', proposal: this.getCanonProposal(campaignId, proposalId) }
       const nextStatus = action === 'accept' || action === 'edit_accept' ? 'accepted' : action === 'dispute' ? 'disputed' : 'rejected'
       const acceptedTitle = action === 'edit_accept' ? title : proposal.title
       const acceptedClaim = action === 'edit_accept' ? claim : proposal.claim
+      const acceptedVisibility = nextStatus === 'accepted' ? visibility ?? proposal.visibility : null
       const now = new Date().toISOString()
       database.exec('BEGIN IMMEDIATE')
       try {
         if (updateCanonProposalStatus.run(nextStatus, proposalId, campaignId).changes !== 1) throw new Error('canon_proposal_conflict')
-        insertCanonDecision.run(randomUUID(), proposalId, playerId, action, reason, acceptedTitle, acceptedClaim, now)
+        insertCanonDecision.run(randomUUID(), proposalId, playerId, action, reason, acceptedTitle, acceptedClaim, acceptedVisibility, now)
         if (nextStatus === 'accepted') {
-          insertCanonEntry.run(randomUUID(), proposalId, campaignId, proposal.kind, acceptedTitle, acceptedClaim, proposal.visibility, playerId, now, now)
+          insertCanonEntry.run(randomUUID(), proposalId, campaignId, proposal.kind, acceptedTitle, acceptedClaim, acceptedVisibility, playerId, now, now)
         }
         database.exec('COMMIT')
       } catch (error) {

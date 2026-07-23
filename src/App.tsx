@@ -7,6 +7,7 @@ import {
   Copy,
   Hash,
   Headphones,
+  KeyRound,
   Menu,
   Mic,
   MicOff,
@@ -20,6 +21,7 @@ import {
   X,
 } from 'lucide-react'
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react'
+import QRCode from 'qrcode'
 import { RealtimeClient } from './lib/realtime'
 import {
   createEvent,
@@ -30,12 +32,15 @@ import {
   type Participant,
   type RoomMessage,
   type RuntimeConfig,
+  type SeatEntry,
   type ServerEvent,
   type TableSession,
   type VoiceConnectionState,
 } from './types/protocol'
 
 const avatarPalette = ['#b96b4b', '#7f9364', '#8b7fa4', '#ad8754', '#6d8794', '#a87955']
+
+type RecoverySeed = { playerName: string; recoveryCode: string }
 
 function initials(name: string) {
   return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || '?'
@@ -48,7 +53,7 @@ function avatarColor(id: string) {
 
 function serverOrigin() {
   if (import.meta.env.VITE_SERVER_URL) return String(import.meta.env.VITE_SERVER_URL)
-  return location.port === '5173' ? `${location.protocol}//${location.hostname}:8787` : location.origin
+  return import.meta.env.DEV ? `${location.protocol}//${location.hostname}:8787` : location.origin
 }
 
 function websocketUrl(token: string) {
@@ -58,7 +63,7 @@ function websocketUrl(token: string) {
     return custom.toString()
   }
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const host = location.port === '5173' ? `${location.hostname}:8787` : location.host
+  const host = import.meta.env.DEV ? `${location.hostname}:8787` : location.host
   return `${protocol}//${host}/ws?token=${encodeURIComponent(token)}`
 }
 
@@ -70,6 +75,98 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const body = await response.json()
   if (!response.ok) throw new Error(body.error ?? 'Unable to reach the table.')
   return body as T
+}
+
+async function copyText(value: string) {
+  try {
+    await navigator.clipboard.writeText(value)
+    return true
+  } catch {
+    const field = document.createElement('textarea')
+    field.value = value
+    field.style.position = 'fixed'
+    field.style.opacity = '0'
+    document.body.append(field)
+    field.select()
+    const copied = document.execCommand('copy')
+    field.remove()
+    return copied
+  }
+}
+
+function encodeRecoverySeed(seed: RecoverySeed) {
+  const bytes = new TextEncoder().encode(JSON.stringify(seed))
+  let binary = ''
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte) })
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
+}
+
+function readRecoverySeed(): RecoverySeed | null {
+  const match = location.hash.match(/^#recover=([A-Za-z0-9_-]+)$/)
+  if (!match) return null
+  const cleanUrl = new URL(location.href)
+  cleanUrl.hash = ''
+  history.replaceState({}, '', cleanUrl)
+  try {
+    const encoded = match[1].replaceAll('-', '+').replaceAll('_', '/')
+    const binary = atob(encoded.padEnd(Math.ceil(encoded.length / 4) * 4, '='))
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
+    const parsed = JSON.parse(new TextDecoder().decode(bytes)) as Partial<RecoverySeed>
+    return typeof parsed.playerName === 'string' && typeof parsed.recoveryCode === 'string'
+      ? { playerName: parsed.playerName, recoveryCode: parsed.recoveryCode }
+      : null
+  } catch {
+    return null
+  }
+}
+
+function recoveryUrl(inviteCode: string, seed: RecoverySeed) {
+  const url = new URL(location.href)
+  url.search = ''
+  url.searchParams.set('campaign', inviteCode)
+  url.hash = `recover=${encodeRecoverySeed(seed)}`
+  return url.toString()
+}
+
+function SeatKeyPanel({ inviteCode, playerName, recoveryCode, onDone, compact = false }: RecoverySeed & { inviteCode: string; onDone: () => void; compact?: boolean }) {
+  const [qrDataUrl, setQrDataUrl] = useState('')
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const url = recoveryUrl(inviteCode, { playerName, recoveryCode })
+
+  useEffect(() => {
+    let active = true
+    void QRCode.toDataURL(url, {
+      errorCorrectionLevel: 'M', margin: 1, width: 176,
+      color: { dark: '#12100d', light: '#e9dfca' },
+    }).then((image) => { if (active) setQrDataUrl(image) })
+    return () => { active = false }
+  }, [url])
+
+  const copyKey = async () => {
+    const copied = await copyText(recoveryCode)
+    setCopyState(copied ? 'copied' : 'failed')
+    window.setTimeout(() => setCopyState('idle'), 1_800)
+  }
+
+  return (
+    <section className={`seat-key ${compact ? 'seat-key--compact' : ''}`} aria-labelledby={`seat-key-${compact ? 'reset' : 'issued'}`}>
+      <div className="seat-key-copy">
+        <span className="eyebrow">Seat recovery</span>
+        <h2 id={`seat-key-${compact ? 'reset' : 'issued'}`}>Save {compact ? `${playerName}'s new key` : 'your seat key'}</h2>
+        <p>This key is shown once. Keep it private; it can move this seat to another browser.</p>
+        <code>{recoveryCode}</code>
+        <button className="folio-button" type="button" onClick={copyKey}>
+          {copyState === 'copied' ? <Check size={15} /> : <Copy size={15} />}
+          {copyState === 'copied' ? 'Key copied' : copyState === 'failed' ? 'Copy failed' : 'Copy seat key'}
+        </button>
+      </div>
+      <div className="seat-key-qr">
+        {qrDataUrl ? <img src={qrDataUrl} alt={`QR code for recovering ${playerName}'s seat`} /> : <span>Preparing QR…</span>}
+        <small>Scan on the browser where you want to recover this seat.</small>
+      </div>
+      <button className="primary-action seat-key-done" type="button" onClick={onDone}>{compact ? 'Done' : 'I saved my seat key'}</button>
+    </section>
+  )
 }
 
 function Avatar({ participant, size = 'regular' }: { participant: Participant; size?: 'small' | 'regular' }) {
@@ -84,24 +181,28 @@ function Avatar({ participant, size = 'regular' }: { participant: Participant; s
   )
 }
 
-function EntryGate({ inviteCode, notice, onEnter }: { inviteCode: string | null; notice?: string; onEnter: (session: TableSession) => void }) {
-  const [playerName, setPlayerName] = useState('')
+function EntryGate({ inviteCode, recoverySeed, notice, onEnter }: { inviteCode: string | null; recoverySeed: RecoverySeed | null; notice?: string; onEnter: (session: TableSession) => void }) {
+  const [playerName, setPlayerName] = useState(recoverySeed?.playerName ?? '')
   const [campaignName, setCampaignName] = useState('')
+  const [recoveryCode, setRecoveryCode] = useState(recoverySeed?.recoveryCode ?? '')
+  const [recovering, setRecovering] = useState(Boolean(recoverySeed))
+  const [issuedEntry, setIssuedEntry] = useState<SeatEntry | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
-    if (!playerName.trim() || (!inviteCode && !campaignName.trim())) return
+    if (!playerName.trim() || (!inviteCode && !campaignName.trim()) || (recovering && !recoveryCode.trim())) return
     setError('')
     setSubmitting(true)
     try {
-      const path = inviteCode ? `/api/invitations/${inviteCode}/join` : '/api/campaigns'
-      const session = await api<TableSession>(path, {
+      const path = recovering && inviteCode ? `/api/invitations/${inviteCode}/recover` : inviteCode ? `/api/invitations/${inviteCode}/join` : '/api/campaigns'
+      const session = await api<SeatEntry>(path, {
         method: 'POST',
-        body: JSON.stringify(inviteCode ? { playerName } : { campaignName, playerName }),
+        body: JSON.stringify(recovering ? { playerName, recoveryCode } : inviteCode ? { playerName } : { campaignName, playerName }),
       })
-      onEnter(session)
+      localStorage.setItem('wayfarer-token', session.player.token)
+      setIssuedEntry(session)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to enter the table.')
     } finally {
@@ -109,13 +210,17 @@ function EntryGate({ inviteCode, notice, onEnter }: { inviteCode: string | null;
     }
   }
 
+  if (issuedEntry) {
+    return <main className="entry-gate"><div className="entry-card entry-card--seat-key"><SeatKeyPanel inviteCode={issuedEntry.campaign.inviteCode} playerName={issuedEntry.player.name} recoveryCode={issuedEntry.recoveryCode} onDone={() => onEnter(issuedEntry)} /></div></main>
+  }
+
   return (
     <main className="entry-gate">
       <div className="entry-card">
         <div className="campaign-sigil entry-sigil"><BookOpen size={21} /></div>
         <span className="campaign-kicker">Wayfarer's Table</span>
-        <h1>{inviteCode ? 'Join the campaign' : 'Open a new campaign'}</h1>
-        <p>{inviteCode ? 'Choose the name the party will see at the table.' : 'Name the campaign and take the first seat.'}</p>
+        <h1>{recovering ? 'Recover your seat' : inviteCode ? 'Join the campaign' : 'Open a new campaign'}</h1>
+        <p>{recovering ? 'Enter the private key you saved when this seat was created.' : inviteCode ? 'Choose the name the party will see at the table.' : 'Name the campaign and take the first seat.'}</p>
         {notice && <div className="entry-notice" role="status">{notice}</div>}
         <form onSubmit={submit}>
           {!inviteCode && (
@@ -133,10 +238,12 @@ function EntryGate({ inviteCode, notice, onEnter }: { inviteCode: string | null;
             autoComplete="nickname"
             autoFocus={Boolean(inviteCode)}
           />
+          {recovering && <><label htmlFor="recovery-code">Seat key</label><input id="recovery-code" value={recoveryCode} onChange={(event) => setRecoveryCode(event.target.value)} autoComplete="off" spellCheck={false} /></>}
           {error && <div className="entry-error" role="alert">{error}</div>}
-          <button className="primary-action" type="submit" disabled={submitting || !playerName.trim() || (!inviteCode && !campaignName.trim())}>
-            {submitting ? 'Opening…' : inviteCode ? 'Join the table' : 'Open the table'}
+          <button className="primary-action" type="submit" disabled={submitting || !playerName.trim() || (!inviteCode && !campaignName.trim()) || (recovering && !recoveryCode.trim())}>
+            {submitting ? 'Opening…' : recovering ? 'Recover the seat' : inviteCode ? 'Join the table' : 'Open the table'}
           </button>
+          {inviteCode && <button className="entry-switch" type="button" onClick={() => { setRecovering((current) => !current); setError('') }}>{recovering ? 'Join with a new name' : 'Recover an existing seat'}</button>}
         </form>
       </div>
     </main>
@@ -335,6 +442,7 @@ function CampaignFolio({
   const [editName, setEditName] = useState('')
   const [editDescription, setEditDescription] = useState('')
   const [confirming, setConfirming] = useState('')
+  const [issuedRecovery, setIssuedRecovery] = useState<{ playerId: string; playerName: string; recoveryCode: string } | null>(null)
   const token = session.player.token
   const authorization = { authorization: `Bearer ${token}` }
 
@@ -431,6 +539,16 @@ function CampaignFolio({
     })
   }
 
+  const resetRecovery = (playerId: string, playerName: string) => {
+    const key = `recovery-${playerId}`
+    if (confirming !== key) { setConfirming(key); setIssuedRecovery(null); return }
+    void run(key, async () => {
+      const result = await api<{ recoveryCode: string }>(`/api/campaign/players/${playerId}/recovery`, { method: 'POST', headers: authorization })
+      setIssuedRecovery({ playerId, playerName, recoveryCode: result.recoveryCode })
+      setConfirming('')
+    })
+  }
+
   return (
     <div className="campaign-folio-layer" role="dialog" aria-modal="true" aria-label="Campaign folio">
       <button className="drawer-scrim" onClick={onClose} aria-label="Close campaign folio" />
@@ -462,7 +580,12 @@ function CampaignFolio({
 
           <section className="folio-section" aria-labelledby="folio-party-heading">
             <div className="folio-section-heading"><div><span className="eyebrow">Seats</span><h2 id="folio-party-heading">Party</h2></div></div>
-            {!management ? <span className="folio-loading">Reading the ledger…</span> : <div className="folio-player-list">{management.players.map((player) => <div className="folio-player" key={player.id}><Avatar participant={{ playerId: player.id, name: player.name, muted: false }} size="small" /><span><strong>{player.name}</strong><small>{player.role === 'owner' ? 'Campaign owner' : 'Player'}</small></span>{player.role !== 'owner' && <button className={confirming === `remove-${player.id}` ? 'danger-action' : ''} onClick={() => removePlayer(player.id)} disabled={pending === `remove-${player.id}`} aria-label={confirming === `remove-${player.id}` ? `Confirm remove ${player.name}` : `Remove ${player.name}`}><UserMinus size={15} /></button>}</div>)}</div>}
+            {!management ? <span className="folio-loading">Reading the ledger…</span> : <div className="folio-player-list">{management.players.map((player) => (
+              <div className="folio-player-entry" key={player.id}>
+                <div className="folio-player"><Avatar participant={{ playerId: player.id, name: player.name, muted: false }} size="small" /><span><strong>{player.name}</strong><small>{player.role === 'owner' ? 'Campaign owner' : 'Player'}</small></span><div className="folio-row-actions"><button className={confirming === `recovery-${player.id}` ? 'danger-action' : ''} onClick={() => resetRecovery(player.id, player.name)} disabled={pending === `recovery-${player.id}`} aria-label={confirming === `recovery-${player.id}` ? `Confirm reset seat key for ${player.name}` : `Reset seat key for ${player.name}`}><KeyRound size={15} /></button>{player.role !== 'owner' && <button className={confirming === `remove-${player.id}` ? 'danger-action' : ''} onClick={() => removePlayer(player.id)} disabled={pending === `remove-${player.id}`} aria-label={confirming === `remove-${player.id}` ? `Confirm remove ${player.name}` : `Remove ${player.name}`}><UserMinus size={15} /></button>}</div></div>
+                {issuedRecovery?.playerId === player.id && <SeatKeyPanel compact inviteCode={session.campaign.inviteCode} playerName={issuedRecovery.playerName} recoveryCode={issuedRecovery.recoveryCode} onDone={() => setIssuedRecovery(null)} />}
+              </div>
+            ))}</div>}
           </section>
         </div>
       </aside>
@@ -472,9 +595,10 @@ function CampaignFolio({
 
 function App() {
   const inviteCode = new URLSearchParams(location.search).get('campaign')
+  const [recoverySeed] = useState(readRecoverySeed)
   const [session, setSession] = useState<TableSession | null>(null)
   const [entryNotice, setEntryNotice] = useState('')
-  const [restoringSession, setRestoringSession] = useState(() => Boolean(localStorage.getItem('wayfarer-token')))
+  const [restoringSession, setRestoringSession] = useState(() => !recoverySeed && Boolean(localStorage.getItem('wayfarer-token')))
   const [activeRoom, setActiveRoom] = useState('')
   const activeRoomRef = useRef(activeRoom)
   const [messages, setMessages] = useState<RoomMessage[]>([])
@@ -520,6 +644,7 @@ function App() {
   }, [realtimePlayer])
 
   useEffect(() => {
+    if (recoverySeed) return
     const token = localStorage.getItem('wayfarer-token')
     if (!token) return
     void api<TableSession>('/api/session', { headers: { authorization: `Bearer ${token}` } })
@@ -532,7 +657,7 @@ function App() {
       })
       .catch(() => localStorage.removeItem('wayfarer-token'))
       .finally(() => setRestoringSession(false))
-  }, [inviteCode])
+  }, [inviteCode, recoverySeed])
 
   useEffect(() => { localStorage.setItem('wayfarer-draft', draft) }, [draft])
   useEffect(() => { timelineRef.current?.scrollTo({ top: timelineRef.current.scrollHeight, behavior: 'smooth' }) }, [messages])
@@ -656,7 +781,7 @@ function App() {
       if (event.type === 'session.revoked') {
         localStorage.removeItem('wayfarer-token')
         client.close()
-        setEntryNotice('Your seat was removed from this campaign.')
+        setEntryNotice(event.payload.reason === 'recovered' ? 'This seat was recovered in another browser.' : 'Your seat was removed from this campaign.')
         setSession(null)
         setActiveRoom('')
         activeRoomRef.current = ''
@@ -787,20 +912,7 @@ function App() {
     if (!session) return
     const url = new URL(location.href)
     url.searchParams.set('campaign', session.campaign.inviteCode)
-    let copied: boolean
-    try {
-      await navigator.clipboard.writeText(url.toString())
-      copied = true
-    } catch {
-      const field = document.createElement('textarea')
-      field.value = url.toString()
-      field.style.position = 'fixed'
-      field.style.opacity = '0'
-      document.body.append(field)
-      field.select()
-      copied = document.execCommand('copy')
-      field.remove()
-    }
+    const copied = await copyText(url.toString())
     setInviteCopyState(copied ? 'copied' : 'failed')
     window.setTimeout(() => setInviteCopyState('idle'), 1_800)
   }
@@ -884,7 +996,7 @@ function App() {
   }
 
   if (restoringSession) return <main className="entry-gate"><span className="entry-wait">Returning to the table…</span></main>
-  if (!session) return <EntryGate inviteCode={inviteCode} notice={entryNotice} onEnter={enterTable} />
+  if (!session) return <EntryGate inviteCode={inviteCode} recoverySeed={recoverySeed} notice={entryNotice} onEnter={enterTable} />
   if (!activeRoomData) return null
 
   return (

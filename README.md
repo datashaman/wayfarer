@@ -21,7 +21,8 @@ npm run build
 - Responsive campaign, room, player, transcript, and voice-table interface
 - Name entry, live room membership, and room switching
 - Campaign creation, invitation links, and stable campaign-scoped player sessions
-- Owner-only campaign folio for invitation replacement, player removal, and room management
+- Accountless seat recovery with one-time keys and cross-device QR links
+- Owner-only campaign folio for invitation replacement, player removal, seat-key reset, and room management
 - SQLite-backed rooms and transcripts that survive server restarts
 - WebSocket text chat between connected players
 - WebRTC peer-to-peer voice with mute, leave, and push-to-talk controls
@@ -29,7 +30,7 @@ npm run build
 - Typed JSON event envelopes for chat, presence, and WebRTC signalling
 - A reconnecting RFC 6455 WebSocket client boundary
 
-`npm run dev` starts both the Vite web client and the room server. Create a campaign, copy its invite link, and open that link in another browser session to join the same durable table.
+`npm run dev` starts both the Vite web client and the room server. Create a campaign, save the one-time seat key, copy its invite link, and open that link in another browser session to join the same durable table. A player can later recover the same campaign identity with their name and latest seat key; successful recovery rotates both the session and recovery credentials.
 
 Campaign data is stored in `data/wayfarer.sqlite` by default. Set `DATABASE_PATH` when you need an isolated database, such as `DATABASE_PATH=/tmp/wayfarer.sqlite npm start`.
 

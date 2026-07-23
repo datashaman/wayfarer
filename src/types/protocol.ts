@@ -47,6 +47,10 @@ export type TableSession = {
   player: PlayerSession
 }
 
+export type SeatEntry = TableSession & {
+  recoveryCode: string
+}
+
 export type RoomMessage = {
   id: Id
   clientMessageId?: Id

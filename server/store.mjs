@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -19,7 +19,12 @@ function createRecoveryCode() {
 }
 
 function recoveryHash(code) {
-  return tokenHash(code.replace(/-/g, ''))
+  return tokenHash(code.toUpperCase().replace(/[^A-F0-9]/g, ''))
+}
+
+function matchesRecoveryCode(storedHash, code) {
+  if (!storedHash || typeof code !== 'string' || code.toUpperCase().replace(/[^A-F0-9]/g, '').length !== 24) return false
+  return timingSafeEqual(Buffer.from(storedHash, 'hex'), Buffer.from(recoveryHash(code), 'hex'))
 }
 
 function roomSlug(name) {
@@ -117,6 +122,7 @@ export function createStore(databasePath) {
   const activePlayerByName = database.prepare('SELECT * FROM players WHERE campaign_id = ? AND name = ? COLLATE NOCASE AND removed_at IS NULL')
   const playerForCampaign = database.prepare('SELECT * FROM players WHERE id = ? AND campaign_id = ? AND removed_at IS NULL')
   const removePlayer = database.prepare('UPDATE players SET removed_at = ? WHERE id = ?')
+  const updatePlayerCredentials = database.prepare('UPDATE players SET token_hash = ?, recovery_key_hash = ? WHERE id = ?')
   const playerByToken = database.prepare(`
     SELECT players.*, campaigns.name AS campaign_name, campaigns.invite_code
     FROM players JOIN campaigns ON campaigns.id = players.campaign_id
@@ -172,6 +178,21 @@ export function createStore(databasePath) {
       if (activePlayerByName.get(row.id, playerName)) return { duplicate: true }
       const { recoveryCode, ...player } = createPlayer(row.id, playerName)
       return { campaign: publicCampaign(row, roomsByCampaign.all(row.id)), player, recoveryCode }
+    },
+
+    recoverPlayer(inviteCode, playerName, recoveryCode) {
+      const campaign = campaignByInvite.get(inviteCode)
+      if (!campaign) return null
+      const playerRow = activePlayerByName.get(campaign.id, playerName)
+      if (!playerRow || !matchesRecoveryCode(playerRow.recovery_key_hash, recoveryCode)) return { invalid: true }
+      const token = randomBytes(32).toString('base64url')
+      const nextRecoveryCode = createRecoveryCode()
+      updatePlayerCredentials.run(tokenHash(token), recoveryHash(nextRecoveryCode), playerRow.id)
+      return {
+        campaign: publicCampaign(campaign, roomsByCampaign.all(campaign.id)),
+        player: publicPlayer(playerRow, token),
+        recoveryCode: nextRecoveryCode,
+      }
     },
 
     getSession(token) {

@@ -236,6 +236,33 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         return
       }
 
+      const recovery = request.url?.match(/^\/api\/invitations\/([a-z0-9]{10})\/recover$/)
+      if (request.method === 'POST' && recovery) {
+        const body = await readJson(request)
+        const playerName = cleanName(body.playerName, 40)
+        const recoveryCode = typeof body.recoveryCode === 'string' && body.recoveryCode.length <= 64 ? body.recoveryCode : ''
+        if (!playerName || !recoveryCode) {
+          sendJson(response, 400, { error: 'Player name and seat key are required.' })
+          return
+        }
+        const recovered = store.recoverPlayer(recovery[1], playerName, recoveryCode)
+        if (!recovered) {
+          sendJson(response, 404, { error: 'This invitation is no longer available.' })
+          return
+        }
+        if (recovered.invalid) {
+          sendJson(response, 401, { error: 'That name and seat key do not match.' })
+          return
+        }
+        for (const [socket, client] of clients) {
+          if (client.player.id !== recovered.player.id) continue
+          send(socket, envelope('session.revoked', client.roomId || client.campaign.id, { reason: 'recovered' }))
+          socket.close(4003, 'Seat recovered')
+        }
+        sendJson(response, 200, recovered)
+        return
+      }
+
       if (request.method === 'GET' && request.url === '/api/session') {
         sendJson(response, requestSession ? 200 : 401, requestSession ?? { error: 'Session not found.' })
         return

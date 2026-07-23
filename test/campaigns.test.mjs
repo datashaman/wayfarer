@@ -166,6 +166,82 @@ test('active seat names are unique within a campaign', async (t) => {
   assert.equal(duplicate.body.error, 'That name already has a seat in this campaign.')
 })
 
+test('a player can recover the same seat and receives new credentials', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-recover-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+
+  t.after(async () => {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, {
+    method: 'POST',
+    body: JSON.stringify({ playerName: 'Theo' }),
+  })
+  const recovered = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/recover`, {
+    method: 'POST',
+    body: JSON.stringify({ playerName: 'theo', recoveryCode: joined.body.recoveryCode.toLowerCase() }),
+  })
+
+  assert.equal(recovered.status, 200)
+  assert.equal(recovered.body.player.id, joined.body.player.id)
+  assert.equal(recovered.body.player.role, 'member')
+  assert.notEqual(recovered.body.player.token, joined.body.player.token)
+  assert.notEqual(recovered.body.recoveryCode, joined.body.recoveryCode)
+
+  const oldSession = await json(`${origin}/api/session`, { headers: { authorization: `Bearer ${joined.body.player.token}` } })
+  const newSession = await json(`${origin}/api/session`, { headers: { authorization: `Bearer ${recovered.body.player.token}` } })
+  const reusedKey = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/recover`, {
+    method: 'POST',
+    body: JSON.stringify({ playerName: 'Theo', recoveryCode: joined.body.recoveryCode }),
+  })
+
+  assert.equal(oldSession.status, 401)
+  assert.equal(newSession.status, 200)
+  assert.equal(reusedKey.status, 401)
+})
+
+test('recovering a seat revokes its previous live session', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-recover-live-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+  let socket
+
+  t.after(async () => {
+    socket?.terminate()
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, {
+    method: 'POST',
+    body: JSON.stringify({ playerName: 'Theo' }),
+  })
+  socket = await openSocket(`ws://127.0.0.1:${port}/ws?token=${joined.body.player.token}`)
+  const revoked = nextEvent(socket, 'session.revoked')
+  const closed = new Promise((resolve) => socket.once('close', (...args) => resolve(args)))
+
+  await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/recover`, {
+    method: 'POST',
+    body: JSON.stringify({ playerName: 'Theo', recoveryCode: joined.body.recoveryCode }),
+  })
+
+  assert.equal((await revoked).payload.reason, 'recovered')
+  assert.equal((await closed)[0], 4003)
+})
+
 test('only the campaign owner can open campaign management', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-owner-'))
   const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })

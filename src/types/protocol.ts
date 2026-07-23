@@ -86,7 +86,7 @@ export type ClientEvent =
   | Envelope<'ping', { sequence: number }>
 
 export type ServerEvent =
-  | Envelope<'session.revoked', { reason: 'removed' }>
+  | Envelope<'session.revoked', { reason: 'removed' | 'recovered' }>
   | Envelope<'campaign.updated', { campaign: Campaign }>
   | Envelope<'room.snapshot', { participants: Participant[]; voiceParticipants: Participant[]; messages: RoomMessage[] }>
   | Envelope<'presence.snapshot', { participants: Participant[] }>

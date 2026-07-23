@@ -41,8 +41,26 @@ import {
 } from './types/protocol'
 
 const avatarPalette = ['#b96b4b', '#7f9364', '#8b7fa4', '#ad8754', '#6d8794', '#a87955']
+const pendingSeatEntryKey = 'wayfarer-pending-seat-entry'
 
 type RecoverySeed = { playerName: string; recoveryCode: string }
+
+function readPendingSeatEntry(): SeatEntry | null {
+  try {
+    const stored = sessionStorage.getItem(pendingSeatEntryKey)
+    if (!stored) return null
+    const entry = JSON.parse(stored) as Partial<SeatEntry>
+    return typeof entry.recoveryCode === 'string'
+      && typeof entry.campaign?.inviteCode === 'string'
+      && Array.isArray(entry.campaign.rooms)
+      && typeof entry.player?.name === 'string'
+      && typeof entry.player.token === 'string'
+      ? entry as SeatEntry
+      : null
+  } catch {
+    return null
+  }
+}
 
 function initials(name: string) {
   return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || '?'
@@ -255,12 +273,12 @@ function Avatar({ participant, size = 'regular' }: { participant: Participant; s
   )
 }
 
-function EntryGate({ inviteCode, recoverySeed, notice, onEnter }: { inviteCode: string | null; recoverySeed: RecoverySeed | null; notice?: string; onEnter: (session: TableSession) => void }) {
+function EntryGate({ inviteCode, recoverySeed, pendingEntry, notice, onEnter }: { inviteCode: string | null; recoverySeed: RecoverySeed | null; pendingEntry: SeatEntry | null; notice?: string; onEnter: (session: TableSession) => void }) {
   const [playerName, setPlayerName] = useState(recoverySeed?.playerName ?? '')
   const [campaignName, setCampaignName] = useState('')
   const [recoveryCode, setRecoveryCode] = useState(recoverySeed?.recoveryCode ?? '')
   const [recovering, setRecovering] = useState(Boolean(recoverySeed))
-  const [issuedEntry, setIssuedEntry] = useState<SeatEntry | null>(null)
+  const [issuedEntry, setIssuedEntry] = useState<SeatEntry | null>(pendingEntry)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -275,6 +293,7 @@ function EntryGate({ inviteCode, recoverySeed, notice, onEnter }: { inviteCode: 
         method: 'POST',
         body: JSON.stringify(recovering ? { playerName, recoveryCode } : inviteCode ? { playerName } : { campaignName, playerName }),
       })
+      sessionStorage.setItem(pendingSeatEntryKey, JSON.stringify(session))
       localStorage.setItem('wayfarer-token', session.player.token)
       setIssuedEntry(session)
     } catch (reason) {
@@ -285,7 +304,7 @@ function EntryGate({ inviteCode, recoverySeed, notice, onEnter }: { inviteCode: 
   }
 
   if (issuedEntry) {
-    return <main className="entry-gate"><div className="entry-card entry-card--seat-key"><SeatKeyPanel inviteCode={issuedEntry.campaign.inviteCode} playerName={issuedEntry.player.name} recoveryCode={issuedEntry.recoveryCode} onDone={() => onEnter(issuedEntry)} /></div></main>
+    return <main className="entry-gate"><div className="entry-card entry-card--seat-key"><SeatKeyPanel inviteCode={issuedEntry.campaign.inviteCode} playerName={issuedEntry.player.name} recoveryCode={issuedEntry.recoveryCode} onDone={() => { sessionStorage.removeItem(pendingSeatEntryKey); onEnter(issuedEntry) }} /></div></main>
   }
 
   return (
@@ -670,9 +689,10 @@ function CampaignFolio({
 function App() {
   const inviteCode = new URLSearchParams(location.search).get('campaign')
   const [recoverySeed] = useState(readRecoverySeed)
+  const [pendingSeatEntry] = useState(readPendingSeatEntry)
   const [session, setSession] = useState<TableSession | null>(null)
   const [entryNotice, setEntryNotice] = useState('')
-  const [restoringSession, setRestoringSession] = useState(() => !recoverySeed && Boolean(localStorage.getItem('wayfarer-token')))
+  const [restoringSession, setRestoringSession] = useState(() => !recoverySeed && !pendingSeatEntry && Boolean(localStorage.getItem('wayfarer-token')))
   const [activeRoom, setActiveRoom] = useState('')
   const activeRoomRef = useRef(activeRoom)
   const [messages, setMessages] = useState<RoomMessage[]>([])
@@ -718,7 +738,7 @@ function App() {
   }, [realtimePlayer])
 
   useEffect(() => {
-    if (recoverySeed) return
+    if (recoverySeed || pendingSeatEntry) return
     const token = localStorage.getItem('wayfarer-token')
     if (!token) return
     void api<TableSession>('/api/session', { headers: { authorization: `Bearer ${token}` } })
@@ -731,7 +751,7 @@ function App() {
       })
       .catch(() => localStorage.removeItem('wayfarer-token'))
       .finally(() => setRestoringSession(false))
-  }, [inviteCode, recoverySeed])
+  }, [inviteCode, recoverySeed, pendingSeatEntry])
 
   useEffect(() => { localStorage.setItem('wayfarer-draft', draft) }, [draft])
   useEffect(() => { timelineRef.current?.scrollTo({ top: timelineRef.current.scrollHeight, behavior: 'smooth' }) }, [messages])
@@ -1061,7 +1081,7 @@ function App() {
   }
 
   if (restoringSession) return <main className="entry-gate"><span className="entry-wait">Returning to the table…</span></main>
-  if (!session) return <EntryGate inviteCode={inviteCode} recoverySeed={recoverySeed} notice={entryNotice} onEnter={enterTable} />
+  if (!session) return <EntryGate inviteCode={inviteCode} recoverySeed={recoverySeed} pendingEntry={pendingSeatEntry} notice={entryNotice} onEnter={enterTable} />
   if (!activeRoomData) return null
 
   return (

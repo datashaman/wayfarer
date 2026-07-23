@@ -7,8 +7,13 @@ test('a player joins from the invitation sheet and receives broadcast text', asy
   await page.getByRole('button', { name: 'Open the table' }).click()
 
   await expect(page.getByRole('heading', { name: 'Save your seat key' })).toBeVisible()
+  const seatKey = await page.locator('.seat-key code').innerText()
   await expect(page.getByRole('img', { name: "QR code for recovering Mara's seat" })).toBeVisible()
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Save your seat key' })).toBeVisible()
+  await expect(page.locator('.seat-key code')).toHaveText(seatKey)
   await page.getByRole('button', { name: 'I saved my seat key' }).click()
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem('wayfarer-pending-seat-entry'))).toBeNull()
 
   await page.getByRole('button', { name: 'Invite players' }).click()
   const invitation = page.getByRole('dialog', { name: 'The Lantern Road' })

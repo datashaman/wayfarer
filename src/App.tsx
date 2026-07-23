@@ -1,6 +1,7 @@
 import {
   Archive,
   BookOpen,
+  BookMarked,
   Check,
   ChevronDown,
   ChevronUp,
@@ -31,6 +32,9 @@ import {
   createEvent,
   type ConnectionState,
   type Campaign,
+  type CanonLedger,
+  type CanonProposal,
+  type CanonProposalSource,
   type CampaignManagement,
   type CampaignNote,
   type CampaignRoom,
@@ -385,6 +389,102 @@ function SharedNotes({ session, note, onNote, onClose }: { session: TableSession
   )
 }
 
+function CanonLedgerSheet({ session, onClose, onOpenSource }: { session: TableSession; onClose: () => void; onOpenSource: (source: CanonProposalSource) => void }) {
+  const [ledger, setLedger] = useState<CanonLedger | null>(null)
+  const [pending, setPending] = useState('')
+  const [editing, setEditing] = useState<CanonProposal | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editClaim, setEditClaim] = useState('')
+  const [error, setError] = useState('')
+  const authorization = { authorization: `Bearer ${session.player.token}` }
+
+  useEffect(() => {
+    void api<CanonLedger>('/api/campaign/canon', { headers: { authorization: `Bearer ${session.player.token}` } })
+      .then(setLedger)
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'The canon ledger could not be opened.'))
+  }, [session.player.token])
+
+  useEffect(() => {
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [onClose])
+
+  const decide = async (proposal: CanonProposal, action: 'accept' | 'edit_accept' | 'dispute' | 'reject') => {
+    setPending(proposal.id)
+    setError('')
+    try {
+      const result = await api<{ proposal: CanonProposal; entries: CanonLedger['entries'] }>(`/api/campaign/canon/proposals/${proposal.id}/decisions`, {
+        method: 'POST',
+        headers: authorization,
+        body: JSON.stringify({ action, ...(action === 'edit_accept' ? { title: editTitle, claim: editClaim } : {}) }),
+      })
+      setLedger((current) => current ? {
+        proposals: current.proposals.map((item) => item.id === proposal.id ? result.proposal : item),
+        entries: result.entries,
+      } : current)
+      setEditing(null)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The canon decision could not be recorded.')
+    } finally {
+      setPending('')
+    }
+  }
+
+  const beginEditing = (proposal: CanonProposal) => {
+    setEditing(proposal)
+    setEditTitle(proposal.title)
+    setEditClaim(proposal.claim)
+  }
+
+  const pendingProposals = ledger?.proposals.filter((proposal) => proposal.status === 'proposed') ?? []
+  const proposalById = new Map(ledger?.proposals.map((proposal) => [proposal.id, proposal]))
+
+  return (
+    <div className="canon-layer" role="dialog" aria-modal="true" aria-labelledby="canon-ledger-heading">
+      <button className="drawer-scrim" onClick={onClose} aria-label="Close canon ledger" />
+      <aside className="canon-ledger">
+        <div className="drawer-heading"><span id="canon-ledger-heading">Living canon ledger</span><button className="icon-button" onClick={onClose} aria-label="Close canon ledger"><X size={18} /></button></div>
+        <div className="canon-body">
+          <header className="canon-heading"><span className="eyebrow">Human-kept truth</span><h2>The story as the table remembers it</h2><p>Suggested passages remain proposals until the campaign owner accepts them. Every entry keeps its transcript trail.</p></header>
+          {error && <div className="entry-error" role="alert">{error}</div>}
+          {!ledger ? <span className="folio-loading">Reading the canon ledger…</span> : (
+            <>
+              {session.player.role === 'owner' && <section className="canon-section" aria-labelledby="canon-proposals-heading">
+                <div className="canon-section-title"><h3 id="canon-proposals-heading">Awaiting review</h3><span>{pendingProposals.length}</span></div>
+                {!pendingProposals.length && <div className="canon-empty"><Check size={18} /><span>No passages await a ruling.</span></div>}
+                {pendingProposals.map((proposal) => (
+                  <article className="canon-card" key={proposal.id}>
+                    <div className="canon-card-meta"><span>{proposal.kind}</span><span>{proposal.visibility === 'gm_only' ? 'GM only' : 'Whole campaign'}</span><span>AI suggestion</span></div>
+                    {editing?.id === proposal.id ? (
+                      <div className="canon-edit">
+                        <label htmlFor={`canon-title-${proposal.id}`}>Canon title</label><input id={`canon-title-${proposal.id}`} value={editTitle} onChange={(event) => setEditTitle(event.target.value)} maxLength={80} />
+                        <label htmlFor={`canon-claim-${proposal.id}`}>Canon wording</label><textarea id={`canon-claim-${proposal.id}`} value={editClaim} onChange={(event) => setEditClaim(event.target.value)} maxLength={2_000} />
+                      </div>
+                    ) : <><h4>{proposal.title}</h4><p>{proposal.claim}</p></>}
+                    <div className="canon-citations" aria-label="Transcript citations">{proposal.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span><q>{source.excerpt ?? source.text}</q></button>)}</div>
+                    <div className="canon-actions">
+                      {editing?.id === proposal.id ? <><button className="primary-action" disabled={!editTitle.trim() || !editClaim.trim() || pending === proposal.id} onClick={() => void decide(proposal, 'edit_accept')}>{pending === proposal.id ? 'Recording…' : 'Accept edit'}</button><button className="folio-button" onClick={() => setEditing(null)}>Cancel</button></> : <><button className="primary-action" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'accept')}>Accept</button><button className="folio-button" onClick={() => beginEditing(proposal)}>Edit first</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'dispute')}>Dispute</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'reject')}>Discard</button></>}
+                    </div>
+                  </article>
+                ))}
+              </section>}
+              <section className="canon-section" aria-labelledby="accepted-canon-heading">
+                <div className="canon-section-title"><h3 id="accepted-canon-heading">Accepted canon</h3><span>{ledger.entries.length}</span></div>
+                {!ledger.entries.length && <div className="canon-empty"><BookOpen size={18} /><span>No passages have been accepted yet.</span></div>}
+                {ledger.entries.map((entry) => {
+                  const proposal = proposalById.get(entry.proposalId)
+                  return <article className="canon-entry" key={entry.id}><div className="canon-card-meta"><span>{entry.kind}</span><span>{entry.visibility === 'gm_only' ? 'GM only' : 'Whole campaign'}</span></div><h4>{entry.title}</h4><p>{entry.claim}</p>{proposal && <div className="canon-citations">{proposal.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span></button>)}</div>}<small>Accepted by {entry.createdByName ?? 'the campaign owner'}</small></article>
+                })}
+              </section>
+            </>
+          )}
+        </div>
+      </aside>
+    </div>
+  )
+}
+
 function Avatar({ participant, size = 'regular' }: { participant: Participant; size?: 'small' | 'regular' }) {
   return (
     <span
@@ -537,12 +637,12 @@ function CampaignLedger({
   )
 }
 
-function MessageItem({ message }: { message: RoomMessage }) {
+function MessageItem({ message, highlighted = false }: { message: RoomMessage; highlighted?: boolean }) {
   const participant: Participant = { playerId: message.senderId, name: message.senderName, muted: false }
   const time = new Date(message.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
   return (
-    <article className="message">
+    <article className={`message ${highlighted ? 'message--highlighted' : ''}`} id={`message-${message.id}`}>
       <Avatar participant={participant} />
       <div className="message-body">
         <div className="message-meta"><strong>{message.senderName}</strong><time>{time}</time></div>
@@ -843,6 +943,8 @@ function App() {
   const [invitationSheet, setInvitationSheet] = useState(false)
   const [transcriptSearch, setTranscriptSearch] = useState(false)
   const [sharedNotes, setSharedNotes] = useState(false)
+  const [canonLedger, setCanonLedger] = useState(false)
+  const [targetMessageId, setTargetMessageId] = useState('')
   const [campaignNote, setCampaignNote] = useState<CampaignNote | null>(null)
   const clientRef = useRef<RealtimeClient | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -898,6 +1000,12 @@ function App() {
     }
     timeline.scrollTo({ top: timeline.scrollHeight, behavior: 'smooth' })
   }, [messages])
+  useEffect(() => {
+    if (!targetMessageId || !messages.some((message) => message.id === targetMessageId)) return
+    document.getElementById(`message-${targetMessageId}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    const timer = window.setTimeout(() => setTargetMessageId(''), 3_000)
+    return () => window.clearTimeout(timer)
+  }, [messages, targetMessageId])
 
   useEffect(() => {
     if (!realtimePlayer || !activeRoomRef.current) return
@@ -1220,6 +1328,11 @@ function App() {
     if (connection === 'live') clientRef.current?.send(createEvent('room.subscribe', roomId, {}))
   }
 
+  const openCanonSource = (source: CanonProposalSource) => {
+    setTargetMessageId(source.messageId)
+    changeRoom(source.roomId)
+  }
+
   const joinVoice = async () => {
     if (joiningVoice || connection !== 'live' || !voiceConfigReady) return
     setVoiceError('')
@@ -1284,6 +1397,7 @@ function App() {
           {connection !== 'live' && <span className="connection-state"><i />{connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span>}
           <button className="text-button" onClick={() => setTranscriptSearch(true)}><Search size={15} />Search</button>
           <button className="text-button" onClick={() => setSharedNotes(true)}><NotebookPen size={15} />Notes</button>
+          <button className="text-button" onClick={() => setCanonLedger(true)}><BookMarked size={15} />Canon</button>
           <button className="text-button invite-button" onClick={() => setInvitationSheet(true)}><QrCode size={15} />Invite players</button>
           {session.player.role === 'owner' && <button className="icon-button" onClick={() => setCampaignFolio(true)} aria-label="Open campaign folio"><Settings size={18} /></button>}
           <button className="icon-button mobile-only" onClick={() => setMobileTable(true)} aria-label="Open voice table"><Users size={19} /></button>
@@ -1297,7 +1411,7 @@ function App() {
         <div className="timeline" ref={timelineRef} aria-live="polite" aria-label={`${activeRoomData.name} messages`}>
           {hasOlderMessages && <button className="earlier-entries" onClick={loadEarlierMessages} disabled={loadingOlderMessages}><span /><strong>{loadingOlderMessages ? 'Reading earlier entries…' : 'Read earlier entries'}</strong><span /></button>}
           {historyError && <div className="history-error" role="alert">{historyError}</div>}
-          {messages.length ? messages.map((message) => <MessageItem key={message.id} message={message} />) : (
+          {messages.length ? messages.map((message) => <MessageItem key={message.id} message={message} highlighted={message.id === targetMessageId} />) : (
             <div className="empty-transcript"><Hash size={20} /><strong>Start the conversation</strong><span>There are no messages in #{activeRoomData.name} yet.</span></div>
           )}
         </div>
@@ -1329,6 +1443,7 @@ function App() {
       {invitationSheet && <InvitationSheet campaign={session.campaign} onClose={() => setInvitationSheet(false)} />}
       {transcriptSearch && <TranscriptSearch session={session} onClose={() => setTranscriptSearch(false)} onOpenRoom={changeRoom} />}
       {sharedNotes && <SharedNotes session={session} note={campaignNote} onNote={setCampaignNote} onClose={() => setSharedNotes(false)} />}
+      {canonLedger && <CanonLedgerSheet session={session} onClose={() => setCanonLedger(false)} onOpenSource={openCanonSource} />}
 
       <div className="voice-dock mobile-only">
         {!joinedVoice ? <button className="primary-action" onClick={joinVoice} disabled={joiningVoice || connection !== 'live' || !voiceConfigReady}><Headphones size={17} />{joiningVoice ? 'Joining…' : voiceConfigReady ? 'Join voice' : 'Preparing voice…'}</button> : <><button className={`dock-mic ${muted ? 'dock-mic--muted' : ''}`} onClick={() => setMuted((current) => !current)} aria-label={muted ? 'Unmute' : 'Mute'}>{muted ? <MicOff size={18} /> : <Mic size={18} />}</button><span>{Object.values(peerConnectionStates).includes('failed') ? 'Voice issue' : Object.values(peerConnectionStates).includes('recovering') ? 'Reconnecting voice…' : muted ? 'Muted' : `${voiceParticipants.length} in voice`}</span><button className="quiet-icon" onClick={() => setMobileTable(true)} aria-label="Voice settings"><PanelRight size={17} /></button></>}

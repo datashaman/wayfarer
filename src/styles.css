@@ -740,6 +740,13 @@ textarea:focus-visible {
   opacity: 0.67;
 }
 
+.message--highlighted {
+  padding: 10px;
+  border: 1px solid rgb(189 109 79 / 0.55);
+  border-radius: var(--radius-medium);
+  background: rgb(189 109 79 / 0.08);
+}
+
 .message-avatar {
   width: 32px;
   height: 32px;
@@ -1191,6 +1198,206 @@ textarea:focus-visible {
   position: fixed;
   z-index: 44;
   inset: 0;
+}
+
+.canon-layer {
+  position: fixed;
+  z-index: 44;
+  inset: 0;
+}
+
+.canon-layer .drawer-scrim {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  background: rgb(10 8 6 / 0.72);
+}
+
+.canon-ledger {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  width: min(620px, 96vw);
+  grid-template-rows: 54px minmax(0, 1fr);
+  border-left: 1px solid var(--border-strong);
+  background: var(--soot-925);
+}
+
+.canon-body {
+  overflow-y: auto;
+  padding: 28px 24px 40px;
+}
+
+.canon-heading h2 {
+  margin: 6px 0;
+  color: var(--parchment);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 23px;
+  font-weight: 500;
+}
+
+.canon-heading p {
+  max-width: 54ch;
+  margin: 0 0 24px;
+  color: var(--parchment-dim);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.canon-section + .canon-section {
+  margin-top: 28px;
+}
+
+.canon-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.canon-section-title h3 {
+  margin: 0;
+  color: var(--parchment-soft);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.canon-section-title > span {
+  color: var(--parchment-muted);
+  font-size: 10px;
+}
+
+.canon-card,
+.canon-entry,
+.canon-empty {
+  margin-bottom: 10px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-medium);
+  background: var(--soot-900);
+}
+
+.canon-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.canon-card-meta span {
+  padding: 2px 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  color: var(--parchment-muted);
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.canon-card h4,
+.canon-entry h4 {
+  margin: 0 0 5px;
+  color: var(--parchment);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.canon-card > p,
+.canon-entry > p {
+  margin: 0 0 12px;
+  color: var(--parchment-soft);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.canon-citations {
+  display: grid;
+  gap: 5px;
+  margin: 10px 0;
+}
+
+.canon-citations button {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 6px;
+  padding: 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-small);
+  background: var(--soot-925);
+  color: var(--parchment-dim);
+  cursor: pointer;
+  font-size: 9px;
+  text-align: left;
+}
+
+.canon-citations button:hover {
+  border-color: var(--border-strong);
+}
+
+.canon-citations q {
+  grid-column: 2;
+  overflow: hidden;
+  color: var(--parchment-muted);
+  font-family: Georgia, "Times New Roman", serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canon-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.canon-edit {
+  display: grid;
+  gap: 6px;
+}
+
+.canon-edit label {
+  color: var(--parchment-dim);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.canon-edit input,
+.canon-edit textarea {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  outline: 0;
+  background: var(--soot-950);
+  color: var(--parchment-soft);
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.canon-edit textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.canon-entry small {
+  color: var(--parchment-muted);
+  font-size: 9px;
+}
+
+.canon-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--parchment-muted);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 12px;
 }
 
 .shared-notes-layer .drawer-scrim {

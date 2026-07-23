@@ -78,6 +78,56 @@ export type CampaignNote = {
   updatedByName: string | null
 }
 
+export type CanonKind = 'fact' | 'character' | 'relationship' | 'promise' | 'event' | 'question' | 'contradiction' | 'rule'
+export type CanonVisibility = 'campaign' | 'gm_only'
+export type CanonProposalStatus = 'proposed' | 'accepted' | 'disputed' | 'rejected'
+
+export type CanonProposalSource = {
+  messageId: Id
+  roomId: Id
+  roomName: string
+  senderName: string
+  text: string
+  excerpt: string | null
+  sentAt: string
+  sequence: number
+}
+
+export type CanonProposal = {
+  id: Id
+  campaignId: Id
+  kind: CanonKind
+  title: string
+  claim: string
+  visibility: CanonVisibility
+  confidence: number | null
+  status: CanonProposalStatus
+  extractorVersion: string
+  createdAt: string
+  createdByName: string | null
+  sources: CanonProposalSource[]
+}
+
+export type CanonEntry = {
+  id: Id
+  proposalId: Id
+  campaignId: Id
+  kind: CanonKind
+  title: string
+  claim: string
+  visibility: CanonVisibility
+  revision: number
+  status: 'active' | 'superseded'
+  createdAt: string
+  updatedAt: string
+  createdByName: string | null
+}
+
+export type CanonLedger = {
+  proposals: CanonProposal[]
+  entries: CanonEntry[]
+}
+
 export type ClientVoiceSignal = Envelope<
   'voice.offer' | 'voice.answer',
   { targetPlayerId: Id; sdp: RTCSessionDescriptionInit }

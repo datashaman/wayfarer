@@ -19,7 +19,7 @@ function sendJson(response, status, body) {
   response.writeHead(status, {
     'access-control-allow-origin': '*',
     'access-control-allow-headers': 'authorization, content-type',
-    'access-control-allow-methods': 'GET, POST, OPTIONS',
+    'access-control-allow-methods': 'GET, POST, PATCH, DELETE, OPTIONS',
     'content-type': 'application/json; charset=utf-8',
   })
   response.end(JSON.stringify(body))
@@ -67,6 +67,47 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           return
         }
         sendJson(response, 200, store.getCampaignManagement(requestSession.campaign.id))
+        return
+      }
+
+      if (request.method === 'POST' && request.url === '/api/campaign/invitation') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'Only the campaign owner can manage this table.' })
+          return
+        }
+        sendJson(response, 200, { campaign: store.rotateInvitation(requestSession.campaign.id) })
+        return
+      }
+
+      const playerRemoval = request.url?.match(/^\/api\/campaign\/players\/([^/]+)$/)
+      if (request.method === 'DELETE' && playerRemoval) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'Only the campaign owner can manage this table.' })
+          return
+        }
+        const result = store.removePlayer(requestSession.campaign.id, playerRemoval[1])
+        if (result.outcome === 'owner') {
+          sendJson(response, 400, { error: 'The campaign owner cannot be removed.' })
+          return
+        }
+        if (result.outcome === 'not_found') {
+          sendJson(response, 404, { error: 'Player not found.' })
+          return
+        }
+        for (const [socket, client] of clients) {
+          if (client.player.id !== playerRemoval[1]) continue
+          send(socket, envelope('session.revoked', client.roomId || client.campaign.id, { reason: 'removed' }))
+          socket.close(4003, 'Player removed')
+        }
+        sendJson(response, 200, result.management)
         return
       }
 

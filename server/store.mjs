@@ -50,6 +50,7 @@ export function createStore(databasePath) {
       name TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('owner', 'member')),
       token_hash TEXT NOT NULL UNIQUE,
+      removed_at TEXT,
       created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS rooms (
@@ -75,18 +76,22 @@ export function createStore(databasePath) {
     database.exec("ALTER TABLE players ADD COLUMN role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('owner', 'member'))")
     database.exec("UPDATE players SET role = 'owner' WHERE rowid IN (SELECT MIN(rowid) FROM players GROUP BY campaign_id)")
   }
+  if (!playerColumns.some((column) => column.name === 'removed_at')) database.exec('ALTER TABLE players ADD COLUMN removed_at TEXT')
 
   const campaignByInvite = database.prepare('SELECT * FROM campaigns WHERE invite_code = ?')
   const campaignById = database.prepare('SELECT * FROM campaigns WHERE id = ?')
   const roomsByCampaign = database.prepare('SELECT * FROM rooms WHERE campaign_id = ? ORDER BY rowid')
   const insertCampaign = database.prepare('INSERT INTO campaigns (id, name, invite_code, created_at) VALUES (?, ?, ?, ?)')
+  const updateInvitation = database.prepare('UPDATE campaigns SET invite_code = ? WHERE id = ?')
   const insertRoom = database.prepare('INSERT INTO rooms (id, campaign_id, slug, name, description) VALUES (?, ?, ?, ?, ?)')
   const insertPlayer = database.prepare('INSERT INTO players (id, campaign_id, name, role, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-  const playersByCampaign = database.prepare('SELECT * FROM players WHERE campaign_id = ? ORDER BY rowid')
+  const playersByCampaign = database.prepare('SELECT * FROM players WHERE campaign_id = ? AND removed_at IS NULL ORDER BY rowid')
+  const playerForCampaign = database.prepare('SELECT * FROM players WHERE id = ? AND campaign_id = ? AND removed_at IS NULL')
+  const removePlayer = database.prepare('UPDATE players SET removed_at = ? WHERE id = ?')
   const playerByToken = database.prepare(`
     SELECT players.*, campaigns.name AS campaign_name, campaigns.invite_code
     FROM players JOIN campaigns ON campaigns.id = players.campaign_id
-    WHERE players.token_hash = ?
+    WHERE players.token_hash = ? AND players.removed_at IS NULL
   `)
   const roomForCampaign = database.prepare('SELECT * FROM rooms WHERE id = ? AND campaign_id = ?')
   const insertMessage = database.prepare(`
@@ -145,6 +150,20 @@ export function createStore(databasePath) {
 
     getCampaignManagement(campaignId) {
       return { players: playersByCampaign.all(campaignId).map((row) => publicPlayer(row)) }
+    },
+
+    rotateInvitation(campaignId) {
+      const inviteCode = randomBytes(5).toString('hex')
+      updateInvitation.run(inviteCode, campaignId)
+      return publicCampaign(campaignById.get(campaignId), roomsByCampaign.all(campaignId))
+    },
+
+    removePlayer(campaignId, playerId) {
+      const player = playerForCampaign.get(playerId, campaignId)
+      if (!player) return { outcome: 'not_found' }
+      if (player.role === 'owner') return { outcome: 'owner' }
+      removePlayer.run(new Date().toISOString(), playerId)
+      return { outcome: 'removed', management: this.getCampaignManagement(campaignId) }
     },
 
     getRoom(roomId, campaignId) {

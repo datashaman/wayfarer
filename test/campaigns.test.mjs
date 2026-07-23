@@ -150,6 +150,116 @@ test('only the campaign owner can open campaign management', async (t) => {
   assert.equal(memberView.status, 403)
 })
 
+test('the owner can replace an invitation and the old link stops working', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-invite-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+
+  t.after(async () => {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const originalCode = created.body.campaign.inviteCode
+  const rotated = await json(`${origin}/api/campaign/invitation`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${created.body.player.token}` },
+  })
+
+  assert.equal(rotated.status, 200)
+  assert.match(rotated.body.campaign.inviteCode, /^[a-z0-9]{10}$/)
+  assert.notEqual(rotated.body.campaign.inviteCode, originalCode)
+
+  const oldLink = await json(`${origin}/api/invitations/${originalCode}/join`, {
+    method: 'POST',
+    body: JSON.stringify({ playerName: 'Theo' }),
+  })
+  const newLink = await json(`${origin}/api/invitations/${rotated.body.campaign.inviteCode}/join`, {
+    method: 'POST',
+    body: JSON.stringify({ playerName: 'Theo' }),
+  })
+
+  assert.equal(oldLink.status, 404)
+  assert.equal(newLink.status, 201)
+})
+
+test('the owner can remove a player without removing the owner', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-remove-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+
+  t.after(async () => {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, {
+    method: 'POST',
+    body: JSON.stringify({ playerName: 'Theo' }),
+  })
+
+  const removed = await json(`${origin}/api/campaign/players/${joined.body.player.id}`, {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${created.body.player.token}` },
+  })
+  const removedSession = await json(`${origin}/api/session`, {
+    headers: { authorization: `Bearer ${joined.body.player.token}` },
+  })
+  const removeOwner = await json(`${origin}/api/campaign/players/${created.body.player.id}`, {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${created.body.player.token}` },
+  })
+
+  assert.equal(removed.status, 200)
+  assert.deepEqual(removed.body.players.map((player) => player.name), ['Mara'])
+  assert.equal(removedSession.status, 401)
+  assert.equal(removeOwner.status, 400)
+})
+
+test('removing a seated player revokes their live session', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-revoke-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+  let socket
+
+  t.after(async () => {
+    socket?.terminate()
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, {
+    method: 'POST',
+    body: JSON.stringify({ playerName: 'Theo' }),
+  })
+  socket = await openSocket(`ws://127.0.0.1:${port}/ws?token=${joined.body.player.token}`)
+  const revoked = nextEvent(socket, 'session.revoked')
+
+  await json(`${origin}/api/campaign/players/${joined.body.player.id}`, {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${created.body.player.token}` },
+  })
+
+  assert.equal((await revoked).payload.reason, 'removed')
+  const [code] = await new Promise((resolve) => socket.once('close', (...args) => resolve(args)))
+  assert.equal(code, 4003)
+})
+
 test('authenticated campaign members exchange room messages', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-chat-'))
   const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })

@@ -260,6 +260,173 @@ test('removing a seated player revokes their live session', async (t) => {
   assert.equal(code, 4003)
 })
 
+test('the owner can add a room to the campaign ledger', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-room-create-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+
+  t.after(async () => {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const added = await json(`${origin}/api/campaign/rooms`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${created.body.player.token}` },
+    body: JSON.stringify({ name: 'Lore Vault', description: 'Recovered histories and names' }),
+  })
+
+  assert.equal(added.status, 201)
+  assert.deepEqual(added.body.campaign.rooms.at(-1), {
+    id: added.body.campaign.rooms.at(-1).id,
+    slug: 'lore-vault',
+    name: 'Lore Vault',
+    description: 'Recovered histories and names',
+  })
+})
+
+test('the owner can rename a room and revise its purpose', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-room-edit-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+
+  t.after(async () => {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const room = created.body.campaign.rooms[2]
+  const edited = await json(`${origin}/api/campaign/rooms/${room.id}`, {
+    method: 'PATCH',
+    headers: { authorization: `Bearer ${created.body.player.token}` },
+    body: JSON.stringify({ name: 'War Council', description: 'Plans before the next march' }),
+  })
+
+  assert.equal(edited.status, 200)
+  assert.deepEqual(edited.body.campaign.rooms[2], {
+    ...room,
+    name: 'War Council',
+    description: 'Plans before the next march',
+  })
+})
+
+test('the owner can reorder every active room', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-room-order-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+
+  t.after(async () => {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const roomIds = created.body.campaign.rooms.map((room) => room.id).reverse()
+  const reordered = await json(`${origin}/api/campaign/rooms/reorder`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${created.body.player.token}` },
+    body: JSON.stringify({ roomIds }),
+  })
+
+  assert.equal(reordered.status, 200)
+  assert.deepEqual(reordered.body.campaign.rooms.map((room) => room.id), roomIds)
+
+  const incomplete = await json(`${origin}/api/campaign/rooms/reorder`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${created.body.player.token}` },
+    body: JSON.stringify({ roomIds: roomIds.slice(1) }),
+  })
+  assert.equal(incomplete.status, 400)
+})
+
+test('the owner can archive rooms but must leave one active room', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-room-archive-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+
+  t.after(async () => {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const [keptRoom, ...archivedRooms] = created.body.campaign.rooms
+  let campaign = created.body.campaign
+  for (const room of archivedRooms) {
+    const archived = await json(`${origin}/api/campaign/rooms/${room.id}`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${created.body.player.token}` },
+    })
+    assert.equal(archived.status, 200)
+    campaign = archived.body.campaign
+  }
+
+  assert.deepEqual(campaign.rooms.map((room) => room.id), [keptRoom.id])
+
+  const lastRoom = await json(`${origin}/api/campaign/rooms/${keptRoom.id}`, {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${created.body.player.token}` },
+  })
+  assert.equal(lastRoom.status, 400)
+})
+
+test('room changes reach every connected campaign member', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-room-live-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+  let ownerSocket
+  let memberSocket
+
+  t.after(async () => {
+    ownerSocket?.terminate()
+    memberSocket?.terminate()
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, {
+    method: 'POST',
+    body: JSON.stringify({ playerName: 'Theo' }),
+  })
+  ownerSocket = await openSocket(`ws://127.0.0.1:${port}/ws?token=${created.body.player.token}`)
+  memberSocket = await openSocket(`ws://127.0.0.1:${port}/ws?token=${joined.body.player.token}`)
+  const ownerUpdate = nextEvent(ownerSocket, 'campaign.updated')
+  const memberUpdate = nextEvent(memberSocket, 'campaign.updated')
+
+  await json(`${origin}/api/campaign/rooms`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${created.body.player.token}` },
+    body: JSON.stringify({ name: 'Lore Vault', description: 'Recovered histories and names' }),
+  })
+
+  const [ownerEvent, memberEvent] = await Promise.all([ownerUpdate, memberUpdate])
+  assert.equal(ownerEvent.payload.campaign.rooms.at(-1).name, 'Lore Vault')
+  assert.deepEqual(memberEvent.payload.campaign, ownerEvent.payload.campaign)
+})
+
 test('authenticated campaign members exchange room messages', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-chat-'))
   const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })

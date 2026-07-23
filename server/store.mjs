@@ -14,6 +14,10 @@ function tokenHash(token) {
   return createHash('sha256').update(token).digest('hex')
 }
 
+function roomSlug(name) {
+  return name.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'room'
+}
+
 function publicCampaign(row, rooms) {
   return {
     id: row.id,
@@ -59,6 +63,8 @@ export function createStore(databasePath) {
       slug TEXT NOT NULL,
       name TEXT NOT NULL,
       description TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
+      archived_at TEXT,
       UNIQUE(campaign_id, slug)
     );
     CREATE TABLE IF NOT EXISTS messages (
@@ -77,13 +83,25 @@ export function createStore(databasePath) {
     database.exec("UPDATE players SET role = 'owner' WHERE rowid IN (SELECT MIN(rowid) FROM players GROUP BY campaign_id)")
   }
   if (!playerColumns.some((column) => column.name === 'removed_at')) database.exec('ALTER TABLE players ADD COLUMN removed_at TEXT')
+  const roomColumns = database.prepare('PRAGMA table_info(rooms)').all()
+  if (!roomColumns.some((column) => column.name === 'position')) {
+    database.exec('ALTER TABLE rooms ADD COLUMN position INTEGER NOT NULL DEFAULT 0')
+    database.exec(`
+      UPDATE rooms AS target
+      SET position = (
+        SELECT COUNT(*) - 1 FROM rooms AS preceding
+        WHERE preceding.campaign_id = target.campaign_id AND preceding.rowid <= target.rowid
+      )
+    `)
+  }
+  if (!roomColumns.some((column) => column.name === 'archived_at')) database.exec('ALTER TABLE rooms ADD COLUMN archived_at TEXT')
 
   const campaignByInvite = database.prepare('SELECT * FROM campaigns WHERE invite_code = ?')
   const campaignById = database.prepare('SELECT * FROM campaigns WHERE id = ?')
-  const roomsByCampaign = database.prepare('SELECT * FROM rooms WHERE campaign_id = ? ORDER BY rowid')
+  const roomsByCampaign = database.prepare('SELECT * FROM rooms WHERE campaign_id = ? AND archived_at IS NULL ORDER BY position, rowid')
   const insertCampaign = database.prepare('INSERT INTO campaigns (id, name, invite_code, created_at) VALUES (?, ?, ?, ?)')
   const updateInvitation = database.prepare('UPDATE campaigns SET invite_code = ? WHERE id = ?')
-  const insertRoom = database.prepare('INSERT INTO rooms (id, campaign_id, slug, name, description) VALUES (?, ?, ?, ?, ?)')
+  const insertRoom = database.prepare('INSERT INTO rooms (id, campaign_id, slug, name, description, position) VALUES (?, ?, ?, ?, ?, ?)')
   const insertPlayer = database.prepare('INSERT INTO players (id, campaign_id, name, role, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)')
   const playersByCampaign = database.prepare('SELECT * FROM players WHERE campaign_id = ? AND removed_at IS NULL ORDER BY rowid')
   const playerForCampaign = database.prepare('SELECT * FROM players WHERE id = ? AND campaign_id = ? AND removed_at IS NULL')
@@ -93,7 +111,12 @@ export function createStore(databasePath) {
     FROM players JOIN campaigns ON campaigns.id = players.campaign_id
     WHERE players.token_hash = ? AND players.removed_at IS NULL
   `)
-  const roomForCampaign = database.prepare('SELECT * FROM rooms WHERE id = ? AND campaign_id = ?')
+  const roomForCampaign = database.prepare('SELECT * FROM rooms WHERE id = ? AND campaign_id = ? AND archived_at IS NULL')
+  const updateRoom = database.prepare('UPDATE rooms SET name = ?, description = ? WHERE id = ? AND campaign_id = ?')
+  const roomSlugExists = database.prepare('SELECT 1 FROM rooms WHERE campaign_id = ? AND slug = ?')
+  const nextRoomPosition = database.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS position FROM rooms WHERE campaign_id = ?')
+  const updateRoomPosition = database.prepare('UPDATE rooms SET position = ? WHERE id = ? AND campaign_id = ?')
+  const archiveRoom = database.prepare('UPDATE rooms SET archived_at = ? WHERE id = ? AND campaign_id = ?')
   const insertMessage = database.prepare(`
     INSERT INTO messages (id, room_id, player_id, client_message_id, text, sent_at)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -121,7 +144,7 @@ export function createStore(databasePath) {
       database.exec('BEGIN IMMEDIATE')
       try {
         insertCampaign.run(campaign.id, campaign.name, campaign.inviteCode, new Date().toISOString())
-        for (const [slug, name, description] of defaultRooms) insertRoom.run(randomUUID(), campaign.id, slug, name, description)
+        defaultRooms.forEach(([slug, name, description], position) => insertRoom.run(randomUUID(), campaign.id, slug, name, description, position))
         const player = createPlayer(campaign.id, playerName, 'owner')
         database.exec('COMMIT')
         return { campaign: publicCampaign(campaignById.get(campaign.id), roomsByCampaign.all(campaign.id)), player }
@@ -164,6 +187,42 @@ export function createStore(databasePath) {
       if (player.role === 'owner') return { outcome: 'owner' }
       removePlayer.run(new Date().toISOString(), playerId)
       return { outcome: 'removed', management: this.getCampaignManagement(campaignId) }
+    },
+
+    createRoom(campaignId, name, description) {
+      const baseSlug = roomSlug(name)
+      let slug = baseSlug
+      let suffix = 2
+      while (roomSlugExists.get(campaignId, slug)) slug = `${baseSlug}-${suffix++}`
+      insertRoom.run(randomUUID(), campaignId, slug, name, description, nextRoomPosition.get(campaignId).position)
+      return publicCampaign(campaignById.get(campaignId), roomsByCampaign.all(campaignId))
+    },
+
+    updateRoom(campaignId, roomId, name, description) {
+      if (!roomForCampaign.get(roomId, campaignId)) return null
+      updateRoom.run(name, description, roomId, campaignId)
+      return publicCampaign(campaignById.get(campaignId), roomsByCampaign.all(campaignId))
+    },
+
+    reorderRooms(campaignId, roomIds) {
+      const currentIds = roomsByCampaign.all(campaignId).map((room) => room.id)
+      if (roomIds.length !== currentIds.length || new Set(roomIds).size !== roomIds.length || roomIds.some((id) => !currentIds.includes(id))) return null
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        roomIds.forEach((roomId, position) => updateRoomPosition.run(position, roomId, campaignId))
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return publicCampaign(campaignById.get(campaignId), roomsByCampaign.all(campaignId))
+    },
+
+    archiveRoom(campaignId, roomId) {
+      if (!roomForCampaign.get(roomId, campaignId)) return { outcome: 'not_found' }
+      if (roomsByCampaign.all(campaignId).length <= 1) return { outcome: 'last_room' }
+      archiveRoom.run(new Date().toISOString(), roomId, campaignId)
+      return { outcome: 'archived', campaign: publicCampaign(campaignById.get(campaignId), roomsByCampaign.all(campaignId)) }
     },
 
     getRoom(roomId, campaignId) {

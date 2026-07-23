@@ -39,6 +39,11 @@ function cleanName(value, maximum) {
   return name && name.length <= maximum ? name : null
 }
 
+function cleanDescription(value, maximum) {
+  const description = typeof value === 'string' ? value.trim() : ''
+  return description.length <= maximum ? description : null
+}
+
 export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers } = {}) {
   const store = createStore(databasePath)
   const clients = new Map()
@@ -79,7 +84,94 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 403, { error: 'Only the campaign owner can manage this table.' })
           return
         }
-        sendJson(response, 200, { campaign: store.rotateInvitation(requestSession.campaign.id) })
+        const campaign = store.rotateInvitation(requestSession.campaign.id)
+        broadcastCampaign(campaign)
+        sendJson(response, 200, { campaign })
+        return
+      }
+
+      if (request.method === 'POST' && request.url === '/api/campaign/rooms') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'Only the campaign owner can manage this table.' })
+          return
+        }
+        const body = await readJson(request)
+        const name = cleanName(body.name, 40)
+        const description = cleanDescription(body.description, 120)
+        if (!name || description === null) {
+          sendJson(response, 400, { error: 'Room name or description is invalid.' })
+          return
+        }
+        const campaign = store.createRoom(requestSession.campaign.id, name, description)
+        broadcastCampaign(campaign)
+        sendJson(response, 201, { campaign })
+        return
+      }
+
+      const roomMutation = request.url?.match(/^\/api\/campaign\/rooms\/([^/]+)$/)
+      if (request.method === 'PATCH' && roomMutation) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'Only the campaign owner can manage this table.' })
+          return
+        }
+        const body = await readJson(request)
+        const name = cleanName(body.name, 40)
+        const description = cleanDescription(body.description, 120)
+        if (!name || description === null) {
+          sendJson(response, 400, { error: 'Room name or description is invalid.' })
+          return
+        }
+        const campaign = store.updateRoom(requestSession.campaign.id, roomMutation[1], name, description)
+        if (campaign) broadcastCampaign(campaign)
+        sendJson(response, campaign ? 200 : 404, campaign ? { campaign } : { error: 'Room not found.' })
+        return
+      }
+
+      if (request.method === 'DELETE' && roomMutation) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'Only the campaign owner can manage this table.' })
+          return
+        }
+        const result = store.archiveRoom(requestSession.campaign.id, roomMutation[1])
+        if (result.outcome === 'not_found') {
+          sendJson(response, 404, { error: 'Room not found.' })
+          return
+        }
+        if (result.outcome === 'last_room') {
+          sendJson(response, 400, { error: 'A campaign must keep at least one active room.' })
+          return
+        }
+        broadcastCampaign(result.campaign)
+        sendJson(response, 200, { campaign: result.campaign })
+        return
+      }
+
+      if (request.method === 'POST' && request.url === '/api/campaign/rooms/reorder') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'Only the campaign owner can manage this table.' })
+          return
+        }
+        const body = await readJson(request)
+        const roomIds = Array.isArray(body.roomIds) && body.roomIds.every((roomId) => typeof roomId === 'string') ? body.roomIds : null
+        const campaign = roomIds ? store.reorderRooms(requestSession.campaign.id, roomIds) : null
+        if (campaign) broadcastCampaign(campaign)
+        sendJson(response, campaign ? 200 : 400, campaign ? { campaign } : { error: 'Room order must include every active room once.' })
         return
       }
 
@@ -200,6 +292,15 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
 
   function broadcast(roomId, event, except) {
     for (const [socket] of members(roomId)) if (socket !== except) send(socket, event)
+  }
+
+  function broadcastCampaign(campaign) {
+    const event = envelope('campaign.updated', campaign.id, { campaign })
+    for (const [socket, client] of clients) {
+      if (client.campaign.id !== campaign.id) continue
+      client.campaign = campaign
+      send(socket, event)
+    }
   }
 
   function presenceSnapshot(roomId) {

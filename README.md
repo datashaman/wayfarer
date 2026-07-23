@@ -26,6 +26,7 @@ npm run test:e2e
 - Owner-only campaign folio for invitation replacement, player removal, seat-key reset, and room management
 - SQLite-backed rooms and transcripts that survive server restarts
 - Campaign-wide unread activity, transcript search, and revision-safe shared notes
+- Durable per-player read state, reconnect catch-up, idempotent messages, and paginated transcript history
 - WebSocket text chat between connected players
 - WebRTC peer-to-peer voice with mute, leave, and push-to-talk controls
 - Accessible labels, keyboard focus states, live message announcements, and reduced-motion support
@@ -34,7 +35,7 @@ npm run test:e2e
 
 `npm run dev` starts both the Vite web client and the room server. Create a campaign, save the one-time seat key, then open **Invite players** to copy, share, or scan its join link from another browser. A player can later recover the same campaign identity with their name and latest seat key; successful recovery rotates both the session and recovery credentials.
 
-`npm run test:e2e` starts isolated in-memory room and web servers, then verifies invitation, unread, search, shared-note, and two-browser WebRTC voice flows with Playwright. Voice tests use synthetic Web Audio microphone streams and exercise real media tracks and peer negotiation without recording host audio.
+`npm run test:e2e` starts isolated in-memory room and web servers, then verifies invitation, offline unread catch-up, paginated history, search, shared-note, and two-browser WebRTC voice flows with Playwright. Voice tests use synthetic Web Audio microphone streams and exercise real media tracks and peer negotiation without recording host audio.
 
 Campaign data is stored in `data/wayfarer.sqlite` by default. Set `DATABASE_PATH` when you need an isolated database, such as `DATABASE_PATH=/tmp/wayfarer.sqlite npm start`.
 

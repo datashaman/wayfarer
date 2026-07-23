@@ -32,9 +32,12 @@ test('a player joins from the invitation sheet and receives broadcast text', asy
   await expect(guest.getByLabel('Message fireside')).toBeEnabled()
   await guest.getByRole('button', { name: 'planning' }).click()
   await expect(guest.getByLabel('Message planning')).toBeEnabled()
+  await guestContext.setOffline(true)
+  await expect(guest.getByText('Reconnecting…', { exact: true })).toBeVisible()
   await invitation.getByRole('complementary').getByRole('button', { name: 'Close invitation' }).click()
   await page.getByLabel('Message fireside').fill('The lantern is lit.')
   await page.getByRole('button', { name: 'Send message' }).click()
+  await guestContext.setOffline(false)
 
   await expect(guest.getByRole('button', { name: /fireside 1 unread message/ })).toBeVisible()
   await guest.getByRole('button', { name: /fireside 1 unread message/ }).click()

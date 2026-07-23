@@ -792,10 +792,11 @@ test('unread room cursors survive restarts and clear when the room is opened', a
   const created = await json(`${origin}/api/campaigns`, {
     method: 'POST', body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
   })
+  const room = created.body.campaign.rooms[1]
+  app.store.addMessage({ roomId: room.id, playerId: created.body.player.id, clientMessageId: crypto.randomUUID(), text: 'History before Theo arrived.' })
   const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, {
     method: 'POST', body: JSON.stringify({ playerName: 'Theo' }),
   })
-  const room = created.body.campaign.rooms[1]
   app.store.addMessage({ roomId: room.id, playerId: created.body.player.id, clientMessageId: crypto.randomUUID(), text: 'The old bell rang.' })
 
   await app.close()

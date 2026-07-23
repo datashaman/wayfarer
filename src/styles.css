@@ -687,6 +687,47 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.earlier-entries {
+  display: grid;
+  width: min(100%, 760px);
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  margin: 0 auto 24px;
+  border: 0;
+  background: transparent;
+  color: var(--parchment-muted);
+  cursor: pointer;
+}
+
+.earlier-entries span {
+  height: 1px;
+  background: var(--border-soft);
+}
+
+.earlier-entries strong {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 10px;
+  font-style: italic;
+  font-weight: 400;
+}
+
+.earlier-entries:hover:not(:disabled) {
+  color: var(--wax-bright);
+}
+
+.earlier-entries:disabled {
+  cursor: default;
+}
+
+.history-error {
+  width: min(100%, 760px);
+  margin: 0 auto 20px;
+  color: var(--danger);
+  font-size: 10px;
+  text-align: center;
+}
+
 .message {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);

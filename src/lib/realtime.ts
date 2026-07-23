@@ -12,19 +12,29 @@ export class RealtimeClient {
   private attempts = 0
   private closedByClient = false
 
-  constructor(private readonly url: string) {}
+  constructor(private readonly url: string) {
+    window.addEventListener('offline', this.handleOffline)
+    window.addEventListener('online', this.handleOnline)
+  }
 
   connect() {
     this.closedByClient = false
+    if (!navigator.onLine) {
+      this.setState('reconnecting')
+      return
+    }
     this.setState(this.attempts ? 'reconnecting' : 'connecting')
-    this.socket = new WebSocket(this.url)
+    const socket = new WebSocket(this.url)
+    this.socket = socket
 
-    this.socket.addEventListener('open', () => {
+    socket.addEventListener('open', () => {
+      if (this.socket !== socket) return
       this.attempts = 0
       this.setState('live')
     })
 
-    this.socket.addEventListener('message', ({ data }) => {
+    socket.addEventListener('message', ({ data }) => {
+      if (this.socket !== socket) return
       try {
         const event = JSON.parse(String(data)) as ServerEvent
         this.eventHandlers.forEach((handler) => handler(event))
@@ -33,7 +43,9 @@ export class RealtimeClient {
       }
     })
 
-    this.socket.addEventListener('close', () => {
+    socket.addEventListener('close', () => {
+      if (this.socket !== socket) return
+      this.socket = undefined
       if (this.closedByClient) {
         this.setState('offline')
         return
@@ -62,10 +74,31 @@ export class RealtimeClient {
     this.closedByClient = true
     window.clearTimeout(this.retryTimer)
     this.socket?.close(1000, 'Client closed')
+    this.socket = undefined
+    this.setState('offline')
+    window.removeEventListener('offline', this.handleOffline)
+    window.removeEventListener('online', this.handleOnline)
+  }
+
+  private handleOffline = () => {
+    if (this.closedByClient) return
+    window.clearTimeout(this.retryTimer)
+    const socket = this.socket
+    this.socket = undefined
+    socket?.close()
+    this.setState('reconnecting')
+  }
+
+  private handleOnline = () => {
+    if (this.closedByClient || this.socket) return
+    window.clearTimeout(this.retryTimer)
+    this.connect()
   }
 
   private scheduleReconnect() {
     this.setState('reconnecting')
+    if (!navigator.onLine) return
+    window.clearTimeout(this.retryTimer)
     const delay = Math.min(1_000 * 2 ** this.attempts, 15_000)
     this.attempts += 1
     this.retryTimer = window.setTimeout(() => this.connect(), delay)

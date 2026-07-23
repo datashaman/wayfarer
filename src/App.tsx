@@ -35,6 +35,7 @@ import {
   type CampaignNote,
   type CampaignRoom,
   type Participant,
+  type MessagePage,
   type RoomMessage,
   type RuntimeConfig,
   type SeatEntry,
@@ -822,6 +823,9 @@ function App() {
   const activeRoomRef = useRef(activeRoom)
   const [unreadRooms, setUnreadRooms] = useState<Record<string, number>>({})
   const [messages, setMessages] = useState<RoomMessage[]>([])
+  const [hasOlderMessages, setHasOlderMessages] = useState(false)
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false)
+  const [historyError, setHistoryError] = useState('')
   const [participants, setParticipants] = useState<Participant[]>([])
   const [voiceParticipants, setVoiceParticipants] = useState<Participant[]>([])
   const [peerConnectionStates, setPeerConnectionStates] = useState<Record<string, VoiceConnectionState>>({})
@@ -849,6 +853,7 @@ function App() {
   const recoveryAttemptsRef = useRef(new Map<string, number>())
   const recoveryTimersRef = useRef(new Map<string, number>())
   const timelineRef = useRef<HTMLDivElement>(null)
+  const preserveTimelineHeightRef = useRef<number | null>(null)
   const realtimePlayer = session?.player
   const rooms = session?.campaign.rooms ?? []
   const playerId = session?.player.id ?? ''
@@ -883,7 +888,16 @@ function App() {
   }, [inviteCode, recoverySeed, pendingSeatEntry])
 
   useEffect(() => { localStorage.setItem('wayfarer-draft', draft) }, [draft])
-  useEffect(() => { timelineRef.current?.scrollTo({ top: timelineRef.current.scrollHeight, behavior: 'smooth' }) }, [messages])
+  useEffect(() => {
+    const timeline = timelineRef.current
+    if (!timeline) return
+    if (preserveTimelineHeightRef.current !== null) {
+      timeline.scrollTop += timeline.scrollHeight - preserveTimelineHeightRef.current
+      preserveTimelineHeightRef.current = null
+      return
+    }
+    timeline.scrollTo({ top: timeline.scrollHeight, behavior: 'smooth' })
+  }, [messages])
 
   useEffect(() => {
     if (!realtimePlayer || !activeRoomRef.current) return
@@ -1007,6 +1021,7 @@ function App() {
         setEntryNotice(event.payload.reason === 'recovered' ? 'This seat was recovered in another browser.' : 'Your seat was removed from this campaign.')
         setSession(null)
         setActiveRoom('')
+        setUnreadRooms({})
         activeRoomRef.current = ''
         return
       }
@@ -1022,6 +1037,8 @@ function App() {
           activeRoomRef.current = roomId
           setActiveRoom(roomId)
           setMessages([])
+          setHasOlderMessages(false)
+          setHistoryError('')
           setParticipants([])
           setVoiceParticipants([])
           setPeerConnectionStates({})
@@ -1033,7 +1050,7 @@ function App() {
         return
       }
       if (event.type === 'room.activity') {
-        if (event.roomId !== activeRoomRef.current) setUnreadRooms((current) => ({ ...current, [event.roomId]: (current[event.roomId] ?? 0) + 1 }))
+        if (event.payload.senderId !== realtimePlayer.id && event.roomId !== activeRoomRef.current) setUnreadRooms((current) => ({ ...current, [event.roomId]: (current[event.roomId] ?? 0) + 1 }))
         return
       }
       if (event.type === 'campaign.note_updated') {
@@ -1043,6 +1060,7 @@ function App() {
       if (event.roomId !== activeRoomRef.current) return
       if (event.type === 'room.snapshot') {
         setMessages(event.payload.messages)
+        setHasOlderMessages(event.payload.hasMore)
         setParticipants(event.payload.participants)
         setVoiceParticipants(event.payload.voiceParticipants)
       } else if (event.type === 'presence.snapshot') {
@@ -1089,6 +1107,12 @@ function App() {
       setConnection(state)
       if (state === 'live') {
         client.send(createEvent('room.subscribe', activeRoomRef.current, {}))
+        void api<{ unreadRooms: Record<string, number> }>('/api/campaign/activity', { headers: { authorization: `Bearer ${realtimePlayer.token}` } })
+          .then(({ unreadRooms: durableUnread }) => {
+            const active = activeRoomRef.current
+            setUnreadRooms(Object.fromEntries(Object.entries(durableUnread).filter(([roomId]) => roomId !== active)))
+          })
+          .catch(() => undefined)
         if (streamRef.current) client.send(createEvent('voice.join', activeRoomRef.current, {}))
       }
       if (state === 'reconnecting') peerMap.forEach((_, peerId) => closePeer(peerId))
@@ -1188,6 +1212,8 @@ function App() {
     activeRoomRef.current = roomId
     setActiveRoom(roomId)
     setMessages([])
+    setHasOlderMessages(false)
+    setHistoryError('')
     setParticipants([])
     setVoiceParticipants([])
     setPeerConnectionStates({})
@@ -1216,8 +1242,26 @@ function App() {
     const text = draft.trim()
     if (!text || connection !== 'live') return
     const clientMessageId = crypto.randomUUID()
-    clientRef.current?.send(createEvent('chat.send', activeRoom, { clientMessageId, text }))
-    setDraft('')
+    if (clientRef.current?.send(createEvent('chat.send', activeRoom, { clientMessageId, text }))) setDraft('')
+  }
+
+  const loadEarlierMessages = async () => {
+    const oldest = messages[0]?.sequence
+    if (!oldest || loadingOlderMessages || !hasOlderMessages || !session) return
+    setLoadingOlderMessages(true)
+    setHistoryError('')
+    try {
+      const timeline = timelineRef.current
+      preserveTimelineHeightRef.current = timeline?.scrollHeight ?? null
+      const page = await api<MessagePage>(`/api/rooms/${activeRoom}/messages?before=${oldest}`, { headers: { authorization: `Bearer ${session.player.token}` } })
+      setMessages((current) => [...new Map([...page.messages, ...current].map((message) => [message.id, message])).values()].sort((left, right) => left.sequence - right.sequence))
+      setHasOlderMessages(page.hasMore)
+    } catch {
+      preserveTimelineHeightRef.current = null
+      setHistoryError('Earlier entries could not be read. Try again.')
+    } finally {
+      setLoadingOlderMessages(false)
+    }
   }
 
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1251,6 +1295,8 @@ function App() {
       <main className="conversation">
         <header className="room-heading"><div><div className="room-title"><Hash size={19} /><h1>{activeRoomData.name}</h1></div><p>{activeRoomData.description}</p></div></header>
         <div className="timeline" ref={timelineRef} aria-live="polite" aria-label={`${activeRoomData.name} messages`}>
+          {hasOlderMessages && <button className="earlier-entries" onClick={loadEarlierMessages} disabled={loadingOlderMessages}><span /><strong>{loadingOlderMessages ? 'Reading earlier entries…' : 'Read earlier entries'}</strong><span /></button>}
+          {historyError && <div className="history-error" role="alert">{historyError}</div>}
           {messages.length ? messages.map((message) => <MessageItem key={message.id} message={message} />) : (
             <div className="empty-transcript"><Hash size={20} /><strong>Start the conversation</strong><span>There are no messages in #{activeRoomData.name} yet.</span></div>
           )}

@@ -61,6 +61,15 @@ function cleanDescription(value, maximum) {
   return description.length <= maximum ? description : null
 }
 
+const canonKinds = new Set(['fact', 'character', 'relationship', 'promise', 'event', 'question', 'contradiction', 'rule'])
+const canonVisibilities = new Set(['campaign', 'gm_only'])
+const canonDecisionActions = new Set(['accept', 'edit_accept', 'dispute', 'reject'])
+
+function cleanCanonText(value, maximum) {
+  const text = typeof value === 'string' ? value.trim() : ''
+  return text && text.length <= maximum ? text : null
+}
+
 export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers, allowedOrigins, trustProxy = false, rateLimits = {} } = {}) {
   const store = createStore(databasePath)
   const clients = new Map()
@@ -154,6 +163,100 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           return
         }
         sendJson(response, 200, { note: store.getCampaignNote(requestSession.campaign.id) })
+        return
+      }
+
+      if (request.method === 'GET' && request.url === '/api/campaign/canon') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        const includeGmOnly = requestSession.player.role === 'owner'
+        sendJson(response, 200, {
+          proposals: store.listCanonProposals(requestSession.campaign.id, { includeGmOnly }),
+          entries: store.listCanonEntries(requestSession.campaign.id, { includeGmOnly }),
+        })
+        return
+      }
+
+      if (request.method === 'POST' && request.url === '/api/campaign/canon/proposals') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'Only the campaign owner can propose canon.' })
+          return
+        }
+        const body = await readJson(request)
+        const kind = canonKinds.has(body.kind) ? body.kind : null
+        const title = cleanCanonText(body.title, 80)
+        const claim = cleanCanonText(body.claim, 2_000)
+        const visibility = canonVisibilities.has(body.visibility) ? body.visibility : null
+        const confidence = body.confidence === null || body.confidence === undefined
+          ? null
+          : typeof body.confidence === 'number' && body.confidence >= 0 && body.confidence <= 1 ? body.confidence : undefined
+        const extractorVersion = cleanCanonText(body.extractorVersion, 80)
+        const sources = Array.isArray(body.sources) && body.sources.length > 0 && body.sources.length <= 10
+          && body.sources.every((source) => typeof source?.messageId === 'string'
+            && source.messageId.length <= 100
+            && (source.excerpt === undefined || (typeof source.excerpt === 'string' && source.excerpt.length <= 500)))
+          ? body.sources
+          : null
+        if (!kind || !title || !claim || !visibility || confidence === undefined || !extractorVersion || !sources) {
+          sendJson(response, 400, { error: 'Canon proposal fields or citations are invalid.' })
+          return
+        }
+        const result = store.createCanonProposal({
+          campaignId: requestSession.campaign.id,
+          playerId: requestSession.player.id,
+          kind,
+          title,
+          claim,
+          visibility,
+          confidence,
+          extractorVersion,
+          sources,
+        })
+        if (result.outcome === 'invalid_source') {
+          sendJson(response, 400, { error: 'Every citation must belong to this campaign.' })
+          return
+        }
+        sendJson(response, 201, { proposal: result.proposal })
+        return
+      }
+
+      const canonDecision = request.url?.match(/^\/api\/campaign\/canon\/proposals\/([^/]+)\/decisions$/)
+      if (request.method === 'POST' && canonDecision) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'Only the campaign owner can decide canon.' })
+          return
+        }
+        const body = await readJson(request)
+        const action = canonDecisionActions.has(body.action) ? body.action : null
+        const reason = body.reason === undefined || body.reason === null || body.reason === ''
+          ? null
+          : cleanCanonText(body.reason, 500)
+        const title = action === 'edit_accept' ? cleanCanonText(body.title, 80) : null
+        const claim = action === 'edit_accept' ? cleanCanonText(body.claim, 2_000) : null
+        if (!action || reason === undefined || (action === 'edit_accept' && (!title || !claim))) {
+          sendJson(response, 400, { error: 'Canon decision fields are invalid.' })
+          return
+        }
+        const result = store.decideCanonProposal(requestSession.campaign.id, requestSession.player.id, canonDecision[1], { action, reason, title, claim })
+        if (result.outcome === 'not_found') {
+          sendJson(response, 404, { error: 'Canon proposal not found.' })
+          return
+        }
+        if (result.outcome === 'already_decided') {
+          sendJson(response, 409, { error: 'This proposal was already decided.', proposal: result.proposal })
+          return
+        }
+        sendJson(response, 200, { proposal: result.proposal, entries: store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true }) })
         return
       }
 

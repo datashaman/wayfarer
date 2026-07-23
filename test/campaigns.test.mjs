@@ -898,6 +898,98 @@ test('campaign members share durable notes with revision protection', async (t) 
   assert.equal((await noteUpdated).payload.note.body, 'The lighthouse opens at moonrise.')
 })
 
+test('canon proposals require cited campaign messages and owner review', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-canon-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+  let ownerSocket
+
+  t.after(async () => {
+    ownerSocket?.close()
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({ campaignName: 'The Salt Road', playerName: 'Mara' }),
+  })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, {
+    method: 'POST',
+    body: JSON.stringify({ playerName: 'Theo' }),
+  })
+  const ownerAuthorization = { authorization: `Bearer ${created.body.player.token}` }
+  const memberAuthorization = { authorization: `Bearer ${joined.body.player.token}` }
+  const roomId = created.body.campaign.rooms[0].id
+  ownerSocket = await openSocket(`ws://127.0.0.1:${port}/ws?token=${created.body.player.token}`)
+  const snapshot = nextEvent(ownerSocket, 'room.snapshot')
+  ownerSocket.send(JSON.stringify({ type: 'room.subscribe', id: crypto.randomUUID(), roomId, sentAt: new Date().toISOString(), payload: {} }))
+  await snapshot
+  const messageEvent = nextEvent(ownerSocket, 'chat.message')
+  ownerSocket.send(JSON.stringify({
+    type: 'chat.send',
+    id: crypto.randomUUID(),
+    roomId,
+    sentAt: new Date().toISOString(),
+    payload: { clientMessageId: crypto.randomUUID(), text: 'The lighthouse keeper is called Ilyra.' },
+  }))
+  const message = (await messageEvent).payload
+
+  const memberAttempt = await json(`${origin}/api/campaign/canon/proposals`, {
+    method: 'POST',
+    headers: memberAuthorization,
+    body: JSON.stringify({}),
+  })
+  assert.equal(memberAttempt.status, 403)
+
+  const createProposal = (visibility, title) => json(`${origin}/api/campaign/canon/proposals`, {
+    method: 'POST',
+    headers: ownerAuthorization,
+    body: JSON.stringify({
+      kind: 'character',
+      title,
+      claim: 'The lighthouse keeper is called Ilyra.',
+      visibility,
+      confidence: 0.91,
+      extractorVersion: 'fixture-v1',
+      sources: [{ messageId: message.id, excerpt: 'called Ilyra' }],
+    }),
+  })
+  const shared = await createProposal('campaign', 'Ilyra')
+  const privateProposal = await createProposal('gm_only', 'Ilyra’s secret')
+  assert.equal(shared.status, 201)
+  assert.equal(privateProposal.status, 201)
+
+  const memberLedger = await json(`${origin}/api/campaign/canon`, { headers: memberAuthorization })
+  assert.deepEqual(memberLedger.body.proposals.map((proposal) => proposal.title), ['Ilyra'])
+  assert.equal(memberLedger.body.proposals[0].sources[0].messageId, message.id)
+
+  const memberDecision = await json(`${origin}/api/campaign/canon/proposals/${shared.body.proposal.id}/decisions`, {
+    method: 'POST',
+    headers: memberAuthorization,
+    body: JSON.stringify({ action: 'accept' }),
+  })
+  assert.equal(memberDecision.status, 403)
+
+  const accepted = await json(`${origin}/api/campaign/canon/proposals/${shared.body.proposal.id}/decisions`, {
+    method: 'POST',
+    headers: ownerAuthorization,
+    body: JSON.stringify({ action: 'edit_accept', title: 'Ilyra, lighthouse keeper', claim: 'Ilyra keeps the lighthouse.' }),
+  })
+  assert.equal(accepted.status, 200)
+  assert.equal(accepted.body.entries[0].title, 'Ilyra, lighthouse keeper')
+  const repeated = await json(`${origin}/api/campaign/canon/proposals/${shared.body.proposal.id}/decisions`, {
+    method: 'POST',
+    headers: ownerAuthorization,
+    body: JSON.stringify({ action: 'reject' }),
+  })
+  assert.equal(repeated.status, 409)
+
+  const anonymous = await json(`${origin}/api/campaign/canon`)
+  assert.equal(anonymous.status, 401)
+})
+
 test('room transcript survives a server restart', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-history-'))
   const databasePath = join(directory, 'table.sqlite')

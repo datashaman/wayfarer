@@ -354,6 +354,13 @@ export function createStore(databasePath) {
     LEFT JOIN players ON players.id = canon_proposals.created_by_player_id
     WHERE canon_proposals.id = ? AND canon_proposals.campaign_id = ?
   `)
+  const canonProposalsForCampaign = database.prepare(`
+    SELECT canon_proposals.*, players.name AS created_by_name
+    FROM canon_proposals
+    LEFT JOIN players ON players.id = canon_proposals.created_by_player_id
+    WHERE canon_proposals.campaign_id = ?
+    ORDER BY canon_proposals.rowid DESC
+  `)
   const canonSourcesForProposal = database.prepare(`
     SELECT canon_proposal_sources.message_id, canon_proposal_sources.excerpt,
            messages.text, messages.sent_at, messages.rowid AS sequence,
@@ -601,6 +608,12 @@ export function createStore(databasePath) {
       return row ? publicCanonProposal(row, canonSourcesForProposal.all(proposalId)) : null
     },
 
+    listCanonProposals(campaignId, { includeGmOnly = false } = {}) {
+      return canonProposalsForCampaign.all(campaignId)
+        .filter((row) => includeGmOnly || row.visibility === 'campaign')
+        .map((row) => publicCanonProposal(row, canonSourcesForProposal.all(row.id)))
+    },
+
     decideCanonProposal(campaignId, playerId, proposalId, { action, reason = null, title = null, claim = null }) {
       const proposal = canonProposalById.get(proposalId, campaignId)
       if (!proposal) return { outcome: 'not_found' }
@@ -624,8 +637,10 @@ export function createStore(databasePath) {
       return { outcome: nextStatus, proposal: this.getCanonProposal(campaignId, proposalId) }
     },
 
-    listCanonEntries(campaignId) {
-      return canonEntriesForCampaign.all(campaignId).map(publicCanonEntry)
+    listCanonEntries(campaignId, { includeGmOnly = false } = {}) {
+      return canonEntriesForCampaign.all(campaignId)
+        .filter((row) => includeGmOnly || row.visibility === 'campaign')
+        .map(publicCanonEntry)
     },
 
     close() {

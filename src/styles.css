@@ -1272,6 +1272,17 @@ textarea:focus-visible {
   font-size: 10px;
 }
 
+.canon-section-title > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.canon-section-title > div > span {
+  color: var(--parchment-muted);
+  font-size: 10px;
+}
+
 .canon-card,
 .canon-entry,
 .canon-empty {

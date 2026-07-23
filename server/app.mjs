@@ -70,7 +70,7 @@ function cleanCanonText(value, maximum) {
   return text && text.length <= maximum ? text : null
 }
 
-export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers, allowedOrigins, trustProxy = false, rateLimits = {} } = {}) {
+export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers, allowedOrigins, trustProxy = false, rateLimits = {}, canonExtractor = null } = {}) {
   const store = createStore(databasePath)
   const clients = new Map()
   const originAllowlist = new Set(allowedOrigins ?? (dev ? developmentOrigins : []))
@@ -223,6 +223,39 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           return
         }
         sendJson(response, 201, { proposal: result.proposal })
+        return
+      }
+
+      if (request.method === 'POST' && request.url === '/api/campaign/canon/extract') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'Only the campaign owner can ask for canon suggestions.' })
+          return
+        }
+        if (!canonExtractor) {
+          sendJson(response, 503, { error: 'Canon extraction is not configured.' })
+          return
+        }
+        const messages = store.listRecentCampaignMessages(requestSession.campaign.id, 100)
+        if (!messages.length) {
+          sendJson(response, 400, { error: 'The transcript needs at least one message before canon can be suggested.' })
+          return
+        }
+        const existingCanon = store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true })
+        const drafts = await canonExtractor.extract({ campaignId: requestSession.campaign.id, messages, existingCanon })
+        for (const draft of drafts) store.createCanonProposal({
+          campaignId: requestSession.campaign.id,
+          playerId: requestSession.player.id,
+          extractorVersion: canonExtractor.version,
+          ...draft,
+        })
+        sendJson(response, 200, {
+          proposals: store.listCanonProposals(requestSession.campaign.id, { includeGmOnly: true }),
+          entries: existingCanon,
+        })
         return
       }
 

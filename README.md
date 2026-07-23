@@ -35,6 +35,8 @@ npm run test:e2e
 
 `npm run dev` starts both the Vite web client and the room server. Create a campaign, save the one-time seat key, then open **Invite players** to copy, share, or scan its join link from another browser. A player can later recover the same campaign identity with their name and latest seat key; successful recovery rotates both the session and recovery credentials.
 
+To enable owner-triggered Living Canon suggestions, copy `.env.example` to `.env.local` and set `OPENAI_API_KEY`. The server sends at most the latest 100 campaign messages to the configured model when the owner explicitly chooses **Find passages**. Suggestions start GM-only, cite their transcript sources, and cannot become canon until the owner accepts or edits them. Responses are requested with API storage disabled. `OPENAI_CANON_MODEL` defaults to `gpt-5.6-luna` and can be overridden.
+
 `npm run test:e2e` starts isolated in-memory room and web servers, then verifies invitation, offline unread catch-up, paginated history, search, shared-note, and two-browser WebRTC voice flows with Playwright. Voice tests use synthetic Web Audio microphone streams and exercise real media tracks and peer negotiation without recording host audio.
 
 Campaign data is stored in `data/wayfarer.sqlite` by default. Set `DATABASE_PATH` when you need an isolated database, such as `DATABASE_PATH=/tmp/wayfarer.sqlite npm start`.

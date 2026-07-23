@@ -990,6 +990,71 @@ test('canon proposals require cited campaign messages and owner review', async (
   assert.equal(anonymous.status, 401)
 })
 
+test('the owner manually extracts idempotent GM-only canon suggestions', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-canon-extraction-'))
+  let extractedInput
+  const canonExtractor = {
+    version: 'fixture-extractor-v1',
+    async extract(input) {
+      extractedInput = input
+      return [{
+        kind: 'promise',
+        title: 'Return before moonrise',
+        claim: 'The party promised to return before moonrise.',
+        visibility: 'gm_only',
+        confidence: 0.9,
+        sources: [{ messageId: input.messages[0].id, excerpt: 'promised to return' }],
+      }]
+    },
+  }
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite'), canonExtractor })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+  let ownerSocket
+
+  t.after(async () => {
+    ownerSocket?.close()
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST',
+    body: JSON.stringify({ campaignName: 'The Moon Road', playerName: 'Mara' }),
+  })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, {
+    method: 'POST',
+    body: JSON.stringify({ playerName: 'Theo' }),
+  })
+  const roomId = created.body.campaign.rooms[0].id
+  ownerSocket = await openSocket(`ws://127.0.0.1:${port}/ws?token=${created.body.player.token}`)
+  const snapshot = nextEvent(ownerSocket, 'room.snapshot')
+  ownerSocket.send(JSON.stringify({ type: 'room.subscribe', id: crypto.randomUUID(), roomId, sentAt: new Date().toISOString(), payload: {} }))
+  await snapshot
+  const messageEvent = nextEvent(ownerSocket, 'chat.message')
+  ownerSocket.send(JSON.stringify({
+    type: 'chat.send', id: crypto.randomUUID(), roomId, sentAt: new Date().toISOString(),
+    payload: { clientMessageId: crypto.randomUUID(), text: 'We promised to return before moonrise.' },
+  }))
+  await messageEvent
+
+  const memberAttempt = await json(`${origin}/api/campaign/canon/extract`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${joined.body.player.token}` },
+  })
+  assert.equal(memberAttempt.status, 403)
+  const authorization = { authorization: `Bearer ${created.body.player.token}` }
+  const first = await json(`${origin}/api/campaign/canon/extract`, { method: 'POST', headers: authorization })
+  const repeated = await json(`${origin}/api/campaign/canon/extract`, { method: 'POST', headers: authorization })
+
+  assert.equal(first.status, 200)
+  assert.equal(first.body.proposals.length, 1)
+  assert.equal(repeated.body.proposals.length, 1)
+  assert.equal(first.body.proposals[0].visibility, 'gm_only')
+  assert.equal(extractedInput.messages[0].text, 'We promised to return before moonrise.')
+  assert.deepEqual(extractedInput.existingCanon, [])
+})
+
 test('room transcript survives a server restart', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-history-'))
   const databasePath = join(directory, 'table.sqlite')

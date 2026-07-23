@@ -392,6 +392,7 @@ function SharedNotes({ session, note, onNote, onClose }: { session: TableSession
 function CanonLedgerSheet({ session, onClose, onOpenSource }: { session: TableSession; onClose: () => void; onOpenSource: (source: CanonProposalSource) => void }) {
   const [ledger, setLedger] = useState<CanonLedger | null>(null)
   const [pending, setPending] = useState('')
+  const [extracting, setExtracting] = useState(false)
   const [editing, setEditing] = useState<CanonProposal | null>(null)
   const [editTitle, setEditTitle] = useState('')
   const [editClaim, setEditClaim] = useState('')
@@ -437,6 +438,18 @@ function CanonLedgerSheet({ session, onClose, onOpenSource }: { session: TableSe
     setEditClaim(proposal.claim)
   }
 
+  const extractCanon = async () => {
+    setExtracting(true)
+    setError('')
+    try {
+      setLedger(await api<CanonLedger>('/api/campaign/canon/extract', { method: 'POST', headers: authorization }))
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The transcript could not be read for canon.')
+    } finally {
+      setExtracting(false)
+    }
+  }
+
   const pendingProposals = ledger?.proposals.filter((proposal) => proposal.status === 'proposed') ?? []
   const proposalById = new Map(ledger?.proposals.map((proposal) => [proposal.id, proposal]))
 
@@ -451,7 +464,7 @@ function CanonLedgerSheet({ session, onClose, onOpenSource }: { session: TableSe
           {!ledger ? <span className="folio-loading">Reading the canon ledger…</span> : (
             <>
               {session.player.role === 'owner' && <section className="canon-section" aria-labelledby="canon-proposals-heading">
-                <div className="canon-section-title"><h3 id="canon-proposals-heading">Awaiting review</h3><span>{pendingProposals.length}</span></div>
+                <div className="canon-section-title"><h3 id="canon-proposals-heading">Awaiting review</h3><div><span>{pendingProposals.length}</span><button className="folio-small-action" onClick={() => void extractCanon()} disabled={extracting}>{extracting ? 'Reading…' : 'Find passages'}</button></div></div>
                 {!pendingProposals.length && <div className="canon-empty"><Check size={18} /><span>No passages await a ruling.</span></div>}
                 {pendingProposals.map((proposal) => (
                   <article className="canon-card" key={proposal.id}>

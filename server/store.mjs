@@ -168,6 +168,7 @@ export function createStore(databasePath) {
       confidence REAL CHECK(confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
       status TEXT NOT NULL DEFAULT 'proposed' CHECK(status IN ('proposed', 'accepted', 'disputed', 'rejected')),
       extractor_version TEXT NOT NULL,
+      extraction_key TEXT,
       created_by_player_id TEXT REFERENCES players(id),
       created_at TEXT NOT NULL
     );
@@ -222,6 +223,9 @@ export function createStore(databasePath) {
     `)
   }
   if (!roomColumns.some((column) => column.name === 'archived_at')) database.exec('ALTER TABLE rooms ADD COLUMN archived_at TEXT')
+  const canonProposalColumns = database.prepare('PRAGMA table_info(canon_proposals)').all()
+  if (!canonProposalColumns.some((column) => column.name === 'extraction_key')) database.exec('ALTER TABLE canon_proposals ADD COLUMN extraction_key TEXT')
+  database.exec('CREATE UNIQUE INDEX IF NOT EXISTS canon_proposals_extraction_key ON canon_proposals(campaign_id, extraction_key) WHERE extraction_key IS NOT NULL')
   database.exec("INSERT OR IGNORE INTO campaign_notes (campaign_id) SELECT id FROM campaigns")
   database.exec(`
     DELETE FROM messages
@@ -331,6 +335,18 @@ export function createStore(databasePath) {
     ORDER BY messages.rowid DESC
     LIMIT 50
   `)
+  const recentMessagesForCampaign = database.prepare(`
+    SELECT * FROM (
+      SELECT messages.id, rooms.id AS room_id, rooms.name AS room_name,
+             players.name AS sender_name, messages.text, messages.sent_at,
+             messages.rowid AS sequence
+      FROM messages
+      JOIN rooms ON rooms.id = messages.room_id
+      JOIN players ON players.id = messages.player_id
+      WHERE rooms.campaign_id = ?
+      ORDER BY messages.rowid DESC LIMIT ?
+    ) ORDER BY sequence ASC
+  `)
   const messageForCampaign = database.prepare(`
     SELECT messages.id, messages.text, messages.sent_at, messages.rowid AS sequence,
            rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
@@ -342,8 +358,8 @@ export function createStore(databasePath) {
   const insertCanonProposal = database.prepare(`
     INSERT INTO canon_proposals (
       id, campaign_id, kind, title, claim, visibility, confidence, status,
-      extractor_version, created_by_player_id, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?)
+      extractor_version, extraction_key, created_by_player_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?)
   `)
   const insertCanonProposalSource = database.prepare(`
     INSERT INTO canon_proposal_sources (proposal_id, message_id, excerpt) VALUES (?, ?, ?)
@@ -360,6 +376,12 @@ export function createStore(databasePath) {
     LEFT JOIN players ON players.id = canon_proposals.created_by_player_id
     WHERE canon_proposals.campaign_id = ?
     ORDER BY canon_proposals.rowid DESC
+  `)
+  const canonProposalByExtractionKey = database.prepare(`
+    SELECT canon_proposals.*, players.name AS created_by_name
+    FROM canon_proposals
+    LEFT JOIN players ON players.id = canon_proposals.created_by_player_id
+    WHERE canon_proposals.campaign_id = ? AND canon_proposals.extraction_key = ?
   `)
   const canonSourcesForProposal = database.prepare(`
     SELECT canon_proposal_sources.message_id, canon_proposal_sources.excerpt,
@@ -567,6 +589,18 @@ export function createStore(databasePath) {
       }))
     },
 
+    listRecentCampaignMessages(campaignId, limit = 100) {
+      return recentMessagesForCampaign.all(campaignId, limit).map((row) => ({
+        id: row.id,
+        roomId: row.room_id,
+        roomName: row.room_name,
+        senderName: row.sender_name,
+        text: row.text,
+        sentAt: row.sent_at,
+        sequence: row.sequence,
+      }))
+    },
+
     getCampaignNote(campaignId) {
       const row = campaignNote.get(campaignId)
       return row ? {
@@ -588,11 +622,21 @@ export function createStore(databasePath) {
       if (!Array.isArray(sources) || sources.length === 0) return { outcome: 'sources_required' }
       const resolvedSources = sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) }))
       if (resolvedSources.some((source) => !source.row)) return { outcome: 'invalid_source' }
+      const extractionKey = createHash('sha256').update(JSON.stringify([
+        extractorVersion,
+        kind,
+        title,
+        claim,
+        visibility,
+        sources.map((source) => source.messageId).sort(),
+      ])).digest('hex')
+      const existing = canonProposalByExtractionKey.get(campaignId, extractionKey)
+      if (existing) return { outcome: 'existing', proposal: publicCanonProposal(existing, canonSourcesForProposal.all(existing.id)) }
       const proposalId = randomUUID()
       const createdAt = new Date().toISOString()
       database.exec('BEGIN IMMEDIATE')
       try {
-        insertCanonProposal.run(proposalId, campaignId, kind, title, claim, visibility, confidence, extractorVersion, playerId, createdAt)
+        insertCanonProposal.run(proposalId, campaignId, kind, title, claim, visibility, confidence, extractorVersion, extractionKey, playerId, createdAt)
         for (const source of resolvedSources) insertCanonProposalSource.run(proposalId, source.messageId, source.excerpt ?? null)
         database.exec('COMMIT')
       } catch (error) {

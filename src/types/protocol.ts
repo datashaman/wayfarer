@@ -92,6 +92,7 @@ export type ClientEvent =
 export type ServerEvent =
   | Envelope<'session.revoked', { reason: 'removed' | 'recovered' }>
   | Envelope<'campaign.updated', { campaign: Campaign }>
+  | Envelope<'room.activity', { senderId: Id }>
   | Envelope<'room.snapshot', { participants: Participant[]; voiceParticipants: Participant[]; messages: RoomMessage[] }>
   | Envelope<'presence.snapshot', { participants: Participant[] }>
   | Envelope<'chat.message', RoomMessage>

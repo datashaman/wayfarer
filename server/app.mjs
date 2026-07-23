@@ -349,6 +349,10 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
     }
   }
 
+  function broadcastCampaignEvent(campaignId, event) {
+    for (const [socket, client] of clients) if (client.campaign.id === campaignId) send(socket, event)
+  }
+
   function presenceSnapshot(roomId) {
     if (!roomId) return
     broadcast(roomId, envelope('presence.snapshot', roomId, { participants: members(roomId).map(([, client]) => participant(client)) }))
@@ -420,6 +424,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         })
         const message = { ...stored, senderName: client.player.name }
         broadcast(client.roomId, envelope('chat.message', client.roomId, message))
+        broadcastCampaignEvent(client.campaign.id, envelope('room.activity', client.roomId, { senderId: client.player.id }))
         return
       }
 

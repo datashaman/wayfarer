@@ -357,6 +357,7 @@ function PlayerRow({ participant }: { participant: Participant }) {
 function CampaignLedger({
   rooms,
   activeRoom,
+  unreadRooms,
   participants,
   currentPlayer,
   onRoomChange,
@@ -365,6 +366,7 @@ function CampaignLedger({
 }: {
   rooms: CampaignRoom[]
   activeRoom: string
+  unreadRooms: Record<string, number>
   participants: Participant[]
   currentPlayer: Participant
   onRoomChange: (id: string) => void
@@ -390,7 +392,7 @@ function CampaignLedger({
               onClick={() => { onRoomChange(room.id); onClose?.() }}
               aria-current={activeRoom === room.id ? 'page' : undefined}
             >
-              <Hash size={15} /><span>{room.name}</span>
+              <Hash size={15} /><span>{room.name}</span>{Boolean(unreadRooms[room.id]) && <span className="unread-count" aria-label={`${unreadRooms[room.id]} unread messages`}>{unreadRooms[room.id] > 99 ? '99+' : unreadRooms[room.id]}</span>}
             </button>
           ))}
         </div>
@@ -695,6 +697,7 @@ function App() {
   const [restoringSession, setRestoringSession] = useState(() => !recoverySeed && !pendingSeatEntry && Boolean(localStorage.getItem('wayfarer-token')))
   const [activeRoom, setActiveRoom] = useState('')
   const activeRoomRef = useRef(activeRoom)
+  const [unreadRooms, setUnreadRooms] = useState<Record<string, number>>({})
   const [messages, setMessages] = useState<RoomMessage[]>([])
   const [participants, setParticipants] = useState<Participant[]>([])
   const [voiceParticipants, setVoiceParticipants] = useState<Participant[]>([])
@@ -884,6 +887,7 @@ function App() {
       if (event.type === 'campaign.updated') {
         const campaign = event.payload.campaign
         setSession((current) => current ? { ...current, campaign } : current)
+        setUnreadRooms((current) => Object.fromEntries(Object.entries(current).filter(([roomId]) => campaign.rooms.some((room) => room.id === roomId))))
         const url = new URL(location.href)
         url.searchParams.set('campaign', campaign.inviteCode)
         history.replaceState({}, '', url)
@@ -900,6 +904,10 @@ function App() {
           setJoinedVoice(false)
           if (roomId) client.send(createEvent('room.subscribe', roomId, {}))
         }
+        return
+      }
+      if (event.type === 'room.activity') {
+        if (event.roomId !== activeRoomRef.current) setUnreadRooms((current) => ({ ...current, [event.roomId]: (current[event.roomId] ?? 0) + 1 }))
         return
       }
       if (event.roomId !== activeRoomRef.current) return
@@ -1040,6 +1048,12 @@ function App() {
 
   const changeRoom = (roomId: string) => {
     if (roomId === activeRoom) return
+    setUnreadRooms((current) => {
+      if (!current[roomId]) return current
+      const next = { ...current }
+      delete next[roomId]
+      return next
+    })
     if (joinedVoice) leaveVoice()
     activeRoomRef.current = roomId
     setActiveRoom(roomId)
@@ -1100,7 +1114,7 @@ function App() {
         </div>
       </header>
 
-      <CampaignLedger rooms={rooms} activeRoom={activeRoom} participants={participants} currentPlayer={currentPlayer} onRoomChange={changeRoom} />
+      <CampaignLedger rooms={rooms} activeRoom={activeRoom} unreadRooms={unreadRooms} participants={participants} currentPlayer={currentPlayer} onRoomChange={changeRoom} />
 
       <main className="conversation">
         <header className="room-heading"><div><div className="room-title"><Hash size={19} /><h1>{activeRoomData.name}</h1></div><p>{activeRoomData.description}</p></div></header>
@@ -1122,7 +1136,7 @@ function App() {
       {mobileLedger && (
         <div className="drawer-layer mobile-only" role="dialog" aria-modal="true" aria-label="Campaign navigation">
           <button className="drawer-scrim" onClick={() => setMobileLedger(false)} aria-label="Close campaign navigation" />
-          <CampaignLedger rooms={rooms} activeRoom={activeRoom} participants={participants} currentPlayer={currentPlayer} onRoomChange={changeRoom} mobile onClose={() => setMobileLedger(false)} />
+          <CampaignLedger rooms={rooms} activeRoom={activeRoom} unreadRooms={unreadRooms} participants={participants} currentPlayer={currentPlayer} onRoomChange={changeRoom} mobile onClose={() => setMobileLedger(false)} />
         </div>
       )}
 

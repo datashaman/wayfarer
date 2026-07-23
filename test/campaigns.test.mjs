@@ -683,6 +683,47 @@ test('authenticated campaign members exchange room messages', async (t) => {
   assert.equal(maraEvent.payload.text, 'The salt road is clear.')
 })
 
+test('room activity reaches campaign members seated in another room', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-room-activity-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+  let mara
+  let theo
+
+  t.after(async () => {
+    mara?.terminate()
+    theo?.terminate()
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST', body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, {
+    method: 'POST', body: JSON.stringify({ playerName: 'Theo' }),
+  })
+  const [fireside, planning] = created.body.campaign.rooms
+  mara = await openSocket(`ws://127.0.0.1:${port}/ws?token=${created.body.player.token}`)
+  theo = await openSocket(`ws://127.0.0.1:${port}/ws?token=${joined.body.player.token}`)
+  const maraSnapshot = nextEvent(mara, 'room.snapshot')
+  const theoSnapshot = nextEvent(theo, 'room.snapshot')
+  mara.send(JSON.stringify({ type: 'room.subscribe', id: crypto.randomUUID(), roomId: fireside.id, sentAt: new Date().toISOString(), payload: {} }))
+  theo.send(JSON.stringify({ type: 'room.subscribe', id: crypto.randomUUID(), roomId: planning.id, sentAt: new Date().toISOString(), payload: {} }))
+  await Promise.all([maraSnapshot, theoSnapshot])
+  const activity = nextEvent(theo, 'room.activity')
+
+  mara.send(JSON.stringify({
+    type: 'chat.send', id: crypto.randomUUID(), roomId: fireside.id, sentAt: new Date().toISOString(),
+    payload: { clientMessageId: crypto.randomUUID(), text: 'The fire is lit.' },
+  }))
+
+  const event = await activity
+  assert.equal(event.roomId, fireside.id)
+  assert.equal(event.payload.senderId, created.body.player.id)
+})
+
 test('room transcript survives a server restart', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-history-'))
   const databasePath = join(directory, 'table.sqlite')

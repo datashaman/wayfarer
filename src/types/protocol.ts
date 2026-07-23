@@ -65,6 +65,13 @@ export type TranscriptSearchResult = RoomMessage & {
   roomName: string
 }
 
+export type CampaignNote = {
+  body: string
+  revision: number
+  updatedAt: string | null
+  updatedByName: string | null
+}
+
 export type ClientVoiceSignal = Envelope<
   'voice.offer' | 'voice.answer',
   { targetPlayerId: Id; sdp: RTCSessionDescriptionInit }
@@ -97,6 +104,7 @@ export type ClientEvent =
 export type ServerEvent =
   | Envelope<'session.revoked', { reason: 'removed' | 'recovered' }>
   | Envelope<'campaign.updated', { campaign: Campaign }>
+  | Envelope<'campaign.note_updated', { note: CampaignNote }>
   | Envelope<'room.activity', { senderId: Id }>
   | Envelope<'room.snapshot', { participants: Participant[]; voiceParticipants: Participant[]; messages: RoomMessage[] }>
   | Envelope<'presence.snapshot', { participants: Participant[] }>

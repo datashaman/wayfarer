@@ -1146,6 +1146,111 @@ textarea:focus-visible {
   inset: 0;
 }
 
+.shared-notes-layer {
+  position: fixed;
+  z-index: 44;
+  inset: 0;
+}
+
+.shared-notes-layer .drawer-scrim {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  background: rgb(10 8 6 / 0.72);
+}
+
+.shared-notes {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  width: min(520px, 94vw);
+  grid-template-rows: 54px minmax(0, 1fr);
+  border-left: 1px solid var(--border-strong);
+  background: var(--soot-925);
+}
+
+.shared-notes-body {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  padding: 28px 24px 24px;
+}
+
+.shared-notes-heading h2 {
+  margin: 6px 0 6px;
+  color: var(--parchment);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 23px;
+  font-weight: 500;
+}
+
+.shared-notes-heading p {
+  margin: 0 0 20px;
+  color: var(--parchment-dim);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.shared-notes-body textarea {
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+  resize: none;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-medium);
+  outline: 0;
+  background: var(--soot-900);
+  color: var(--parchment-soft);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.shared-notes-body textarea:focus {
+  border-color: var(--border-strong);
+}
+
+.shared-notes-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 12px;
+}
+
+.shared-notes-footer > span {
+  color: var(--parchment-muted);
+  font-size: 10px;
+}
+
+.notes-conflict {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgb(189 109 79 / 0.3);
+  border-radius: var(--radius-small);
+  background: rgb(189 109 79 / 0.07);
+  color: var(--parchment-dim);
+  font-size: 11px;
+}
+
+.notes-conflict button {
+  border: 0;
+  background: transparent;
+  color: var(--wax-bright);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .transcript-search-layer .drawer-scrim {
   position: absolute;
   inset: 0;
@@ -1725,6 +1830,10 @@ textarea:focus-visible {
   }
 
   .transcript-search {
+    width: 100%;
+  }
+
+  .shared-notes {
     width: 100%;
   }
 

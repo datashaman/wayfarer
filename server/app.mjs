@@ -19,7 +19,7 @@ function sendJson(response, status, body) {
   response.writeHead(status, {
     'access-control-allow-origin': '*',
     'access-control-allow-headers': 'authorization, content-type',
-    'access-control-allow-methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+    'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     'content-type': 'application/json; charset=utf-8',
   })
   response.end(JSON.stringify(body))
@@ -86,6 +86,37 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           return
         }
         sendJson(response, 200, { results: store.searchMessages(requestSession.campaign.id, query) })
+        return
+      }
+
+      if (request.method === 'GET' && request.url === '/api/campaign/notes') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        sendJson(response, 200, { note: store.getCampaignNote(requestSession.campaign.id) })
+        return
+      }
+
+      if (request.method === 'PUT' && request.url === '/api/campaign/notes') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        const body = await readJson(request)
+        const noteBody = typeof body.body === 'string' && body.body.length <= 20_000 ? body.body : null
+        const revision = Number.isInteger(body.revision) && body.revision >= 0 ? body.revision : null
+        if (noteBody === null || revision === null) {
+          sendJson(response, 400, { error: 'Note text or revision is invalid.' })
+          return
+        }
+        const result = store.updateCampaignNote(requestSession.campaign.id, requestSession.player.id, noteBody, revision)
+        if (result.conflict) {
+          sendJson(response, 409, { error: 'The notes changed at another seat. Load the latest copy before saving.', note: result.note })
+          return
+        }
+        broadcastCampaignEvent(requestSession.campaign.id, envelope('campaign.note_updated', requestSession.campaign.id, { note: result.note }))
+        sendJson(response, 200, { note: result.note })
         return
       }
 

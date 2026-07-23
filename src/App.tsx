@@ -11,6 +11,7 @@ import {
   Menu,
   Mic,
   MicOff,
+  NotebookPen,
   PanelRight,
   QrCode,
   Radio,
@@ -31,6 +32,7 @@ import {
   type ConnectionState,
   type Campaign,
   type CampaignManagement,
+  type CampaignNote,
   type CampaignRoom,
   type Participant,
   type RoomMessage,
@@ -309,6 +311,73 @@ function TranscriptSearch({ session, onClose, onOpenRoom }: { session: TableSess
             {results.map((result) => <button key={result.id} className="transcript-result" onClick={() => { onOpenRoom(result.roomId); onClose() }}><span><Hash size={12} />{result.roomName}<time>{new Date(result.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></span><strong>{result.senderName}</strong><p>{result.text}</p></button>)}
             {searched && !results.length && <div className="transcript-search-empty"><Search size={20} /><strong>No passage found</strong><span>Try another name, phrase, or detail from the session.</span></div>}
           </div>
+        </div>
+      </aside>
+    </div>
+  )
+}
+
+function SharedNotes({ session, note, onNote, onClose }: { session: TableSession; note: CampaignNote | null; onNote: (note: CampaignNote) => void; onClose: () => void }) {
+  const [draft, setDraft] = useState(note?.body ?? '')
+  const [baseNote, setBaseNote] = useState<CampaignNote | null>(note)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState('')
+  const authorization = { authorization: `Bearer ${session.player.token}` }
+  const remoteChanged = Boolean(note && baseNote && note.revision !== baseNote.revision)
+
+  useEffect(() => {
+    if (baseNote) return
+    void api<{ note: CampaignNote }>('/api/campaign/notes', { headers: { authorization: `Bearer ${session.player.token}` } })
+      .then(({ note: loaded }) => {
+        setDraft(loaded.body)
+        setBaseNote(loaded)
+        onNote(loaded)
+      })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'The campaign notes could not be opened.'))
+  }, [baseNote, onNote, session.player.token])
+
+  useEffect(() => {
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [onClose])
+
+  const saveNote = async () => {
+    if (!baseNote || draft === baseNote.body) return
+    setPending(true)
+    setError('')
+    try {
+      const result = await api<{ note: CampaignNote }>('/api/campaign/notes', {
+        method: 'PUT', headers: authorization, body: JSON.stringify({ body: draft, revision: baseNote.revision }),
+      })
+      setBaseNote(result.note)
+      setDraft(result.note.body)
+      onNote(result.note)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The campaign notes could not be saved.')
+      void api<{ note: CampaignNote }>('/api/campaign/notes', { headers: authorization }).then(({ note: latest }) => onNote(latest))
+    } finally {
+      setPending(false)
+    }
+  }
+
+  const loadLatest = () => {
+    if (!note) return
+    setDraft(note.body)
+    setBaseNote(note)
+    setError('')
+  }
+
+  return (
+    <div className="shared-notes-layer" role="dialog" aria-modal="true" aria-labelledby="shared-notes-heading">
+      <button className="drawer-scrim" onClick={onClose} aria-label="Close shared notes" />
+      <aside className="shared-notes">
+        <div className="drawer-heading"><span id="shared-notes-heading">Campaign notes</span><button className="icon-button" onClick={onClose} aria-label="Close shared notes"><X size={18} /></button></div>
+        <div className="shared-notes-body">
+          <div className="shared-notes-heading"><span className="eyebrow">Shared ledger page</span><h2>Notes for the whole party</h2><p>Plans, names, clues, and promises kept between sessions.</p></div>
+          {remoteChanged && <div className="notes-conflict" role="status"><span>The notes changed at another seat.</span><button onClick={loadLatest}>Load latest</button></div>}
+          {error && <div className="entry-error" role="alert">{error}</div>}
+          {!baseNote ? <span className="folio-loading">Opening the ledger…</span> : <><textarea value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={20_000} aria-label="Shared campaign notes" placeholder="Record what the party should remember…" /><div className="shared-notes-footer"><span>{baseNote.updatedAt ? `Last saved by ${baseNote.updatedByName ?? 'a player'} · ${new Date(baseNote.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'No notes recorded yet'}</span><button className="primary-action" onClick={saveNote} disabled={pending || draft === baseNote.body || remoteChanged}>{pending ? 'Saving…' : 'Save notes'}</button></div></>}
         </div>
       </aside>
     </div>
@@ -769,6 +838,8 @@ function App() {
   const [campaignFolio, setCampaignFolio] = useState(false)
   const [invitationSheet, setInvitationSheet] = useState(false)
   const [transcriptSearch, setTranscriptSearch] = useState(false)
+  const [sharedNotes, setSharedNotes] = useState(false)
+  const [campaignNote, setCampaignNote] = useState<CampaignNote | null>(null)
   const clientRef = useRef<RealtimeClient | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const peersRef = useRef(new Map<string, RTCPeerConnection>())
@@ -963,6 +1034,10 @@ function App() {
       }
       if (event.type === 'room.activity') {
         if (event.roomId !== activeRoomRef.current) setUnreadRooms((current) => ({ ...current, [event.roomId]: (current[event.roomId] ?? 0) + 1 }))
+        return
+      }
+      if (event.type === 'campaign.note_updated') {
+        setCampaignNote(event.payload.note)
         return
       }
       if (event.roomId !== activeRoomRef.current) return
@@ -1164,6 +1239,7 @@ function App() {
         <div className="campaign-actions">
           {connection !== 'live' && <span className="connection-state"><i />{connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span>}
           <button className="text-button" onClick={() => setTranscriptSearch(true)}><Search size={15} />Search</button>
+          <button className="text-button" onClick={() => setSharedNotes(true)}><NotebookPen size={15} />Notes</button>
           <button className="text-button invite-button" onClick={() => setInvitationSheet(true)}><QrCode size={15} />Invite players</button>
           {session.player.role === 'owner' && <button className="icon-button" onClick={() => setCampaignFolio(true)} aria-label="Open campaign folio"><Settings size={18} /></button>}
           <button className="icon-button mobile-only" onClick={() => setMobileTable(true)} aria-label="Open voice table"><Users size={19} /></button>
@@ -1206,6 +1282,7 @@ function App() {
       {campaignFolio && <CampaignFolio session={session} onClose={() => setCampaignFolio(false)} onCampaign={updateCampaign} onOpenInvitation={() => { setCampaignFolio(false); setInvitationSheet(true) }} />}
       {invitationSheet && <InvitationSheet campaign={session.campaign} onClose={() => setInvitationSheet(false)} />}
       {transcriptSearch && <TranscriptSearch session={session} onClose={() => setTranscriptSearch(false)} onOpenRoom={changeRoom} />}
+      {sharedNotes && <SharedNotes session={session} note={campaignNote} onNote={setCampaignNote} onClose={() => setSharedNotes(false)} />}
 
       <div className="voice-dock mobile-only">
         {!joinedVoice ? <button className="primary-action" onClick={joinVoice} disabled={joiningVoice || connection !== 'live' || !voiceConfigReady}><Headphones size={17} />{joiningVoice ? 'Joining…' : voiceConfigReady ? 'Join voice' : 'Preparing voice…'}</button> : <><button className={`dock-mic ${muted ? 'dock-mic--muted' : ''}`} onClick={() => setMuted((current) => !current)} aria-label={muted ? 'Unmute' : 'Mute'}>{muted ? <MicOff size={18} /> : <Mic size={18} />}</button><span>{Object.values(peerConnectionStates).includes('failed') ? 'Voice issue' : Object.values(peerConnectionStates).includes('recovering') ? 'Reconnecting voice…' : muted ? 'Muted' : `${voiceParticipants.length} in voice`}</span><button className="quiet-icon" onClick={() => setMobileTable(true)} aria-label="Voice settings"><PanelRight size={17} /></button></>}

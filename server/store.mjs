@@ -89,6 +89,13 @@ export function createStore(databasePath) {
       text TEXT NOT NULL,
       sent_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS campaign_notes (
+      campaign_id TEXT PRIMARY KEY REFERENCES campaigns(id) ON DELETE CASCADE,
+      body TEXT NOT NULL DEFAULT '',
+      revision INTEGER NOT NULL DEFAULT 0,
+      updated_by_player_id TEXT REFERENCES players(id),
+      updated_at TEXT
+    );
   `)
 
   const playerColumns = database.prepare('PRAGMA table_info(players)').all()
@@ -110,6 +117,7 @@ export function createStore(databasePath) {
     `)
   }
   if (!roomColumns.some((column) => column.name === 'archived_at')) database.exec('ALTER TABLE rooms ADD COLUMN archived_at TEXT')
+  database.exec("INSERT OR IGNORE INTO campaign_notes (campaign_id) SELECT id FROM campaigns")
 
   const campaignByInvite = database.prepare('SELECT * FROM campaigns WHERE invite_code = ?')
   const campaignById = database.prepare('SELECT * FROM campaigns WHERE id = ?')
@@ -138,6 +146,16 @@ export function createStore(databasePath) {
   const insertMessage = database.prepare(`
     INSERT INTO messages (id, room_id, player_id, client_message_id, text, sent_at)
     VALUES (?, ?, ?, ?, ?, ?)
+  `)
+  const insertCampaignNote = database.prepare('INSERT INTO campaign_notes (campaign_id) VALUES (?)')
+  const campaignNote = database.prepare(`
+    SELECT campaign_notes.*, players.name AS updated_by_name
+    FROM campaign_notes LEFT JOIN players ON players.id = campaign_notes.updated_by_player_id
+    WHERE campaign_notes.campaign_id = ?
+  `)
+  const updateCampaignNote = database.prepare(`
+    UPDATE campaign_notes SET body = ?, revision = ?, updated_by_player_id = ?, updated_at = ?
+    WHERE campaign_id = ?
   `)
   const messagesForRoom = database.prepare(`
     SELECT * FROM (
@@ -175,6 +193,7 @@ export function createStore(databasePath) {
         insertCampaign.run(campaign.id, campaign.name, campaign.inviteCode, new Date().toISOString())
         defaultRooms.forEach(([slug, name, description], position) => insertRoom.run(randomUUID(), campaign.id, slug, name, description, position))
         const { recoveryCode, ...player } = createPlayer(campaign.id, playerName, 'owner')
+        insertCampaignNote.run(campaign.id)
         database.exec('COMMIT')
         return { campaign: publicCampaign(campaignById.get(campaign.id), roomsByCampaign.all(campaign.id)), player, recoveryCode }
       } catch (error) {
@@ -315,6 +334,23 @@ export function createStore(databasePath) {
         text: row.text,
         sentAt: row.sent_at,
       }))
+    },
+
+    getCampaignNote(campaignId) {
+      const row = campaignNote.get(campaignId)
+      return row ? {
+        body: row.body,
+        revision: row.revision,
+        updatedAt: row.updated_at,
+        updatedByName: row.updated_by_name,
+      } : null
+    },
+
+    updateCampaignNote(campaignId, playerId, body, expectedRevision) {
+      const current = campaignNote.get(campaignId)
+      if (!current || current.revision !== expectedRevision) return { conflict: true, note: this.getCampaignNote(campaignId) }
+      updateCampaignNote.run(body, current.revision + 1, playerId, new Date().toISOString(), campaignId)
+      return { conflict: false, note: this.getCampaignNote(campaignId) }
     },
 
     close() {

@@ -44,5 +44,15 @@ test('a player joins from the invitation sheet and receives broadcast text', asy
   await search.getByLabel('Words spoken at the table').fill('lantern')
   await search.getByRole('button', { name: 'Search', exact: true }).click()
   await expect(search.getByRole('button', { name: /fireside.*Mara.*The lantern is lit/i })).toBeVisible()
+  await search.getByRole('complementary').getByLabel('Close transcript search').click()
+
+  await page.getByRole('button', { name: 'Notes' }).click()
+  const ownerNotes = page.getByRole('dialog', { name: 'Campaign notes' })
+  await ownerNotes.getByLabel('Shared campaign notes').fill('Meet at the lighthouse at moonrise.')
+  await ownerNotes.getByRole('button', { name: 'Save notes' }).click()
+  await expect(ownerNotes.getByText(/Last saved by Mara/)).toBeVisible()
+
+  await guest.getByRole('button', { name: 'Notes' }).click()
+  await expect(guest.getByLabel('Shared campaign notes')).toHaveValue('Meet at the lighthouse at moonrise.')
   await guestContext.close()
 })

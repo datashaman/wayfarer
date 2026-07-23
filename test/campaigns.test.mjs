@@ -734,6 +734,48 @@ test('room activity reaches campaign members seated in another room', async (t) 
   assert.equal(event.payload.senderId, created.body.player.id)
 })
 
+test('campaign members share durable notes with revision protection', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-notes-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+  let ownerSocket
+
+  t.after(async () => {
+    ownerSocket?.terminate()
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST', body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, {
+    method: 'POST', body: JSON.stringify({ playerName: 'Theo' }),
+  })
+  ownerSocket = await openSocket(`ws://127.0.0.1:${port}/ws?token=${created.body.player.token}`)
+  const noteUpdated = nextEvent(ownerSocket, 'campaign.note_updated')
+  const saved = await json(`${origin}/api/campaign/notes`, {
+    method: 'PUT', headers: { authorization: `Bearer ${joined.body.player.token}` },
+    body: JSON.stringify({ body: 'The lighthouse opens at moonrise.', revision: 0 }),
+  })
+  const restored = await json(`${origin}/api/campaign/notes`, {
+    headers: { authorization: `Bearer ${created.body.player.token}` },
+  })
+  const stale = await json(`${origin}/api/campaign/notes`, {
+    method: 'PUT', headers: { authorization: `Bearer ${created.body.player.token}` },
+    body: JSON.stringify({ body: 'Overwrite the clue.', revision: 0 }),
+  })
+
+  assert.equal(saved.status, 200)
+  assert.equal(saved.body.note.revision, 1)
+  assert.equal(saved.body.note.updatedByName, 'Theo')
+  assert.equal(restored.body.note.body, 'The lighthouse opens at moonrise.')
+  assert.equal(stale.status, 409)
+  assert.equal(stale.body.note.revision, 1)
+  assert.equal((await noteUpdated).payload.note.body, 'The lighthouse opens at moonrise.')
+})
+
 test('room transcript survives a server restart', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-history-'))
   const databasePath = join(directory, 'table.sqlite')

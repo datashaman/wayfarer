@@ -58,6 +58,12 @@ export type RoomMessage = {
   senderName: string
   text: string
   sentAt: string
+  sequence: number
+}
+
+export type MessagePage = {
+  messages: RoomMessage[]
+  hasMore: boolean
 }
 
 export type TranscriptSearchResult = RoomMessage & {
@@ -106,7 +112,7 @@ export type ServerEvent =
   | Envelope<'campaign.updated', { campaign: Campaign }>
   | Envelope<'campaign.note_updated', { note: CampaignNote }>
   | Envelope<'room.activity', { senderId: Id }>
-  | Envelope<'room.snapshot', { participants: Participant[]; voiceParticipants: Participant[]; messages: RoomMessage[] }>
+  | Envelope<'room.snapshot', { participants: Participant[]; voiceParticipants: Participant[]; messages: RoomMessage[]; hasMore: boolean }>
   | Envelope<'presence.snapshot', { participants: Participant[] }>
   | Envelope<'chat.message', RoomMessage>
   | Envelope<'voice.roster', { participants: Participant[] }>

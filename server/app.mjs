@@ -157,6 +157,35 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         return
       }
 
+      if (request.method === 'GET' && request.url === '/api/campaign/activity') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        sendJson(response, 200, { unreadRooms: store.getUnreadRooms(requestSession.campaign.id, requestSession.player.id) })
+        return
+      }
+
+      const messageHistory = request.url?.match(/^\/api\/rooms\/([^/?]+)\/messages(?:\?.*)?$/)
+      if (request.method === 'GET' && messageHistory) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        const room = store.getRoom(messageHistory[1], requestSession.campaign.id)
+        if (!room) {
+          sendJson(response, 404, { error: 'Room not found.' })
+          return
+        }
+        const before = Number(new URL(request.url, 'http://localhost').searchParams.get('before'))
+        if (!Number.isSafeInteger(before) || before <= 0) {
+          sendJson(response, 400, { error: 'A valid message cursor is required.' })
+          return
+        }
+        sendJson(response, 200, store.listMessages(room.id, { before, limit: 50 }))
+        return
+      }
+
       if (request.method === 'PUT' && request.url === '/api/campaign/notes') {
         if (!requestSession) {
           sendJson(response, 401, { error: 'Session not found.' })
@@ -507,12 +536,15 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         const previousRoom = client.roomId
         if (previousRoom && previousRoom !== room.id) leaveVoice(socket, client)
         client.roomId = room.id
+        store.markRoomRead(client.player.id, room.id)
         if (previousRoom && previousRoom !== client.roomId) presenceSnapshot(previousRoom)
         const roomMembers = members(client.roomId)
+        const history = store.listMessages(client.roomId)
         send(socket, envelope('room.snapshot', client.roomId, {
           participants: roomMembers.map(([, member]) => participant(member)),
           voiceParticipants: roomMembers.filter(([, member]) => member.inVoice).map(([, member]) => participant(member)),
-          messages: store.listMessages(client.roomId),
+          messages: history.messages,
+          hasMore: history.hasMore,
         }))
         presenceSnapshot(client.roomId)
         return
@@ -533,8 +565,12 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           clientMessageId,
           text,
         })
-        const message = { ...stored, senderName: client.player.name }
-        broadcast(client.roomId, envelope('chat.message', client.roomId, message))
+        if (!stored.inserted) {
+          send(socket, envelope('chat.message', client.roomId, stored.message))
+          return
+        }
+        for (const [, member] of members(client.roomId)) store.markRoomRead(member.player.id, client.roomId)
+        broadcast(client.roomId, envelope('chat.message', client.roomId, stored.message))
         broadcastCampaignEvent(client.campaign.id, envelope('room.activity', client.roomId, { senderId: client.player.id }))
         return
       }

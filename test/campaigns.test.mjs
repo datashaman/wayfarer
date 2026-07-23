@@ -775,6 +775,86 @@ test('room activity reaches campaign members seated in another room', async (t) 
   assert.equal(event.payload.senderId, created.body.player.id)
 })
 
+test('unread room cursors survive restarts and clear when the room is opened', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-read-cursors-'))
+  const databasePath = join(directory, 'table.sqlite')
+  let app = createRoomServer({ databasePath })
+  let port = await app.listen(0)
+  let origin = `http://127.0.0.1:${port}`
+  let socket
+
+  t.after(async () => {
+    socket?.terminate()
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST', body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, {
+    method: 'POST', body: JSON.stringify({ playerName: 'Theo' }),
+  })
+  const room = created.body.campaign.rooms[1]
+  app.store.addMessage({ roomId: room.id, playerId: created.body.player.id, clientMessageId: crypto.randomUUID(), text: 'The old bell rang.' })
+
+  await app.close()
+  app = createRoomServer({ databasePath })
+  port = await app.listen(0)
+  origin = `http://127.0.0.1:${port}`
+
+  const unread = await json(`${origin}/api/campaign/activity`, { headers: { authorization: `Bearer ${joined.body.player.token}` } })
+  assert.deepEqual(unread.body.unreadRooms, { [room.id]: 1 })
+
+  socket = await openSocket(`ws://127.0.0.1:${port}/ws?token=${joined.body.player.token}`)
+  const snapshot = nextEvent(socket, 'room.snapshot')
+  socket.send(JSON.stringify({ type: 'room.subscribe', id: crypto.randomUUID(), roomId: room.id, sentAt: new Date().toISOString(), payload: {} }))
+  await snapshot
+  const cleared = await json(`${origin}/api/campaign/activity`, { headers: { authorization: `Bearer ${joined.body.player.token}` } })
+  assert.deepEqual(cleared.body.unreadRooms, {})
+})
+
+test('message writes are idempotent and room history is cursor-paginated', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-history-pages-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+  let socket
+
+  t.after(async () => {
+    socket?.terminate()
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, {
+    method: 'POST', body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }),
+  })
+  const room = created.body.campaign.rooms[0]
+  for (let index = 1; index <= 125; index += 1) {
+    app.store.addMessage({ roomId: room.id, playerId: created.body.player.id, clientMessageId: `message-${index}`, text: `Ledger entry ${index}` })
+  }
+  const duplicate = app.store.addMessage({ roomId: room.id, playerId: created.body.player.id, clientMessageId: 'message-125', text: 'This must not replace the original.' })
+  assert.equal(duplicate.inserted, false)
+  assert.equal(duplicate.message.text, 'Ledger entry 125')
+
+  socket = await openSocket(`ws://127.0.0.1:${port}/ws?token=${created.body.player.token}`)
+  const snapshotPromise = nextEvent(socket, 'room.snapshot')
+  socket.send(JSON.stringify({ type: 'room.subscribe', id: crypto.randomUUID(), roomId: room.id, sentAt: new Date().toISOString(), payload: {} }))
+  const snapshot = await snapshotPromise
+  assert.equal(snapshot.payload.messages.length, 100)
+  assert.equal(snapshot.payload.messages[0].text, 'Ledger entry 26')
+  assert.equal(snapshot.payload.hasMore, true)
+
+  const older = await json(`${origin}/api/rooms/${room.id}/messages?before=${snapshot.payload.messages[0].sequence}`, {
+    headers: { authorization: `Bearer ${created.body.player.token}` },
+  })
+  assert.equal(older.status, 200)
+  assert.equal(older.body.messages.length, 25)
+  assert.equal(older.body.messages[0].text, 'Ledger entry 1')
+  assert.equal(older.body.hasMore, false)
+})
+
 test('campaign members share durable notes with revision protection', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-notes-'))
   const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })

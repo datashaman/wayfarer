@@ -50,6 +50,18 @@ function publicPlayer(row, token) {
   }
 }
 
+function publicMessage(row) {
+  return {
+    id: row.id,
+    clientMessageId: row.client_message_id,
+    senderId: row.player_id,
+    senderName: row.sender_name,
+    text: row.text,
+    sentAt: row.sent_at,
+    sequence: row.sequence,
+  }
+}
+
 export function createStore(databasePath) {
   if (databasePath !== ':memory:') mkdirSync(dirname(databasePath), { recursive: true })
   const database = new DatabaseSync(databasePath)
@@ -96,6 +108,13 @@ export function createStore(databasePath) {
       updated_by_player_id TEXT REFERENCES players(id),
       updated_at TEXT
     );
+    CREATE TABLE IF NOT EXISTS room_reads (
+      player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      last_read_sequence INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (player_id, room_id)
+    );
   `)
 
   const playerColumns = database.prepare('PRAGMA table_info(players)').all()
@@ -118,6 +137,24 @@ export function createStore(databasePath) {
   }
   if (!roomColumns.some((column) => column.name === 'archived_at')) database.exec('ALTER TABLE rooms ADD COLUMN archived_at TEXT')
   database.exec("INSERT OR IGNORE INTO campaign_notes (campaign_id) SELECT id FROM campaigns")
+  database.exec(`
+    DELETE FROM messages
+    WHERE client_message_id IS NOT NULL
+      AND rowid NOT IN (
+        SELECT MIN(rowid) FROM messages WHERE client_message_id IS NOT NULL GROUP BY player_id, client_message_id
+      );
+    CREATE UNIQUE INDEX IF NOT EXISTS messages_player_client_id
+      ON messages(player_id, client_message_id) WHERE client_message_id IS NOT NULL;
+  `)
+  const initializePlayerReads = database.prepare(`
+    INSERT OR IGNORE INTO room_reads (player_id, room_id, last_read_sequence, updated_at)
+    SELECT players.id, rooms.id, COALESCE(MAX(messages.rowid), 0), ?
+    FROM players
+    JOIN rooms ON rooms.campaign_id = players.campaign_id
+    LEFT JOIN messages ON messages.room_id = rooms.id
+    GROUP BY players.id, rooms.id
+  `)
+  initializePlayerReads.run(new Date().toISOString())
 
   const campaignByInvite = database.prepare('SELECT * FROM campaigns WHERE invite_code = ?')
   const campaignById = database.prepare('SELECT * FROM campaigns WHERE id = ?')
@@ -144,8 +181,14 @@ export function createStore(databasePath) {
   const updateRoomPosition = database.prepare('UPDATE rooms SET position = ? WHERE id = ? AND campaign_id = ?')
   const archiveRoom = database.prepare('UPDATE rooms SET archived_at = ? WHERE id = ? AND campaign_id = ?')
   const insertMessage = database.prepare(`
-    INSERT INTO messages (id, room_id, player_id, client_message_id, text, sent_at)
+    INSERT OR IGNORE INTO messages (id, room_id, player_id, client_message_id, text, sent_at)
     VALUES (?, ?, ?, ?, ?, ?)
+  `)
+  const messageByClientId = database.prepare(`
+    SELECT messages.id, messages.client_message_id, messages.player_id, players.name AS sender_name,
+           messages.text, messages.sent_at, messages.rowid AS sequence
+    FROM messages JOIN players ON players.id = messages.player_id
+    WHERE messages.player_id = ? AND messages.client_message_id = ?
   `)
   const insertCampaignNote = database.prepare('INSERT INTO campaign_notes (campaign_id) VALUES (?)')
   const campaignNote = database.prepare(`
@@ -157,18 +200,44 @@ export function createStore(databasePath) {
     UPDATE campaign_notes SET body = ?, revision = ?, updated_by_player_id = ?, updated_at = ?
     WHERE campaign_id = ?
   `)
-  const messagesForRoom = database.prepare(`
+  const latestMessagesForRoom = database.prepare(`
     SELECT * FROM (
       SELECT messages.id, messages.client_message_id, messages.player_id, players.name AS sender_name,
              messages.text, messages.sent_at, messages.rowid AS sequence
       FROM messages JOIN players ON players.id = messages.player_id
       WHERE messages.room_id = ?
-      ORDER BY messages.rowid DESC LIMIT 100
+      ORDER BY messages.rowid DESC LIMIT ?
     ) ORDER BY sequence ASC
+  `)
+  const olderMessagesForRoom = database.prepare(`
+    SELECT * FROM (
+      SELECT messages.id, messages.client_message_id, messages.player_id, players.name AS sender_name,
+             messages.text, messages.sent_at, messages.rowid AS sequence
+      FROM messages JOIN players ON players.id = messages.player_id
+      WHERE messages.room_id = ? AND messages.rowid < ?
+      ORDER BY messages.rowid DESC LIMIT ?
+    ) ORDER BY sequence ASC
+  `)
+  const newestRoomSequence = database.prepare('SELECT COALESCE(MAX(rowid), 0) AS sequence FROM messages WHERE room_id = ?')
+  const upsertRoomRead = database.prepare(`
+    INSERT INTO room_reads (player_id, room_id, last_read_sequence, updated_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT(player_id, room_id) DO UPDATE SET
+      last_read_sequence = MAX(room_reads.last_read_sequence, excluded.last_read_sequence),
+      updated_at = excluded.updated_at
+  `)
+  const unreadRoomsForPlayer = database.prepare(`
+    SELECT rooms.id AS room_id, COUNT(messages.id) AS unread
+    FROM rooms
+    LEFT JOIN room_reads ON room_reads.room_id = rooms.id AND room_reads.player_id = ?
+    LEFT JOIN messages ON messages.room_id = rooms.id
+      AND messages.rowid > COALESCE(room_reads.last_read_sequence, 0)
+      AND messages.player_id <> ?
+    WHERE rooms.campaign_id = ? AND rooms.archived_at IS NULL
+    GROUP BY rooms.id
   `)
   const searchMessagesForCampaign = database.prepare(`
     SELECT messages.id, messages.room_id, rooms.name AS room_name, messages.player_id,
-           players.name AS sender_name, messages.text, messages.sent_at
+           players.name AS sender_name, messages.text, messages.sent_at, messages.rowid AS sequence
     FROM messages
     JOIN rooms ON rooms.id = messages.room_id
     JOIN players ON players.id = messages.player_id
@@ -182,6 +251,7 @@ export function createStore(databasePath) {
     const recoveryCode = createRecoveryCode()
     const player = { id: randomUUID(), campaignId, name, role, token, recoveryCode }
     insertPlayer.run(player.id, campaignId, name, role, tokenHash(token), recoveryHash(recoveryCode), new Date().toISOString())
+    initializePlayerReads.run(new Date().toISOString())
     return player
   }
 
@@ -313,19 +383,27 @@ export function createStore(databasePath) {
         text,
         sentAt: new Date().toISOString(),
       }
-      insertMessage.run(message.id, roomId, playerId, clientMessageId, text, message.sentAt)
-      return message
+      const inserted = insertMessage.run(message.id, roomId, playerId, clientMessageId, text, message.sentAt).changes === 1
+      const stored = messageByClientId.get(playerId, clientMessageId)
+      return { message: publicMessage(stored), inserted }
     },
 
-    listMessages(roomId) {
-      return messagesForRoom.all(roomId).map((row) => ({
-        id: row.id,
-        clientMessageId: row.client_message_id,
-        senderId: row.player_id,
-        senderName: row.sender_name,
-        text: row.text,
-        sentAt: row.sent_at,
-      }))
+    listMessages(roomId, { before, limit = 100 } = {}) {
+      const rows = before
+        ? olderMessagesForRoom.all(roomId, before, limit + 1)
+        : latestMessagesForRoom.all(roomId, limit + 1)
+      const hasMore = rows.length > limit
+      return { messages: rows.slice(hasMore ? 1 : 0).map(publicMessage), hasMore }
+    },
+
+    markRoomRead(playerId, roomId) {
+      upsertRoomRead.run(playerId, roomId, newestRoomSequence.get(roomId).sequence, new Date().toISOString())
+    },
+
+    getUnreadRooms(campaignId, playerId) {
+      return Object.fromEntries(unreadRoomsForPlayer.all(playerId, playerId, campaignId)
+        .filter((row) => row.unread > 0)
+        .map((row) => [row.room_id, row.unread]))
     },
 
     searchMessages(campaignId, query) {
@@ -337,6 +415,7 @@ export function createStore(databasePath) {
         senderName: row.sender_name,
         text: row.text,
         sentAt: row.sent_at,
+        sequence: row.sequence,
       }))
     },
 

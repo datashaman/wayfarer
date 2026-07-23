@@ -14,6 +14,32 @@ export type Participant = {
   muted: boolean
 }
 
+export type CampaignRoom = {
+  id: Id
+  slug: string
+  name: string
+  description: string
+}
+
+export type Campaign = {
+  id: Id
+  name: string
+  inviteCode: string
+  rooms: CampaignRoom[]
+}
+
+export type PlayerSession = {
+  id: Id
+  campaignId: Id
+  name: string
+  token: string
+}
+
+export type TableSession = {
+  campaign: Campaign
+  player: PlayerSession
+}
+
 export type RoomMessage = {
   id: Id
   clientMessageId?: Id
@@ -44,7 +70,7 @@ export type ServerIceCandidate = Envelope<
 >
 
 export type ClientEvent =
-  | Envelope<'room.subscribe', { playerId: Id; name: string }>
+  | Envelope<'room.subscribe', Record<string, never>>
   | Envelope<'chat.send', { clientMessageId: Id; text: string }>
   | Envelope<'voice.join' | 'voice.leave', Record<string, never>>
   | Envelope<'voice.mute_changed', { muted: boolean }>
@@ -68,7 +94,7 @@ export type ServerEvent =
 export type ConnectionState = 'offline' | 'connecting' | 'live' | 'reconnecting'
 
 type ClientPayloadMap = {
-  'room.subscribe': { playerId: Id; name: string }
+  'room.subscribe': Record<string, never>
   'chat.send': { clientMessageId: Id; text: string }
   'voice.join': Record<string, never>
   'voice.leave': Record<string, never>

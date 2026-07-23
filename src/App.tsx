@@ -1,5 +1,7 @@
 import {
   BookOpen,
+  Check,
+  Copy,
   Hash,
   Headphones,
   Menu,
@@ -16,19 +18,12 @@ import { RealtimeClient } from './lib/realtime'
 import {
   createEvent,
   type ConnectionState,
+  type CampaignRoom,
   type Participant,
   type RoomMessage,
   type ServerEvent,
+  type TableSession,
 } from './types/protocol'
-
-type Room = { id: string; name: string; description: string }
-
-const rooms: Room[] = [
-  { id: 'fireside', name: 'fireside', description: 'The party table · everyone welcome' },
-  { id: 'in-character', name: 'in-character', description: 'Keep it in character' },
-  { id: 'planning', name: 'planning', description: 'Plans, theories, and questionable maps' },
-  { id: 'rules-desk', name: 'rules-desk', description: 'Rules questions and references' },
-]
 
 const avatarPalette = ['#b96b4b', '#7f9364', '#8b7fa4', '#ad8754', '#6d8794', '#a87955']
 
@@ -41,11 +36,30 @@ function avatarColor(id: string) {
   return avatarPalette[hash % avatarPalette.length]
 }
 
-function websocketUrl() {
-  if (import.meta.env.VITE_WS_URL) return String(import.meta.env.VITE_WS_URL)
+function serverOrigin() {
+  if (import.meta.env.VITE_SERVER_URL) return String(import.meta.env.VITE_SERVER_URL)
+  return location.port === '5173' ? `${location.protocol}//${location.hostname}:8787` : location.origin
+}
+
+function websocketUrl(token: string) {
+  if (import.meta.env.VITE_WS_URL) {
+    const custom = new URL(String(import.meta.env.VITE_WS_URL))
+    custom.searchParams.set('token', token)
+    return custom.toString()
+  }
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const host = location.port === '5173' ? `${location.hostname}:8787` : location.host
-  return `${protocol}//${host}/ws`
+  return `${protocol}//${host}/ws?token=${encodeURIComponent(token)}`
+}
+
+async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${serverOrigin()}${path}`, {
+    ...options,
+    headers: { 'content-type': 'application/json', ...options.headers },
+  })
+  const body = await response.json()
+  if (!response.ok) throw new Error(body.error ?? 'Unable to reach the table.')
+  return body as T
 }
 
 function Avatar({ participant, size = 'regular' }: { participant: Participant; size?: 'small' | 'regular' }) {
@@ -60,13 +74,29 @@ function Avatar({ participant, size = 'regular' }: { participant: Participant; s
   )
 }
 
-function EntryGate({ onEnter }: { onEnter: (name: string) => void }) {
-  const [name, setName] = useState('')
+function EntryGate({ inviteCode, onEnter }: { inviteCode: string | null; onEnter: (session: TableSession) => void }) {
+  const [playerName, setPlayerName] = useState('')
+  const [campaignName, setCampaignName] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
 
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault()
-    const cleanName = name.trim()
-    if (cleanName) onEnter(cleanName)
+    if (!playerName.trim() || (!inviteCode && !campaignName.trim())) return
+    setError('')
+    setSubmitting(true)
+    try {
+      const path = inviteCode ? `/api/invitations/${inviteCode}/join` : '/api/campaigns'
+      const session = await api<TableSession>(path, {
+        method: 'POST',
+        body: JSON.stringify(inviteCode ? { playerName } : { campaignName, playerName }),
+      })
+      onEnter(session)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Unable to enter the table.')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -74,20 +104,27 @@ function EntryGate({ onEnter }: { onEnter: (name: string) => void }) {
       <div className="entry-card">
         <div className="campaign-sigil entry-sigil"><BookOpen size={21} /></div>
         <span className="campaign-kicker">Wayfarer's Table</span>
-        <h1>The Ashen Coast</h1>
-        <p>Choose the name the party will see at the table.</p>
+        <h1>{inviteCode ? 'Join the campaign' : 'Open a new campaign'}</h1>
+        <p>{inviteCode ? 'Choose the name the party will see at the table.' : 'Name the campaign and take the first seat.'}</p>
         <form onSubmit={submit}>
+          {!inviteCode && (
+            <>
+              <label htmlFor="campaign-name">Campaign name</label>
+              <input id="campaign-name" value={campaignName} onChange={(event) => setCampaignName(event.target.value)} maxLength={80} autoComplete="off" autoFocus />
+            </>
+          )}
           <label htmlFor="display-name">Your name</label>
           <input
             id="display-name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
+            value={playerName}
+            onChange={(event) => setPlayerName(event.target.value)}
             maxLength={40}
             autoComplete="nickname"
-            autoFocus
+            autoFocus={Boolean(inviteCode)}
           />
-          <button className="primary-action" type="submit" disabled={!name.trim()}>
-            Enter the table
+          {error && <div className="entry-error" role="alert">{error}</div>}
+          <button className="primary-action" type="submit" disabled={submitting || !playerName.trim() || (!inviteCode && !campaignName.trim())}>
+            {submitting ? 'Opening…' : inviteCode ? 'Join the table' : 'Open the table'}
           </button>
         </form>
       </div>
@@ -107,6 +144,7 @@ function PlayerRow({ participant }: { participant: Participant }) {
 }
 
 function CampaignLedger({
+  rooms,
   activeRoom,
   participants,
   currentPlayer,
@@ -114,6 +152,7 @@ function CampaignLedger({
   mobile,
   onClose,
 }: {
+  rooms: CampaignRoom[]
   activeRoom: string
   participants: Participant[]
   currentPlayer: Participant
@@ -253,9 +292,10 @@ function VoiceTable({
 }
 
 function App() {
-  const [displayName, setDisplayName] = useState(() => sessionStorage.getItem('wayfarer-name') ?? '')
-  const [playerId] = useState(() => sessionStorage.getItem('wayfarer-player-id') ?? crypto.randomUUID())
-  const [activeRoom, setActiveRoom] = useState('fireside')
+  const inviteCode = new URLSearchParams(location.search).get('campaign')
+  const [session, setSession] = useState<TableSession | null>(null)
+  const [restoringSession, setRestoringSession] = useState(() => Boolean(localStorage.getItem('wayfarer-token')))
+  const [activeRoom, setActiveRoom] = useState('')
   const activeRoomRef = useRef(activeRoom)
   const [messages, setMessages] = useState<RoomMessage[]>([])
   const [participants, setParticipants] = useState<Participant[]>([])
@@ -270,25 +310,40 @@ function App() {
   const [voiceError, setVoiceError] = useState('')
   const [mobileLedger, setMobileLedger] = useState(false)
   const [mobileTable, setMobileTable] = useState(false)
+  const [inviteCopied, setInviteCopied] = useState(false)
   const clientRef = useRef<RealtimeClient | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const peersRef = useRef(new Map<string, RTCPeerConnection>())
   const audioRef = useRef(new Map<string, HTMLAudioElement>())
   const candidatesRef = useRef(new Map<string, RTCIceCandidateInit[]>())
   const timelineRef = useRef<HTMLDivElement>(null)
+  const rooms = session?.campaign.rooms ?? []
+  const playerId = session?.player.id ?? ''
+  const displayName = session?.player.name ?? ''
   const currentPlayer: Participant = { playerId, name: displayName, muted }
   const activeRoomData = rooms.find((room) => room.id === activeRoom) ?? rooms[0]
 
   useEffect(() => {
-    sessionStorage.setItem('wayfarer-player-id', playerId)
-  }, [playerId])
+    const token = localStorage.getItem('wayfarer-token')
+    if (!token) return
+    void api<TableSession>('/api/session', { headers: { authorization: `Bearer ${token}` } })
+      .then((restored) => {
+        if (inviteCode && restored.campaign.inviteCode !== inviteCode) return
+        const roomId = restored.campaign.rooms[0]?.id ?? ''
+        activeRoomRef.current = roomId
+        setActiveRoom(roomId)
+        setSession(restored)
+      })
+      .catch(() => localStorage.removeItem('wayfarer-token'))
+      .finally(() => setRestoringSession(false))
+  }, [inviteCode])
 
   useEffect(() => { localStorage.setItem('wayfarer-draft', draft) }, [draft])
   useEffect(() => { timelineRef.current?.scrollTo({ top: timelineRef.current.scrollHeight, behavior: 'smooth' }) }, [messages])
 
   useEffect(() => {
-    if (!displayName) return
-    const client = new RealtimeClient(websocketUrl())
+    if (!session || !activeRoomRef.current) return
+    const client = new RealtimeClient(websocketUrl(session.player.token))
     clientRef.current = client
     const peerMap = peersRef.current
 
@@ -350,7 +405,7 @@ function App() {
       } else if (event.type === 'chat.message') {
         setMessages((current) => current.some((message) => message.id === event.payload.id) ? current : [...current, event.payload])
       } else if (event.type === 'voice.roster') {
-        setVoiceParticipants([...event.payload.participants, { playerId, name: displayName, muted: false }])
+        setVoiceParticipants([...event.payload.participants, { playerId: session.player.id, name: session.player.name, muted: false }])
         for (const participant of event.payload.participants) {
           const peer = createPeer(participant.playerId)
           const offer = await peer.createOffer()
@@ -386,7 +441,7 @@ function App() {
     const unsubscribeState = client.onState((state) => {
       setConnection(state)
       if (state === 'live') {
-        client.send(createEvent('room.subscribe', activeRoomRef.current, { playerId, name: displayName }))
+        client.send(createEvent('room.subscribe', activeRoomRef.current, {}))
         if (streamRef.current) client.send(createEvent('voice.join', activeRoomRef.current, {}))
       }
       if (state === 'reconnecting') peerMap.forEach((_, peerId) => closePeer(peerId))
@@ -401,7 +456,7 @@ function App() {
       streamRef.current?.getTracks().forEach((track) => track.stop())
       streamRef.current = null
     }
-  }, [displayName, playerId])
+  }, [session])
 
   useEffect(() => {
     streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = !muted })
@@ -419,7 +474,25 @@ function App() {
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up) }
   }, [joinedVoice, pushToTalk])
 
-  const enterTable = (name: string) => { sessionStorage.setItem('wayfarer-name', name); setDisplayName(name) }
+  const enterTable = (entered: TableSession) => {
+    localStorage.setItem('wayfarer-token', entered.player.token)
+    const roomId = entered.campaign.rooms[0]?.id ?? ''
+    activeRoomRef.current = roomId
+    setActiveRoom(roomId)
+    setSession(entered)
+    const url = new URL(location.href)
+    url.searchParams.set('campaign', entered.campaign.inviteCode)
+    history.replaceState({}, '', url)
+  }
+
+  const copyInvite = async () => {
+    if (!session) return
+    const url = new URL(location.href)
+    url.searchParams.set('campaign', session.campaign.inviteCode)
+    await navigator.clipboard.writeText(url.toString())
+    setInviteCopied(true)
+    window.setTimeout(() => setInviteCopied(false), 1_800)
+  }
 
   const leaveVoice = () => {
     clientRef.current?.send(createEvent('voice.leave', activeRoomRef.current, {}))
@@ -445,7 +518,7 @@ function App() {
     setParticipants([])
     setVoiceParticipants([])
     setConnectedPlayerIds([])
-    if (connection === 'live') clientRef.current?.send(createEvent('room.subscribe', roomId, { playerId, name: displayName }))
+    if (connection === 'live') clientRef.current?.send(createEvent('room.subscribe', roomId, {}))
   }
 
   const joinVoice = async () => {
@@ -478,7 +551,9 @@ function App() {
     if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() }
   }
 
-  if (!displayName) return <EntryGate onEnter={enterTable} />
+  if (restoringSession) return <main className="entry-gate"><span className="entry-wait">Returning to the table…</span></main>
+  if (!session) return <EntryGate inviteCode={inviteCode} onEnter={enterTable} />
+  if (!activeRoomData) return null
 
   return (
     <div className="app-shell">
@@ -486,15 +561,16 @@ function App() {
         <div className="campaign-identity">
           <button className="icon-button mobile-only" onClick={() => setMobileLedger(true)} aria-label="Open campaign navigation"><Menu size={19} /></button>
           <div className="campaign-sigil" aria-hidden="true"><BookOpen size={18} /></div>
-          <div><span className="campaign-kicker">Wayfarer's Table</span><span className="campaign-title">The Ashen Coast</span></div>
+          <div><span className="campaign-kicker">Wayfarer's Table</span><span className="campaign-title">{session.campaign.name}</span></div>
         </div>
         <div className="campaign-actions">
           {connection !== 'live' && <span className="connection-state"><i />{connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span>}
+          <button className="text-button invite-button" onClick={copyInvite}>{inviteCopied ? <Check size={15} /> : <Copy size={15} />}{inviteCopied ? 'Copied' : 'Invite players'}</button>
           <button className="icon-button mobile-only" onClick={() => setMobileTable(true)} aria-label="Open voice table"><Users size={19} /></button>
         </div>
       </header>
 
-      <CampaignLedger activeRoom={activeRoom} participants={participants} currentPlayer={currentPlayer} onRoomChange={changeRoom} />
+      <CampaignLedger rooms={rooms} activeRoom={activeRoom} participants={participants} currentPlayer={currentPlayer} onRoomChange={changeRoom} />
 
       <main className="conversation">
         <header className="room-heading"><div><div className="room-title"><Hash size={19} /><h1>{activeRoomData.name}</h1></div><p>{activeRoomData.description}</p></div></header>
@@ -517,7 +593,7 @@ function App() {
       {mobileLedger && (
         <div className="drawer-layer mobile-only" role="dialog" aria-modal="true" aria-label="Campaign navigation">
           <button className="drawer-scrim" onClick={() => setMobileLedger(false)} aria-label="Close campaign navigation" />
-          <CampaignLedger activeRoom={activeRoom} participants={participants} currentPlayer={currentPlayer} onRoomChange={changeRoom} mobile onClose={() => setMobileLedger(false)} />
+          <CampaignLedger rooms={rooms} activeRoom={activeRoom} participants={participants} currentPlayer={currentPlayer} onRoomChange={changeRoom} mobile onClose={() => setMobileLedger(false)} />
         </div>
       )}
 

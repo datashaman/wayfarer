@@ -112,6 +112,26 @@ body {
   margin-top: 6px;
 }
 
+.entry-error {
+  padding: 9px 10px;
+  border: 1px solid rgb(207 114 95 / 0.3);
+  border-radius: var(--radius-small);
+  background: rgb(207 114 95 / 0.07);
+  color: #e2a293;
+  font-size: 11px;
+}
+
+.entry-wait {
+  color: var(--parchment-dim);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 14px;
+}
+
+.invite-button {
+  min-width: 112px;
+  justify-content: center;
+}
+
 button,
 textarea {
   font: inherit;

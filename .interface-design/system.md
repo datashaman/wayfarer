@@ -71,6 +71,12 @@ Use an 8px base spacing unit, with 4px allowed for micro-gaps and optical correc
 
 Persistent top-level context containing the campaign identity, connection state, search, help, and mobile drawer controls. Keep it compact at 64px desktop and 58px mobile.
 
+The invitation action belongs beside the campaign identity and copies a campaign-scoped join URL. Confirm completion briefly in the same control; do not expose raw tokens or add a separate setup panel.
+
+### Campaign entry
+
+New tables begin with a campaign name and player name. Invitation links reduce entry to the player name only. Keep this as a focused, single-card gateway with inline errors and one primary action; never prefill fictional campaigns or players.
+
 ### Campaign ledger
 
 Left rail containing rooms, online party members, characters, and the local profile. Active rooms use a soot surface, subtle border, and wax hash icon. Unread state uses a compact wax counter.

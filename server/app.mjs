@@ -75,6 +75,20 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         return
       }
 
+      if (request.method === 'GET' && request.url?.startsWith('/api/campaign/search')) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        const query = new URL(request.url, 'http://localhost').searchParams.get('q')?.trim() ?? ''
+        if (!query || query.length > 80) {
+          sendJson(response, 400, { error: 'Search text must be between 1 and 80 characters.' })
+          return
+        }
+        sendJson(response, 200, { results: store.searchMessages(requestSession.campaign.id, query) })
+        return
+      }
+
       if (request.method === 'POST' && request.url === '/api/campaign/invitation') {
         if (!requestSession) {
           sendJson(response, 401, { error: 'Session not found.' })

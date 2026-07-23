@@ -15,6 +15,7 @@ import {
   QrCode,
   Radio,
   RefreshCw,
+  Search,
   Send,
   Share2,
   Settings,
@@ -37,6 +38,7 @@ import {
   type SeatEntry,
   type ServerEvent,
   type TableSession,
+  type TranscriptSearchResult,
   type VoiceConnectionState,
 } from './types/protocol'
 
@@ -255,6 +257,58 @@ function InvitationSheet({ campaign, onClose }: { campaign: Campaign; onClose: (
             {canShare && <button className="folio-button" type="button" onClick={shareInvitation}><Share2 size={15} /> Share…</button>}
           </div>
           <small className="invite-note">Anyone with this invitation can take a new seat. The campaign owner can replace it at any time.</small>
+        </div>
+      </aside>
+    </div>
+  )
+}
+
+function TranscriptSearch({ session, onClose, onOpenRoom }: { session: TableSession; onClose: () => void; onOpenRoom: (roomId: string) => void }) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<TranscriptSearchResult[]>([])
+  const [searched, setSearched] = useState(false)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState('')
+  const authorization = { authorization: `Bearer ${session.player.token}` }
+
+  useEffect(() => {
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [onClose])
+
+  const searchTranscript = async (event: FormEvent) => {
+    event.preventDefault()
+    const text = query.trim()
+    if (!text) return
+    setPending(true)
+    setError('')
+    try {
+      const response = await api<{ results: TranscriptSearchResult[] }>(`/api/campaign/search?q=${encodeURIComponent(text)}`, { headers: authorization })
+      setResults(response.results)
+      setSearched(true)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The transcript could not be searched.')
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <div className="transcript-search-layer" role="dialog" aria-modal="true" aria-labelledby="transcript-search-heading">
+      <button className="drawer-scrim" onClick={onClose} aria-label="Close transcript search" />
+      <aside className="transcript-search">
+        <div className="drawer-heading"><span id="transcript-search-heading">Search the transcript</span><button className="icon-button" onClick={onClose} aria-label="Close transcript search"><X size={18} /></button></div>
+        <div className="transcript-search-body">
+          <form className="transcript-search-form" onSubmit={searchTranscript}>
+            <label htmlFor="transcript-query">Words spoken at the table</label>
+            <div><Search size={15} /><input id="transcript-query" value={query} onChange={(event) => setQuery(event.target.value)} maxLength={80} autoComplete="off" autoFocus /><button type="submit" disabled={pending || !query.trim()}>{pending ? 'Reading…' : 'Search'}</button></div>
+          </form>
+          {error && <div className="entry-error" role="alert">{error}</div>}
+          <div className="transcript-results" aria-live="polite">
+            {results.map((result) => <button key={result.id} className="transcript-result" onClick={() => { onOpenRoom(result.roomId); onClose() }}><span><Hash size={12} />{result.roomName}<time>{new Date(result.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></span><strong>{result.senderName}</strong><p>{result.text}</p></button>)}
+            {searched && !results.length && <div className="transcript-search-empty"><Search size={20} /><strong>No passage found</strong><span>Try another name, phrase, or detail from the session.</span></div>}
+          </div>
         </div>
       </aside>
     </div>
@@ -714,6 +768,7 @@ function App() {
   const [mobileTable, setMobileTable] = useState(false)
   const [campaignFolio, setCampaignFolio] = useState(false)
   const [invitationSheet, setInvitationSheet] = useState(false)
+  const [transcriptSearch, setTranscriptSearch] = useState(false)
   const clientRef = useRef<RealtimeClient | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const peersRef = useRef(new Map<string, RTCPeerConnection>())
@@ -1108,6 +1163,7 @@ function App() {
         </div>
         <div className="campaign-actions">
           {connection !== 'live' && <span className="connection-state"><i />{connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span>}
+          <button className="text-button" onClick={() => setTranscriptSearch(true)}><Search size={15} />Search</button>
           <button className="text-button invite-button" onClick={() => setInvitationSheet(true)}><QrCode size={15} />Invite players</button>
           {session.player.role === 'owner' && <button className="icon-button" onClick={() => setCampaignFolio(true)} aria-label="Open campaign folio"><Settings size={18} /></button>}
           <button className="icon-button mobile-only" onClick={() => setMobileTable(true)} aria-label="Open voice table"><Users size={19} /></button>
@@ -1149,6 +1205,7 @@ function App() {
 
       {campaignFolio && <CampaignFolio session={session} onClose={() => setCampaignFolio(false)} onCampaign={updateCampaign} onOpenInvitation={() => { setCampaignFolio(false); setInvitationSheet(true) }} />}
       {invitationSheet && <InvitationSheet campaign={session.campaign} onClose={() => setInvitationSheet(false)} />}
+      {transcriptSearch && <TranscriptSearch session={session} onClose={() => setTranscriptSearch(false)} onOpenRoom={changeRoom} />}
 
       <div className="voice-dock mobile-only">
         {!joinedVoice ? <button className="primary-action" onClick={joinVoice} disabled={joiningVoice || connection !== 'live' || !voiceConfigReady}><Headphones size={17} />{joiningVoice ? 'Joining…' : voiceConfigReady ? 'Join voice' : 'Preparing voice…'}</button> : <><button className={`dock-mic ${muted ? 'dock-mic--muted' : ''}`} onClick={() => setMuted((current) => !current)} aria-label={muted ? 'Unmute' : 'Mute'}>{muted ? <MicOff size={18} /> : <Mic size={18} />}</button><span>{Object.values(peerConnectionStates).includes('failed') ? 'Voice issue' : Object.values(peerConnectionStates).includes('recovering') ? 'Reconnecting voice…' : muted ? 'Muted' : `${voiceParticipants.length} in voice`}</span><button className="quiet-icon" onClick={() => setMobileTable(true)} aria-label="Voice settings"><PanelRight size={17} /></button></>}

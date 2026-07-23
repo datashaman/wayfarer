@@ -148,6 +148,16 @@ export function createStore(databasePath) {
       ORDER BY messages.rowid DESC LIMIT 100
     ) ORDER BY sequence ASC
   `)
+  const searchMessagesForCampaign = database.prepare(`
+    SELECT messages.id, messages.room_id, rooms.name AS room_name, messages.player_id,
+           players.name AS sender_name, messages.text, messages.sent_at
+    FROM messages
+    JOIN rooms ON rooms.id = messages.room_id
+    JOIN players ON players.id = messages.player_id
+    WHERE rooms.campaign_id = ? AND instr(lower(messages.text), lower(?)) > 0
+    ORDER BY messages.rowid DESC
+    LIMIT 50
+  `)
 
   function createPlayer(campaignId, name, role = 'member') {
     const token = randomBytes(32).toString('base64url')
@@ -288,6 +298,18 @@ export function createStore(databasePath) {
       return messagesForRoom.all(roomId).map((row) => ({
         id: row.id,
         clientMessageId: row.client_message_id,
+        senderId: row.player_id,
+        senderName: row.sender_name,
+        text: row.text,
+        sentAt: row.sent_at,
+      }))
+    },
+
+    searchMessages(campaignId, query) {
+      return searchMessagesForCampaign.all(campaignId, query).map((row) => ({
+        id: row.id,
+        roomId: row.room_id,
+        roomName: row.room_name,
         senderId: row.player_id,
         senderName: row.sender_name,
         text: row.text,

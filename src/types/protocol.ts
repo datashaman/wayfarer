@@ -60,6 +60,11 @@ export type RoomMessage = {
   sentAt: string
 }
 
+export type TranscriptSearchResult = RoomMessage & {
+  roomId: Id
+  roomName: string
+}
+
 export type ClientVoiceSignal = Envelope<
   'voice.offer' | 'voice.answer',
   { targetPlayerId: Id; sdp: RTCSessionDescriptionInit }

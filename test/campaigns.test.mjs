@@ -681,6 +681,16 @@ test('authenticated campaign members exchange room messages', async (t) => {
   assert.equal(maraEvent.payload.senderName, 'Theo')
   assert.equal(theoEvent.payload.senderName, 'Theo')
   assert.equal(maraEvent.payload.text, 'The salt road is clear.')
+
+  const search = await json(`${origin}/api/campaign/search?q=salt%20road`, {
+    headers: { authorization: `Bearer ${created.body.player.token}` },
+  })
+  const noSession = await json(`${origin}/api/campaign/search?q=salt`)
+  assert.equal(search.status, 200)
+  assert.equal(search.body.results.length, 1)
+  assert.equal(search.body.results[0].roomId, roomId)
+  assert.equal(search.body.results[0].senderName, 'Theo')
+  assert.equal(noSession.status, 401)
 })
 
 test('room activity reaches campaign members seated in another room', async (t) => {

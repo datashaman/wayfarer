@@ -37,10 +37,16 @@ test('campaign intelligence records reversible rulings, proposals, consent, and 
 
   assert.deepEqual(store.getIntelligenceSettings(owner.campaign.id).tasks, { canon: true, continuity: true, recap: true })
   assert.equal(store.updateIntelligenceSettings(owner.campaign.id, owner.player.id, { autoPrepare: true, tasks: { canon: true, continuity: false, recap: true } }).autoPrepare, true)
-  const run = store.queuePreparationRun(owner.campaign.id, session.id, owner.player.id, { canon: true, continuity: false, recap: true })
+  const requestedTasks = { canon: true, continuity: false, recap: true }
+  const run = store.queuePreparationRun(owner.campaign.id, session.id, owner.player.id, requestedTasks)
   assert.equal(run.status, 'queued')
-  assert.equal(store.queuePreparationRun(owner.campaign.id, session.id, owner.player.id, run.tasks).id, run.id)
-  assert.deepEqual(store.finishPreparationRun(owner.campaign.id, run.id, { status: 'complete', result: { canon: { proposed: 2 } } }).result, { canon: { proposed: 2 } })
+  assert.equal(store.queuePreparationRun(owner.campaign.id, session.id, owner.player.id, requestedTasks).id, run.id)
+  store.startPreparationTask(owner.campaign.id, run.id, 'canon')
+  store.finishPreparationTask(owner.campaign.id, run.id, 'canon', { status: 'complete', result: { proposed: 2 } })
+  store.startPreparationTask(owner.campaign.id, run.id, 'recap')
+  const completedRun = store.finishPreparationTask(owner.campaign.id, run.id, 'recap', { status: 'complete', result: { id: 'recap-1' } })
+  assert.equal(completedRun.status, 'complete')
+  assert.deepEqual(completedRun.tasks.find((task) => task.name === 'canon').result, { proposed: 2 })
 
   const rule = store.createHouseRule(owner.campaign.id, owner.player.id, {
     title: 'Lantern advantage', sourceRule: 'Core test rule', interpretation: 'Bright light reveals the mark.',

@@ -1339,12 +1339,14 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         server.once('error', reject)
         server.listen(port, resolve)
       })
+      intelligenceRoutes.resume()
       return server.address().port
     },
     async close() {
       for (const socket of wss.clients) socket.terminate()
       await new Promise((resolve) => wss.close(resolve))
       await new Promise((resolve) => server.close(resolve))
+      await intelligenceRoutes.close()
       store.close()
     },
   }

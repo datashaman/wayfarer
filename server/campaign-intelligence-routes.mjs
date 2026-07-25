@@ -1,5 +1,5 @@
-import { analyzeSessionInChunks, chunkSessionMessages } from './session-analysis.mjs'
 import { calculateAutomationReadiness } from './feedback-evaluation.mjs'
+import { createPreparationWorker } from './preparation-worker.mjs'
 
 function sendJson(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
@@ -20,8 +20,8 @@ function clean(value, maximum) {
   return result && result.length <= maximum ? result : null
 }
 
-export function createCampaignIntelligenceRoutes({ store, intelligence = null, canonExtractor = null, continuityGenerator = null, recapGenerator = null }) {
-  const activeRuns = new Set()
+export function createCampaignIntelligenceRoutes({ store, intelligence = null, canonExtractor = null, continuityGenerator = null, recapGenerator = null, onPreparationUpdated = () => {} }) {
+  const preparationWorker = createPreparationWorker({ store, canonExtractor, continuityGenerator, recapGenerator, onUpdated: onPreparationUpdated })
 
   function overview(campaignId) {
     return {
@@ -31,59 +31,6 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
       houseRules: store.listHouseRules(campaignId),
       factionClocks: store.listFactionClocks(campaignId),
       spotlightParticipants: store.getSpotlightParticipants(campaignId),
-    }
-  }
-
-  async function executePreparation(campaignId, playerId, run) {
-    if (activeRuns.has(run.id)) return
-    activeRuns.add(run.id)
-    store.finishPreparationRun(campaignId, run.id, { status: 'running' })
-    try {
-      const context = store.getCampaignSessionMessages(campaignId, run.sessionId, 5_000)
-      if (!context || context.truncated) throw new Error('The selected session cannot be prepared.')
-      const acceptedCanon = store.listCanonEntries(campaignId, { includeGmOnly: true })
-      const result = {}
-      if (run.tasks.canon) {
-        if (!canonExtractor) throw new Error('Canon extraction is not configured.')
-        const priorDecisions = store.listCanonDecisionExamples(campaignId, 20)
-        const constitution = store.getCanonConstitution(campaignId)
-        let proposed = 0
-        for (const messages of chunkSessionMessages(context.messages)) {
-          const drafts = await canonExtractor.extract({ campaignId, messages, existingCanon: acceptedCanon, priorDecisions, constitution })
-          for (const draft of drafts) if (store.createCanonProposal({ campaignId, playerId, extractorVersion: canonExtractor.version, ...draft }).outcome === 'created') proposed += 1
-        }
-        store.markCanonScanned(campaignId, playerId, context.session.endSequence)
-        result.canon = { proposed }
-      }
-      if (run.tasks.continuity) {
-        if (!continuityGenerator) throw new Error('Continuity briefs are not configured.')
-        const priorFeedback = store.listContinuityFeedbackExamples(campaignId, 20)
-        const threads = await analyzeSessionInChunks({
-          messages: context.messages, maximum: 3, keyFields: ['title', 'summary'],
-          analyze: (messages) => continuityGenerator.generate({ campaignId, messages, acceptedCanon, priorFeedback }),
-        })
-        const stored = store.createContinuityBrief({ campaignId, playerId, generatorVersion: continuityGenerator.version, session: context.session, threads })
-        if (stored.outcome !== 'created') throw new Error('Continuity citations were invalid.')
-        result.continuity = { threads: stored.brief.threads.length }
-      }
-      if (run.tasks.recap) {
-        if (!recapGenerator) throw new Error('Session recaps are not configured.')
-        const drafts = []
-        for (const messages of chunkSessionMessages(context.messages)) drafts.push(await recapGenerator.generate({ campaignId, messages, acceptedCanon }))
-        const sources = [...new Map(drafts.flatMap((draft) => draft.sources).map((source) => [source.messageId, source])).values()].slice(0, 20)
-        const stored = store.createSessionRecap({
-          campaignId, playerId, generatorVersion: recapGenerator.version, session: context.session,
-          publicSummary: drafts.map((draft) => draft.publicSummary).join('\n\n').slice(0, 5_000),
-          gmNotes: drafts.map((draft) => draft.gmNotes).join('\n\n').slice(0, 5_000), sources,
-        })
-        if (stored.outcome !== 'created') throw new Error('Recap citations were invalid.')
-        result.recap = { id: stored.recap.id }
-      }
-      store.finishPreparationRun(campaignId, run.id, { status: 'complete', result })
-    } catch (error) {
-      store.finishPreparationRun(campaignId, run.id, { status: 'failed', error: error.message || 'Preparation failed.' })
-    } finally {
-      activeRuns.delete(run.id)
     }
   }
 
@@ -97,13 +44,16 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
     if (!session) return { outcome: 'not_found' }
     const run = store.queuePreparationRun(campaignId, sessionId, playerId, tasks)
     if (run.status === 'queued') {
-      void executePreparation(campaignId, playerId, run)
+      preparationWorker.enqueue(run)
       return { outcome: 'queued', run }
     }
     return { outcome: 'existing', run }
   }
 
   return {
+    resume: () => preparationWorker.resume(),
+    close: () => preparationWorker.close(),
+
     sessionClosed(campaignId, playerId, sessionId) {
       const settings = store.getIntelligenceSettings(campaignId)
       if (!settings?.autoPrepare) return null
@@ -145,6 +95,15 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
         const status = result.outcome === 'queued' ? 202 : result.outcome === 'existing' ? 200 : result.outcome === 'not_eligible' ? 409 : 400
         sendJson(response, status, result.outcome === 'queued' || result.outcome === 'existing' ? { run: result.run } : { error: result.outcome === 'not_eligible' ? 'This campaign has not passed its preparation gates.' : 'The session cannot be prepared.', ...result })
         return true
+      }
+      const preparationRetry = request.url.match(/^\/api\/campaign\/intelligence\/preparation\/([^/]+)\/retry$/)
+      if (request.method === 'POST' && preparationRetry) {
+        if (!isGm) { sendJson(response, 403, { error: 'Only a GM can retry preparation.' }); return true }
+        const existing = store.getPreparationRun(campaignId, preparationRetry[1])
+        if (!existing) { sendJson(response, 404, { error: 'Preparation run not found.' }); return true }
+        if (!existing.tasks.some((task) => task.status === 'failed')) { sendJson(response, 409, { error: 'This preparation run has no failed tasks.', run: existing }); return true }
+        const run = preparationWorker.retry(campaignId, preparationRetry[1])
+        sendJson(response, 202, { run }); return true
       }
       if (request.method === 'POST' && request.url === '/api/campaign/intelligence/knowledge') {
         if (!intelligence) { sendJson(response, 503, { error: 'Perspective memory is not configured.' }); return true }

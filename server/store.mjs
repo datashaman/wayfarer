@@ -209,6 +209,28 @@ function publicSessionRecap(row, sources = [], { includeGmNotes = false } = {}) 
   }
 }
 
+function publicPreparationRun(row, tasks = []) {
+  return {
+    id: row.id,
+    campaignId: row.campaign_id,
+    sessionId: row.session_id,
+    requestedByPlayerId: row.requested_by_player_id,
+    status: row.status,
+    tasks: tasks.map((task) => ({
+      name: task.task,
+      status: task.status,
+      attempts: task.attempts,
+      result: task.result ? JSON.parse(task.result) : null,
+      error: task.error,
+      startedAt: task.started_at,
+      completedAt: task.completed_at,
+    })),
+    error: row.error,
+    createdAt: row.created_at,
+    completedAt: row.completed_at,
+  }
+}
+
 export function createStore(databasePath) {
   if (databasePath !== ':memory:') mkdirSync(dirname(databasePath), { recursive: true })
   const database = new DatabaseSync(databasePath)
@@ -403,6 +425,7 @@ export function createStore(databasePath) {
     CREATE TABLE IF NOT EXISTS continuity_briefs (
       id TEXT PRIMARY KEY,
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      preparation_run_id TEXT,
       generator_version TEXT NOT NULL,
       session_id TEXT,
       session_title TEXT,
@@ -445,6 +468,7 @@ export function createStore(databasePath) {
     CREATE TABLE IF NOT EXISTS session_recaps (
       id TEXT PRIMARY KEY,
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      preparation_run_id TEXT,
       generator_version TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'published')),
       revision INTEGER NOT NULL DEFAULT 0,
@@ -510,6 +534,17 @@ export function createStore(databasePath) {
       created_at TEXT NOT NULL,
       completed_at TEXT,
       UNIQUE(campaign_id, session_id)
+    );
+    CREATE TABLE IF NOT EXISTS preparation_run_tasks (
+      run_id TEXT NOT NULL REFERENCES preparation_runs(id) ON DELETE CASCADE,
+      task TEXT NOT NULL CHECK(task IN ('canon', 'continuity', 'recap')),
+      status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued', 'running', 'complete', 'failed')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      result TEXT,
+      error TEXT,
+      started_at TEXT,
+      completed_at TEXT,
+      PRIMARY KEY (run_id, task)
     );
     CREATE TABLE IF NOT EXISTS house_rules (
       id TEXT PRIMARY KEY,
@@ -615,6 +650,11 @@ export function createStore(databasePath) {
   if (!recapColumns.some((column) => column.name === 'revision')) database.exec('ALTER TABLE session_recaps ADD COLUMN revision INTEGER NOT NULL DEFAULT 0')
   if (!recapColumns.some((column) => column.name === 'updated_by_player_id')) database.exec('ALTER TABLE session_recaps ADD COLUMN updated_by_player_id TEXT REFERENCES players(id)')
   if (!recapColumns.some((column) => column.name === 'updated_at')) database.exec('ALTER TABLE session_recaps ADD COLUMN updated_at TEXT')
+  if (!recapColumns.some((column) => column.name === 'preparation_run_id')) database.exec('ALTER TABLE session_recaps ADD COLUMN preparation_run_id TEXT')
+  const continuityColumns = database.prepare('PRAGMA table_info(continuity_briefs)').all()
+  if (!continuityColumns.some((column) => column.name === 'preparation_run_id')) database.exec('ALTER TABLE continuity_briefs ADD COLUMN preparation_run_id TEXT')
+  database.exec('CREATE UNIQUE INDEX IF NOT EXISTS continuity_briefs_preparation_run ON continuity_briefs(preparation_run_id) WHERE preparation_run_id IS NOT NULL')
+  database.exec('CREATE UNIQUE INDEX IF NOT EXISTS session_recaps_preparation_run ON session_recaps(preparation_run_id) WHERE preparation_run_id IS NOT NULL')
   database.exec(`
     INSERT OR IGNORE INTO session_recap_revisions (id, recap_id, revision, public_summary, gm_notes, player_id, created_at)
     SELECT lower(hex(randomblob(16))), id, revision, public_summary, gm_notes, created_by_player_id, created_at FROM session_recaps
@@ -1027,10 +1067,11 @@ export function createStore(databasePath) {
   `)
   const insertContinuityBrief = database.prepare(`
     INSERT INTO continuity_briefs (
-      id, campaign_id, generator_version, session_id, session_title, session_status,
+      id, campaign_id, preparation_run_id, generator_version, session_id, session_title, session_status,
       session_start_sequence, session_end_sequence, created_by_player_id, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
+  const continuityBriefForPreparationRun = database.prepare('SELECT id FROM continuity_briefs WHERE preparation_run_id = ?')
   const insertContradictionReport = database.prepare(`
     INSERT INTO contradiction_reports (
       id, campaign_id, generator_version, session_id, session_title, session_status,
@@ -1132,11 +1173,12 @@ export function createStore(databasePath) {
   `)
   const insertSessionRecap = database.prepare(`
     INSERT INTO session_recaps (
-      id, campaign_id, generator_version, public_summary, gm_notes, session_id, session_title,
+      id, campaign_id, preparation_run_id, generator_version, public_summary, gm_notes, session_id, session_title,
       session_status, session_start_sequence, session_end_sequence, created_by_player_id, created_at,
       updated_by_player_id, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
+  const sessionRecapForPreparationRun = database.prepare('SELECT id FROM session_recaps WHERE preparation_run_id = ?')
   const insertSessionRecapRevision = database.prepare(`INSERT INTO session_recap_revisions (id, recap_id, revision, public_summary, gm_notes, player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
   const insertSessionRecapSource = database.prepare('INSERT INTO session_recap_sources (recap_id, message_id, excerpt) VALUES (?, ?, ?)')
   const latestSessionRecap = database.prepare(`SELECT session_recaps.*, players.name AS updated_by_name FROM session_recaps LEFT JOIN players ON players.id = session_recaps.updated_by_player_id WHERE session_recaps.campaign_id = ? ORDER BY session_recaps.rowid DESC LIMIT 1`)
@@ -1158,9 +1200,17 @@ export function createStore(databasePath) {
   const insertIntelligenceSettings = database.prepare('INSERT INTO campaign_intelligence_settings (campaign_id) VALUES (?)')
   const updateIntelligenceSettings = database.prepare(`UPDATE campaign_intelligence_settings SET auto_prepare = ?, prepare_canon = ?, prepare_continuity = ?, prepare_recap = ?, updated_by_player_id = ?, updated_at = ? WHERE campaign_id = ?`)
   const insertPreparationRun = database.prepare(`INSERT OR IGNORE INTO preparation_runs (id, campaign_id, session_id, status, tasks, requested_by_player_id, created_at) VALUES (?, ?, ?, 'queued', ?, ?, ?)`)
+  const insertPreparationRunTask = database.prepare(`INSERT INTO preparation_run_tasks (run_id, task) VALUES (?, ?)`)
   const preparationRunForSession = database.prepare('SELECT * FROM preparation_runs WHERE campaign_id = ? AND session_id = ?')
+  const preparationRunById = database.prepare('SELECT * FROM preparation_runs WHERE id = ? AND campaign_id = ?')
   const preparationRuns = database.prepare('SELECT * FROM preparation_runs WHERE campaign_id = ? ORDER BY rowid DESC LIMIT ?')
-  const updatePreparationRun = database.prepare(`UPDATE preparation_runs SET status = ?, result = ?, error = ?, completed_at = ? WHERE id = ? AND campaign_id = ?`)
+  const resumablePreparationRuns = database.prepare("SELECT * FROM preparation_runs WHERE status IN ('queued', 'running') ORDER BY rowid")
+  const preparationTasks = database.prepare('SELECT * FROM preparation_run_tasks WHERE run_id = ? ORDER BY rowid')
+  const startPreparationTask = database.prepare("UPDATE preparation_run_tasks SET status = 'running', attempts = attempts + 1, error = NULL, started_at = ?, completed_at = NULL WHERE run_id = ? AND task = ? AND status = 'queued'")
+  const finishPreparationTask = database.prepare("UPDATE preparation_run_tasks SET status = ?, result = ?, error = ?, completed_at = ? WHERE run_id = ? AND task = ? AND status = 'running'")
+  const resetRunningPreparationTasks = database.prepare("UPDATE preparation_run_tasks SET status = 'queued', started_at = NULL WHERE status = 'running'")
+  const resetFailedPreparationTasks = database.prepare("UPDATE preparation_run_tasks SET status = 'queued', error = NULL, started_at = NULL, completed_at = NULL WHERE run_id = ? AND status = 'failed'")
+  const updatePreparationRunState = database.prepare('UPDATE preparation_runs SET status = ?, error = ?, completed_at = ? WHERE id = ?')
   const insertHouseRule = database.prepare(`INSERT INTO house_rules (id, campaign_id, title, source_rule, interpretation, ruling, created_by_player_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   const insertHouseRuleRevision = database.prepare(`INSERT INTO house_rule_revisions (id, rule_id, revision, title, source_rule, interpretation, ruling, status, reason, player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   const houseRules = database.prepare('SELECT * FROM house_rules WHERE campaign_id = ? ORDER BY status, title COLLATE NOCASE')
@@ -1825,7 +1875,10 @@ export function createStore(databasePath) {
       return publicContradictionReport(row, findings)
     },
 
-    createContinuityBrief({ campaignId, playerId, generatorVersion, session = null, threads }) {
+    createContinuityBrief({ campaignId, playerId, generatorVersion, session = null, threads, preparationRunId = null }) {
+      if (preparationRunId && continuityBriefForPreparationRun.get(preparationRunId)) {
+        return { outcome: 'existing', brief: { id: continuityBriefForPreparationRun.get(preparationRunId).id } }
+      }
       const resolved = threads.map((thread) => ({
         ...thread,
         sources: thread.sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) })),
@@ -1836,7 +1889,7 @@ export function createStore(databasePath) {
       database.exec('BEGIN IMMEDIATE')
       try {
         insertContinuityBrief.run(
-          briefId, campaignId, generatorVersion, session?.id ?? null, session?.title ?? null,
+          briefId, campaignId, preparationRunId, generatorVersion, session?.id ?? null, session?.title ?? null,
           session?.status ?? null, session?.startSequence ?? null, session?.endSequence ?? null,
           playerId, createdAt,
         )
@@ -1900,14 +1953,17 @@ export function createStore(databasePath) {
       return this.getLatestContinuityBrief(campaignId)
     },
 
-    createSessionRecap({ campaignId, playerId, generatorVersion, session, publicSummary, gmNotes, sources }) {
+    createSessionRecap({ campaignId, playerId, generatorVersion, session, publicSummary, gmNotes, sources, preparationRunId = null }) {
+      if (preparationRunId && sessionRecapForPreparationRun.get(preparationRunId)) {
+        return { outcome: 'existing', recap: { id: sessionRecapForPreparationRun.get(preparationRunId).id } }
+      }
       const resolved = sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) }))
       if (resolved.some((source) => !source.row)) return { outcome: 'invalid_source' }
       const id = randomUUID()
       const createdAt = new Date().toISOString()
       database.exec('BEGIN IMMEDIATE')
       try {
-        insertSessionRecap.run(id, campaignId, generatorVersion, publicSummary, gmNotes, session.id, session.title, session.status, session.startSequence, session.endSequence, playerId, createdAt, playerId, createdAt)
+        insertSessionRecap.run(id, campaignId, preparationRunId, generatorVersion, publicSummary, gmNotes, session.id, session.title, session.status, session.startSequence, session.endSequence, playerId, createdAt, playerId, createdAt)
         insertSessionRecapRevision.run(randomUUID(), id, 0, publicSummary, gmNotes, playerId, createdAt)
         for (const source of resolved) insertSessionRecapSource.run(id, source.messageId, source.excerpt ?? null)
         database.exec('COMMIT')
@@ -1993,26 +2049,65 @@ export function createStore(databasePath) {
 
     queuePreparationRun(campaignId, sessionId, playerId, tasks) {
       const id = randomUUID()
-      insertPreparationRun.run(id, campaignId, sessionId, JSON.stringify(tasks), playerId, new Date().toISOString())
-      const row = preparationRunForSession.get(campaignId, sessionId)
-      return {
-        id: row.id, campaignId: row.campaign_id, sessionId: row.session_id, status: row.status,
-        tasks: JSON.parse(row.tasks), result: row.result ? JSON.parse(row.result) : null,
-        error: row.error, createdAt: row.created_at, completedAt: row.completed_at,
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        const inserted = insertPreparationRun.run(id, campaignId, sessionId, JSON.stringify(tasks), playerId, new Date().toISOString())
+        if (inserted.changes === 1) for (const [task, enabled] of Object.entries(tasks)) if (enabled) insertPreparationRunTask.run(id, task)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
       }
+      const row = preparationRunForSession.get(campaignId, sessionId)
+      return publicPreparationRun(row, preparationTasks.all(row.id))
     },
 
-    finishPreparationRun(campaignId, runId, { status, result = null, error = null }) {
-      updatePreparationRun.run(status, result ? JSON.stringify(result) : null, error, status === 'complete' || status === 'failed' ? new Date().toISOString() : null, runId, campaignId)
-      return this.listPreparationRuns(campaignId).find((run) => run.id === runId) ?? null
+    getPreparationRun(campaignId, runId) {
+      const row = preparationRunById.get(runId, campaignId)
+      return row ? publicPreparationRun(row, preparationTasks.all(row.id)) : null
+    },
+
+    listResumablePreparationRuns() {
+      return resumablePreparationRuns.all().map((row) => publicPreparationRun(row, preparationTasks.all(row.id)))
+    },
+
+    recoverPreparationRuns() {
+      resetRunningPreparationTasks.run()
+      for (const row of resumablePreparationRuns.all()) this.refreshPreparationRun(row.campaign_id, row.id)
+      return this.listResumablePreparationRuns()
+    },
+
+    startPreparationTask(campaignId, runId, task) {
+      if (!preparationRunById.get(runId, campaignId)) return null
+      if (startPreparationTask.run(new Date().toISOString(), runId, task).changes !== 1) return null
+      return this.refreshPreparationRun(campaignId, runId)
+    },
+
+    finishPreparationTask(campaignId, runId, task, { status, result = null, error = null }) {
+      if (!['complete', 'failed'].includes(status)) throw new Error('Preparation task must finish complete or failed.')
+      finishPreparationTask.run(status, result ? JSON.stringify(result) : null, error, new Date().toISOString(), runId, task)
+      return this.refreshPreparationRun(campaignId, runId)
+    },
+
+    retryPreparationRun(campaignId, runId) {
+      if (!preparationRunById.get(runId, campaignId)) return null
+      if (resetFailedPreparationTasks.run(runId).changes === 0) return this.getPreparationRun(campaignId, runId)
+      return this.refreshPreparationRun(campaignId, runId)
+    },
+
+    refreshPreparationRun(campaignId, runId) {
+      const row = preparationRunById.get(runId, campaignId)
+      if (!row) return null
+      const tasks = preparationTasks.all(runId)
+      const terminal = tasks.every((task) => ['complete', 'failed'].includes(task.status))
+      const status = terminal ? (tasks.some((task) => task.status === 'failed') ? 'failed' : 'complete') : tasks.every((task) => task.status === 'queued') ? 'queued' : 'running'
+      const error = tasks.filter((task) => task.error).map((task) => `${task.task}: ${task.error}`).join('\n') || null
+      updatePreparationRunState.run(status, error, terminal ? new Date().toISOString() : null, runId)
+      return this.getPreparationRun(campaignId, runId)
     },
 
     listPreparationRuns(campaignId, limit = 20) {
-      return preparationRuns.all(campaignId, limit).map((row) => ({
-        id: row.id, campaignId: row.campaign_id, sessionId: row.session_id, status: row.status,
-        tasks: JSON.parse(row.tasks), result: row.result ? JSON.parse(row.result) : null,
-        error: row.error, createdAt: row.created_at, completedAt: row.completed_at,
-      }))
+      return preparationRuns.all(campaignId, limit).map((row) => publicPreparationRun(row, preparationTasks.all(row.id)))
     },
 
     listHouseRules(campaignId) {

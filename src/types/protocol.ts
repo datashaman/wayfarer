@@ -335,8 +335,15 @@ export type PreparationRun = {
   id: Id
   sessionId: Id
   status: 'queued' | 'running' | 'complete' | 'failed'
-  tasks: IntelligenceSettings['tasks']
-  result: Record<string, unknown> | null
+  tasks: Array<{
+    name: keyof IntelligenceSettings['tasks']
+    status: 'queued' | 'running' | 'complete' | 'failed'
+    attempts: number
+    result: Record<string, unknown> | null
+    error: string | null
+    startedAt: string | null
+    completedAt: string | null
+  }>
   error: string | null
   createdAt: string
   completedAt: string | null

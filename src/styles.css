@@ -4474,6 +4474,9 @@ textarea:focus-visible {
 .scene-preparation-list__field { display: flex; align-items: flex-start; gap: 6px; }
 .scene-preparation-list__field textarea { min-height: 62px; }
 .scene-preparation-list__field .icon-button { flex: 0 0 auto; margin-top: 2px; }
+.scene-readiness { display: grid; gap: 6px; min-width: min(100%, 280px); }
+.scene-readiness ul { display: grid; gap: 3px; margin: 0; padding-left: 16px; color: var(--parchment-muted); font-size: 10px; line-height: 1.4; }
+.scene-readiness span { color: var(--parchment-muted); font-size: 10px; line-height: 1.4; }
 .scene-active__preparation { display: grid; gap: 16px; padding: 24px 40px; border-top: 1px solid var(--border-soft); background: var(--soot-925); }
 .scene-active__stage,
 .scene-active__possibilities { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }

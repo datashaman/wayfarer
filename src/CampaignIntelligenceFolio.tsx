@@ -15,7 +15,7 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft, onOpen
   const [rules, setRules] = useState<HouseRule[]>([])
   const [consent, setConsent] = useState(false)
   const [question, setQuestion] = useState('')
-  const [knowledge, setKnowledge] = useState<{ answer: string; citations: CanonEntry[] } | null>(null)
+  const [knowledge, setKnowledge] = useState<{ answerId: string; answer: string; generatorVersion: string; citations: CanonEntry[]; feedback?: 'useful' | 'incorrect' | 'incomplete' | 'secret_leak' } | null>(null)
   const [intent, setIntent] = useState('')
   const [drafts, setDrafts] = useState<string[]>([])
   const [ruleDraft, setRuleDraft] = useState(blankRule)
@@ -70,6 +70,11 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft, onOpen
       setKnowledge(await api('/api/campaign/intelligence/knowledge', { method: 'POST', headers: authorization, body: JSON.stringify({ question }) }))
     })
   }
+
+  const rateKnowledge = (rating: 'useful' | 'incorrect' | 'incomplete' | 'secret_leak') => knowledge && void run('knowledge-feedback', async () => {
+    await api(`/api/campaign/intelligence/knowledge/${knowledge.answerId}/feedback`, { method: 'POST', headers: authorization, body: JSON.stringify({ rating }) })
+    setKnowledge({ ...knowledge, feedback: rating })
+  })
 
   const draftIntent = (event: FormEvent) => {
     event.preventDefault()
@@ -159,7 +164,7 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft, onOpen
       <section className="intelligence-section" aria-labelledby="memory-query-heading">
         <div className="intelligence-section__heading"><span>Character recollection</span><h2 id="memory-query-heading">Ask only what this seat can know</h2></div>
         <form className="intelligence-form" onSubmit={askKnowledge}><label htmlFor="knowledge-question">Question</label><textarea id="knowledge-question" value={question} onChange={(event) => setQuestion(event.target.value)} maxLength={500} placeholder="What do I know about the western archive?" /><button className="folio-button" disabled={!question.trim() || pending === 'knowledge'}>{pending === 'knowledge' ? 'Reading…' : 'Ask from canon'}</button></form>
-        {knowledge && <article className="knowledge-answer"><p>{knowledge.answer}</p><ol>{knowledge.citations.map((entry) => <li key={entry.id}><strong>{entry.title}</strong><span>{entry.claim}</span></li>)}</ol></article>}
+        {knowledge && <article className="knowledge-answer"><p>{knowledge.answer}</p><ol>{knowledge.citations.map((entry) => <li key={entry.id}><strong>{entry.title}</strong><span>{entry.claim}</span></li>)}</ol><div className="knowledge-feedback"><span>{knowledge.feedback ? `Recorded as ${knowledge.feedback.replace('_', ' ')}` : 'How trustworthy was this answer?'}</span><div>{(['useful', 'incorrect', 'incomplete', 'secret_leak'] as const).map((rating) => <button key={rating} className={knowledge.feedback === rating ? 'folio-small-action is-selected' : 'folio-small-action'} onClick={() => rateKnowledge(rating)} disabled={pending === 'knowledge-feedback'}>{rating === 'secret_leak' ? 'Secret leak' : rating[0].toUpperCase() + rating.slice(1)}</button>)}</div><small>{knowledge.generatorVersion}</small></div></article>}
       </section>
 
       <section className="intelligence-section" aria-labelledby="intent-heading">
@@ -175,6 +180,7 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft, onOpen
           <div className="intelligence-section__heading"><span>Post-session preparation</span><h2 id="preparation-heading">Automation must earn its place</h2></div>
           <div className={overview.readiness.eligible ? 'eligibility-note eligibility-note--ready' : 'eligibility-note'}><strong>{overview.readiness.eligible ? 'Release gates passed' : 'Still gathering evidence'}</strong><span>{overview.readiness.checks.filter((check) => check.passed).length}/{overview.readiness.checks.length} gates passed · drafts remain private until a GM acts</span></div>
           {!overview.readiness.eligible && <ol className="evidence-path" aria-label="Evidence still needed">{overview.readiness.checks.filter((check) => !check.passed).map((check) => <li key={check.id}><div><strong>{check.label}</strong><small>{readinessRequirement(check)}</small></div><button className="folio-small-action" onClick={() => onOpenLedger(check.target)}>{check.target === 'canon' ? 'Review canon' : 'Rate continuity'}</button></li>)}</ol>}
+          {overview.knowledgeMetrics.length > 0 && <div className="knowledge-editions"><span>Knowledge answer editions</span>{overview.knowledgeMetrics.map((metrics) => <div key={metrics.generatorVersion}><strong>{metrics.generatorVersion}</strong><small>{Math.round((metrics.usefulRate ?? 0) * 100)}% useful · {metrics.total} rated · {metrics.incorrect} incorrect · {metrics.incomplete} incomplete · {metrics.secretLeak} leaks</small></div>)}</div>}
           <div className="preparation-controls"><label><input type="checkbox" checked={overview.settings.autoPrepare} onChange={(event) => setOverview({ ...overview, settings: { ...overview.settings, autoPrepare: event.target.checked } })} disabled={!overview.readiness.eligible} />Prepare after a session closes</label>{(['canon', 'continuity', 'recap'] as const).map((task) => <label key={task}><input type="checkbox" checked={overview.settings.tasks[task]} onChange={(event) => setOverview({ ...overview, settings: { ...overview.settings, tasks: { ...overview.settings.tasks, [task]: event.target.checked } } })} />{task === 'canon' ? 'Canon suggestions' : task === 'continuity' ? 'Continuity brief' : 'Recap draft'}</label>)}<button className="folio-button" onClick={savePreparation} disabled={pending === 'settings'}>Save preparation</button></div>
           <div className="intelligence-inline"><select aria-label="Preparation session" value={selectedSession} onChange={(event) => setSelectedSession(event.target.value)}>{sessions.filter((item) => item.status === 'closed').map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select><button className="folio-button" onClick={prepareSession} disabled={!selectedSession || !overview.readiness.eligible || pending === 'prepare'}>{pending === 'prepare' ? 'Queuing…' : 'Prepare now'}</button></div>
           {overview.preparationRuns.length > 0 && <ol className="preparation-runs">{overview.preparationRuns.slice(0, 5).map((runItem) => <li key={runItem.id}><span>{sessions.find((item) => item.id === runItem.sessionId)?.title ?? 'Campaign session'}</span><strong>{runItem.status}</strong><ol>{runItem.tasks.map((task) => <li key={task.name}><span>{task.name === 'canon' ? 'Canon suggestions' : task.name === 'continuity' ? 'Continuity brief' : 'Recap draft'}</span><em className={`preparation-task--${task.status}`}>{task.status}{task.attempts > 1 ? ` · attempt ${task.attempts}` : ''}</em>{task.error && <small>{task.error}</small>}</li>)}</ol>{runItem.tasks.some((task) => task.status === 'failed') && <button className="folio-small-action preparation-retry" onClick={() => retryPreparation(runItem.id)} disabled={pending === `retry-${runItem.id}`}><RefreshCw size={12} className={pending === `retry-${runItem.id}` ? 'spinning' : ''} />{pending === `retry-${runItem.id}` ? 'Retrying…' : 'Retry failed work'}</button>}</li>)}</ol>}

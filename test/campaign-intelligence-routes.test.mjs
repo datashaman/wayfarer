@@ -12,9 +12,10 @@ async function json(url, options = {}) {
 
 test('campaign intelligence keeps preparation, memory, rules, factions, spotlight, and intent inside their authority boundaries', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-intelligence-'))
+  let latestKnowledgeFeedback = []
   const intelligence = {
     version: 'fixture:intelligence-v1',
-    async answerKnowledge({ canon }) { return { answer: 'Ilyra keeps the western light.', citations: [canon[0].id] } },
+    async answerKnowledge({ canon, priorFeedback }) { latestKnowledgeFeedback = priorFeedback; return { answer: 'Ilyra keeps the western light.', citations: [canon[0].id] } },
     async draftIntent() { return ['I lift the brass lantern.', 'Let the old light answer us.'] },
     async proposeFaction({ clock }) { return { summary: 'The Moth Court finds another route.', assumptions: 'The western gate remains open.', proposedProgress: Math.min(clock.segments, clock.progress + 1) } },
   }
@@ -73,6 +74,13 @@ test('campaign intelligence keeps preparation, memory, rules, factions, spotligh
   const knowledge = await json(`${origin}/api/campaign/intelligence/knowledge`, { method: 'POST', headers: guestHeaders, body: JSON.stringify({ question: 'Who keeps the light?' }) })
   assert.equal(knowledge.status, 200)
   assert.equal(knowledge.body.citations[0].visibility, 'campaign')
+  assert.equal(knowledge.body.generatorVersion, 'fixture:intelligence-v1')
+  const knowledgeFeedback = await json(`${origin}/api/campaign/intelligence/knowledge/${knowledge.body.answerId}/feedback`, { method: 'POST', headers: guestHeaders, body: JSON.stringify({ rating: 'incomplete' }) })
+  assert.equal(knowledgeFeedback.status, 201)
+  assert.equal((await json(`${origin}/api/campaign/intelligence/knowledge/${knowledge.body.answerId}/feedback`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ rating: 'useful' }) })).status, 404)
+  await json(`${origin}/api/campaign/intelligence/knowledge`, { method: 'POST', headers: guestHeaders, body: JSON.stringify({ question: 'What remains unclear?' }) })
+  assert.deepEqual(latestKnowledgeFeedback, [{ question: 'Who keeps the light?', rating: 'incomplete', generatorVersion: 'fixture:intelligence-v1' }])
+  assert.equal((await json(`${origin}/api/campaign/intelligence`, { headers: ownerHeaders })).body.knowledgeMetrics[0].incomplete, 1)
   const intent = await json(`${origin}/api/campaign/intelligence/intent`, { method: 'POST', headers: guestHeaders, body: JSON.stringify({ intent: 'Signal the party.' }) })
   assert.equal(intent.body.drafts.length, 2)
 

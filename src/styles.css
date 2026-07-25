@@ -2976,6 +2976,40 @@ textarea:focus-visible {
   color: var(--parchment-dim);
 }
 
+.knowledge-feedback {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.knowledge-feedback > span,
+.knowledge-editions > span {
+  color: var(--parchment-muted);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.knowledge-feedback > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.knowledge-feedback .is-selected {
+  border-color: color-mix(in srgb, var(--moss) 42%, var(--border));
+  color: var(--moss);
+}
+
+.knowledge-feedback > small {
+  overflow-wrap: anywhere;
+  color: var(--parchment-muted);
+  font-size: 8px;
+}
+
 .intent-drafts {
   display: grid;
   gap: 8px;
@@ -3086,6 +3120,32 @@ textarea:focus-visible {
   color: var(--parchment-muted);
   font-size: 8px;
   line-height: 1.4;
+}
+
+.knowledge-editions {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-medium);
+  background: var(--soot-900);
+}
+
+.knowledge-editions > div {
+  display: grid;
+  gap: 2px;
+}
+
+.knowledge-editions strong {
+  overflow-wrap: anywhere;
+  color: var(--parchment-soft);
+  font-size: 9px;
+}
+
+.knowledge-editions small {
+  color: var(--parchment-muted);
+  font-size: 8px;
 }
 
 .preparation-controls {

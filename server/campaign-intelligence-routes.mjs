@@ -30,6 +30,7 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
       preparationRuns: store.listPreparationRuns(campaignId),
       houseRules: store.listHouseRules(campaignId),
       factionClocks: store.listFactionClocks(campaignId),
+      knowledgeMetrics: store.getKnowledgeFeedbackMetrics(campaignId),
       spotlightParticipants: store.getSpotlightParticipants(campaignId),
     }
   }
@@ -114,9 +115,18 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
         const knowledge = store.getCharacterKnowledge(campaignId, targetPlayerId)
         if (!knowledge) { sendJson(response, 404, { error: 'Player not found.' }); return true }
         if (!knowledge.entries.length) { sendJson(response, 400, { error: 'This character has no readable canon yet.' }); return true }
-        const answer = await intelligence.answerKnowledge({ question, canon: knowledge.entries })
-        sendJson(response, 200, { answer: answer.answer, citations: answer.citations.map((id) => knowledge.entries.find((entry) => entry.id === id)) })
+        const answer = await intelligence.answerKnowledge({ question, canon: knowledge.entries, priorFeedback: store.listKnowledgeFeedbackExamples(campaignId, targetPlayerId, 10) })
+        const record = store.recordKnowledgeAnswer({ campaignId, subjectPlayerId: targetPlayerId, requestedByPlayerId: playerId, question, answer: answer.answer, generatorVersion: intelligence.version, citationIds: answer.citations })
+        sendJson(response, 200, { answerId: record.id, answer: answer.answer, generatorVersion: intelligence.version, citations: answer.citations.map((id) => knowledge.entries.find((entry) => entry.id === id)) })
         return true
+      }
+      const knowledgeFeedback = request.url.match(/^\/api\/campaign\/intelligence\/knowledge\/([^/]+)\/feedback$/)
+      if (request.method === 'POST' && knowledgeFeedback) {
+        const body = await readJson(request)
+        const rating = ['useful', 'incorrect', 'incomplete', 'secret_leak'].includes(body.rating) ? body.rating : null
+        if (!rating) { sendJson(response, 400, { error: 'Knowledge feedback is invalid.' }); return true }
+        const feedback = store.recordKnowledgeAnswerFeedback(campaignId, playerId, knowledgeFeedback[1], rating)
+        sendJson(response, feedback ? 201 : 404, feedback ? { feedback } : { error: 'Knowledge answer not found.' }); return true
       }
       if (request.method === 'POST' && request.url === '/api/campaign/intelligence/intent') {
         if (!intelligence) { sendJson(response, 503, { error: 'The intent studio is not configured.' }); return true }

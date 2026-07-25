@@ -397,6 +397,15 @@ export type CampaignIntelligenceOverview = {
   preparationRuns: PreparationRun[]
   houseRules: HouseRule[]
   factionClocks: FactionClock[]
+  knowledgeMetrics: Array<{
+    generatorVersion: string
+    total: number
+    useful: number
+    incorrect: number
+    incomplete: number
+    secretLeak: number
+    usefulRate: number | null
+  }>
   spotlightParticipants: Array<{ id: Id; name: string; enabled: boolean }>
 }
 

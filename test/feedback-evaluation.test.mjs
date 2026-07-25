@@ -16,6 +16,10 @@ test('feedback evaluation reports outcomes overall and by generator version', ()
       { generatorVersion: 'continuity-v2', feedback: { rating: 'incorrect' } },
       { generatorVersion: 'continuity-v2', feedback: { rating: 'not_useful' } },
     ],
+    knowledge: [
+      { generatorVersion: 'knowledge-v1', feedback: { rating: 'useful' } },
+      { generatorVersion: 'knowledge-v1', feedback: { rating: 'incomplete' } },
+    ],
   })
 
   assert.equal(evaluation.schemaVersion, feedbackEvaluationSchemaVersion)
@@ -29,6 +33,8 @@ test('feedback evaluation reports outcomes overall and by generator version', ()
   })
   assert.equal(evaluation.metrics.byGeneratorVersion.canon['canon-v1'].acceptanceRate, 1)
   assert.equal(evaluation.metrics.byGeneratorVersion.continuity['continuity-v2'].incorrectRate, 0.5)
+  assert.equal(evaluation.metrics.knowledge.byGeneratorVersion['knowledge-v1'].usefulRate, 0.5)
+  assert.equal(evaluation.fixtures.knowledge.length, 2)
   assert.deepEqual(evaluation.metrics.deduplication, [])
 })
 

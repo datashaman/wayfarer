@@ -16,7 +16,7 @@ test('OpenAI campaign intelligence is strict, non-stored, and scoped for each pr
   const intelligence = createOpenAICampaignIntelligence({ client, model: 'test-model' })
   const canon = [{ id: 'canon-1', kind: 'fact', title: 'Ilyra', claim: 'Ilyra keeps the light.' }]
 
-  assert.equal((await intelligence.answerKnowledge({ question: 'Who keeps the light?', canon })).citations[0], 'canon-1')
+  assert.equal((await intelligence.answerKnowledge({ question: 'Who keeps the light?', canon, priorFeedback: [{ question: 'What is hidden?', rating: 'secret_leak', generatorVersion: 'v0' }] })).citations[0], 'canon-1')
   assert.equal((await intelligence.draftIntent({ intent: 'Signal the party.', messages: [{ text: 'The light is ours.' }], canon }))[0], 'I raise the lantern.')
   assert.equal((await intelligence.proposeFaction({ clock: { name: 'Moth Court', goal: 'Open the gate', progress: 1, segments: 6 }, messages: [], canon })).proposedProgress, 2)
 
@@ -27,7 +27,8 @@ test('OpenAI campaign intelligence is strict, non-stored, and scoped for each pr
     assert.equal(request.reasoning.effort, 'none')
     assert.equal(request.text.format.strict, true)
   }
-  assert.deepEqual(Object.keys(JSON.parse(requests[0].input)), ['question', 'readableCanon'])
+  assert.deepEqual(Object.keys(JSON.parse(requests[0].input)), ['question', 'priorVerdicts', 'readableCanon'])
+  assert.equal(JSON.parse(requests[0].input).priorVerdicts[0].rating, 'secret_leak')
   assert.deepEqual(Object.keys(JSON.parse(requests[1].input)), ['intent', 'ownVoiceExamples', 'readableCanon'])
   assert.match(requests[2].instructions, /do not declare it true/i)
 })

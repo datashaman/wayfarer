@@ -465,7 +465,7 @@ test('AI feedback export retains judged model output without human names', () =>
     title: 'Ilyra, lighthouse keeper', claim: 'Ilyra keeps the lighthouse.', visibility: 'campaign',
   })
   assert.equal(JSON.stringify(exported).includes('Mara'), false)
-  assert.deepEqual(store.exportAiFeedback('another-campaign'), { canon: [], continuity: [], deduplication: [] })
+  assert.deepEqual(store.exportAiFeedback('another-campaign'), { canon: [], continuity: [], knowledge: [], deduplication: [] })
   store.close()
 })
 

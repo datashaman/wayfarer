@@ -546,6 +546,28 @@ export function createStore(databasePath) {
       completed_at TEXT,
       PRIMARY KEY (run_id, task)
     );
+    CREATE TABLE IF NOT EXISTS knowledge_answers (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      subject_player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      requested_by_player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      question TEXT NOT NULL,
+      answer TEXT NOT NULL,
+      generator_version TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS knowledge_answer_sources (
+      answer_id TEXT NOT NULL REFERENCES knowledge_answers(id) ON DELETE CASCADE,
+      canon_entry_id TEXT NOT NULL REFERENCES canon_entries(id) ON DELETE RESTRICT,
+      PRIMARY KEY (answer_id, canon_entry_id)
+    );
+    CREATE TABLE IF NOT EXISTS knowledge_answer_feedback (
+      id TEXT PRIMARY KEY,
+      answer_id TEXT NOT NULL REFERENCES knowledge_answers(id) ON DELETE CASCADE,
+      player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      rating TEXT NOT NULL CHECK(rating IN ('useful', 'incorrect', 'incomplete', 'secret_leak')),
+      created_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS house_rules (
       id TEXT PRIMARY KEY,
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
@@ -1211,6 +1233,27 @@ export function createStore(databasePath) {
   const resetRunningPreparationTasks = database.prepare("UPDATE preparation_run_tasks SET status = 'queued', started_at = NULL WHERE status = 'running'")
   const resetFailedPreparationTasks = database.prepare("UPDATE preparation_run_tasks SET status = 'queued', error = NULL, started_at = NULL, completed_at = NULL WHERE run_id = ? AND status = 'failed'")
   const updatePreparationRunState = database.prepare('UPDATE preparation_runs SET status = ?, error = ?, completed_at = ? WHERE id = ?')
+  const insertKnowledgeAnswer = database.prepare('INSERT INTO knowledge_answers (id, campaign_id, subject_player_id, requested_by_player_id, question, answer, generator_version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+  const insertKnowledgeAnswerSource = database.prepare('INSERT INTO knowledge_answer_sources (answer_id, canon_entry_id) VALUES (?, ?)')
+  const knowledgeAnswerForRequester = database.prepare('SELECT * FROM knowledge_answers WHERE id = ? AND campaign_id = ? AND requested_by_player_id = ?')
+  const insertKnowledgeAnswerFeedback = database.prepare('INSERT INTO knowledge_answer_feedback (id, answer_id, player_id, rating, created_at) VALUES (?, ?, ?, ?, ?)')
+  const knowledgeFeedbackExamples = database.prepare(`
+    SELECT knowledge_answers.question, knowledge_answers.generator_version, knowledge_answer_feedback.rating
+    FROM knowledge_answer_feedback JOIN knowledge_answers ON knowledge_answers.id = knowledge_answer_feedback.answer_id
+    WHERE knowledge_answers.campaign_id = ? AND knowledge_answers.subject_player_id = ?
+      AND knowledge_answer_feedback.rowid = (SELECT MAX(latest.rowid) FROM knowledge_answer_feedback AS latest WHERE latest.answer_id = knowledge_answers.id)
+    ORDER BY knowledge_answer_feedback.rowid DESC LIMIT ?
+  `)
+  const knowledgeFeedbackForCampaign = database.prepare(`
+    SELECT knowledge_answers.id AS answer_id, knowledge_answers.question, knowledge_answers.answer,
+           knowledge_answers.generator_version, knowledge_answers.created_at,
+           knowledge_answer_feedback.rating, knowledge_answer_feedback.created_at AS rated_at
+    FROM knowledge_answer_feedback JOIN knowledge_answers ON knowledge_answers.id = knowledge_answer_feedback.answer_id
+    WHERE knowledge_answers.campaign_id = ?
+      AND knowledge_answer_feedback.rowid = (SELECT MAX(latest.rowid) FROM knowledge_answer_feedback AS latest WHERE latest.answer_id = knowledge_answers.id)
+    ORDER BY knowledge_answer_feedback.rowid
+  `)
+  const knowledgeAnswerSources = database.prepare('SELECT canon_entry_id FROM knowledge_answer_sources WHERE answer_id = ? ORDER BY rowid')
   const insertHouseRule = database.prepare(`INSERT INTO house_rules (id, campaign_id, title, source_rule, interpretation, ruling, created_by_player_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   const insertHouseRuleRevision = database.prepare(`INSERT INTO house_rule_revisions (id, rule_id, revision, title, source_rule, interpretation, ruling, status, reason, player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   const houseRules = database.prepare('SELECT * FROM house_rules WHERE campaign_id = ? ORDER BY status, title COLLATE NOCASE')
@@ -1718,7 +1761,16 @@ export function createStore(databasePath) {
         },
         feedback: { rating: row.rating, ratedAt: row.rated_at },
       }))
-      return { canon, continuity, deduplication: this.getCanonProposalMatchMetrics(campaignId) }
+      const knowledge = knowledgeFeedbackForCampaign.all(campaignId).map((row) => ({
+        fixtureId: `knowledge:${row.answer_id}`,
+        generatorVersion: row.generator_version,
+        generatedAt: row.created_at,
+        question: row.question,
+        answer: row.answer,
+        citationIds: knowledgeAnswerSources.all(row.answer_id).map((source) => source.canon_entry_id),
+        feedback: { rating: row.rating, ratedAt: row.rated_at },
+      }))
+      return { canon, continuity, knowledge, deduplication: this.getCanonProposalMatchMetrics(campaignId) }
     },
 
     listContinuityFeedbackExamples(campaignId, limit = 20) {
@@ -2030,6 +2082,48 @@ export function createStore(databasePath) {
         id: row.id, campaignId: row.campaign_id, suite: row.suite, model: row.model,
         generatorVersion: row.generator_version, passed: row.passed, total: row.total,
         notes: row.notes, createdAt: row.created_at,
+      }))
+    },
+
+    recordKnowledgeAnswer({ campaignId, subjectPlayerId, requestedByPlayerId, question, answer, generatorVersion, citationIds }) {
+      if (citationIds.some((entryId) => !this.getCanonEntry(campaignId, entryId, { includeGmOnly: true }))) return null
+      const record = { id: randomUUID(), campaignId, subjectPlayerId, question, answer, generatorVersion, citationIds: [...new Set(citationIds)], createdAt: new Date().toISOString() }
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        insertKnowledgeAnswer.run(record.id, campaignId, subjectPlayerId, requestedByPlayerId, question, answer, generatorVersion, record.createdAt)
+        for (const entryId of record.citationIds) insertKnowledgeAnswerSource.run(record.id, entryId)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return record
+    },
+
+    recordKnowledgeAnswerFeedback(campaignId, playerId, answerId, rating) {
+      if (!knowledgeAnswerForRequester.get(answerId, campaignId, playerId)) return null
+      const feedback = { answerId, rating, createdAt: new Date().toISOString() }
+      insertKnowledgeAnswerFeedback.run(randomUUID(), answerId, playerId, rating, feedback.createdAt)
+      return feedback
+    },
+
+    listKnowledgeFeedbackExamples(campaignId, subjectPlayerId, limit = 10) {
+      return knowledgeFeedbackExamples.all(campaignId, subjectPlayerId, limit).map((row) => ({
+        question: row.question, rating: row.rating, generatorVersion: row.generator_version,
+      }))
+    },
+
+    getKnowledgeFeedbackMetrics(campaignId) {
+      const byVersion = {}
+      for (const row of knowledgeFeedbackForCampaign.all(campaignId)) {
+        const metrics = byVersion[row.generator_version] ?? { total: 0, useful: 0, incorrect: 0, incomplete: 0, secretLeak: 0 }
+        const key = row.rating === 'secret_leak' ? 'secretLeak' : row.rating
+        metrics.total += 1
+        metrics[key] += 1
+        byVersion[row.generator_version] = metrics
+      }
+      return Object.entries(byVersion).sort(([left], [right]) => left.localeCompare(right)).map(([generatorVersion, metrics]) => ({
+        generatorVersion, ...metrics, usefulRate: metrics.total ? Number((metrics.useful / metrics.total).toFixed(4)) : null,
       }))
     },
 

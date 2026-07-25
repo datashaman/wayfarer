@@ -12,6 +12,22 @@ function emptyContinuityMetrics() {
   return { total: 0, useful: 0, incorrect: 0, secretLeak: 0, notUseful: 0 }
 }
 
+function calculateKnowledgeMetrics(knowledge = []) {
+  const overall = { total: 0, useful: 0, incorrect: 0, incomplete: 0, secretLeak: 0 }
+  const versions = new Map()
+  for (const fixture of knowledge) {
+    const metrics = versions.get(fixture.generatorVersion) ?? { total: 0, useful: 0, incorrect: 0, incomplete: 0, secretLeak: 0 }
+    const outcome = fixture.feedback.rating === 'secret_leak' ? 'secretLeak' : fixture.feedback.rating
+    metrics.total += 1
+    metrics[outcome] += 1
+    overall.total += 1
+    overall[outcome] += 1
+    versions.set(fixture.generatorVersion, metrics)
+  }
+  const finish = (metrics) => ({ ...metrics, usefulRate: ratio(metrics.useful, metrics.total) })
+  return { ...finish(overall), byGeneratorVersion: Object.fromEntries([...versions].sort().map(([version, metrics]) => [version, finish(metrics)])) }
+}
+
 function finishCanonMetrics(metrics) {
   return {
     ...metrics,
@@ -74,6 +90,7 @@ export function calculateFeedbackMetrics({ canon = [], continuity = [] }) {
 export function createFeedbackEvaluationExport(feedback) {
   const canon = feedback.canon ?? []
   const continuity = feedback.continuity ?? []
+  const knowledge = feedback.knowledge ?? []
   const deduplication = feedback.deduplication ?? []
   return {
     schemaVersion: feedbackEvaluationSchemaVersion,
@@ -82,8 +99,8 @@ export function createFeedbackEvaluationExport(feedback) {
       containsCampaignText: true,
       playerAndCampaignNamesExcluded: true,
     },
-    fixtures: { canon, continuity },
-    metrics: { ...calculateFeedbackMetrics({ canon, continuity }), deduplication },
+    fixtures: { canon, continuity, knowledge },
+    metrics: { ...calculateFeedbackMetrics({ canon, continuity }), knowledge: calculateKnowledgeMetrics(knowledge), deduplication },
   }
 }
 

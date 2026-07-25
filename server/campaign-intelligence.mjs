@@ -15,8 +15,8 @@ export function createCampaignIntelligence({ version, generateKnowledgeAnswer, g
   if (!version || !generateKnowledgeAnswer || !generateIntentDrafts || !generateFactionProposal) throw new Error('Campaign intelligence requires every generator.')
   return {
     version,
-    async answerKnowledge({ question, canon }) {
-      const output = await generateKnowledgeAnswer({ question, canon })
+    async answerKnowledge({ question, canon, priorFeedback = [] }) {
+      const output = await generateKnowledgeAnswer({ question, canon, priorFeedback })
       const answer = text(output?.answer, 2_000)
       const allowed = new Set(canon.map((entry) => entry.id))
       const citations = Array.isArray(output?.citations) ? [...new Set(output.citations)] : []

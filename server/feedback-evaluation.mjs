@@ -86,3 +86,15 @@ export function createFeedbackEvaluationExport(feedback) {
     metrics: { ...calculateFeedbackMetrics({ canon, continuity }), deduplication },
   }
 }
+
+export function calculateAutomationReadiness(feedback) {
+  const metrics = calculateFeedbackMetrics(feedback)
+  const checks = [
+    { id: 'canon_sample', label: 'At least 20 reviewed canon suggestions', passed: metrics.canon.total >= 20, value: metrics.canon.total },
+    { id: 'canon_precision', label: 'Canon acceptance at least 80%', passed: (metrics.canon.acceptanceRate ?? 0) >= 0.8, value: metrics.canon.acceptanceRate },
+    { id: 'continuity_sample', label: 'At least 10 rated continuity threads', passed: metrics.continuity.total >= 10, value: metrics.continuity.total },
+    { id: 'continuity_useful', label: 'Continuity usefulness at least 70%', passed: (metrics.continuity.usefulRate ?? 0) >= 0.7, value: metrics.continuity.usefulRate },
+    { id: 'zero_leaks', label: 'No reported secret leaks', passed: metrics.continuity.secretLeak === 0, value: metrics.continuity.secretLeak },
+  ]
+  return { eligible: checks.every((check) => check.passed), mode: 'prepare_only', checks, metrics }
+}

@@ -4,6 +4,7 @@ import { parseAllowedOrigins, parseIceServers } from './server/config.mjs'
 import { createOpenAICanonExtractor } from './server/openai-canon-extractor.mjs'
 import { createOpenAIContinuityBriefGenerator } from './server/openai-continuity-brief.mjs'
 import { createOpenAIContradictionRadar } from './server/openai-contradiction-radar.mjs'
+import { createOpenAISessionRecapGenerator } from './server/openai-session-recap.mjs'
 
 try {
   process.loadEnvFile?.('.env.local')
@@ -30,6 +31,10 @@ const app = createRoomServer({
   contradictionRadar: process.env.OPENAI_API_KEY ? createOpenAIContradictionRadar({
     apiKey: process.env.OPENAI_API_KEY,
     model: process.env.OPENAI_CONTRADICTION_MODEL || process.env.OPENAI_CANON_MODEL || 'gpt-5.6-luna',
+  }) : null,
+  recapGenerator: process.env.OPENAI_API_KEY ? createOpenAISessionRecapGenerator({
+    apiKey: process.env.OPENAI_API_KEY,
+    model: process.env.OPENAI_RECAP_MODEL || process.env.OPENAI_CANON_MODEL || 'gpt-5.6-luna',
   }) : null,
 })
 

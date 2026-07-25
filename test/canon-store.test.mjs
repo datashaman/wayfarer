@@ -315,6 +315,33 @@ test('canon revisions preserve supersession and retraction history', () => {
   store.close()
 })
 
+test('character audiences remain private, visible to their seats, and revisioned', () => {
+  const { store, owner, first } = seededStore()
+  const theo = store.joinCampaign(owner.campaign.inviteCode, 'Theo')
+  const nina = store.joinCampaign(owner.campaign.inviteCode, 'Nina')
+  const proposal = store.createCanonProposal({
+    campaignId: owner.campaign.id, playerId: owner.player.id, kind: 'fact', title: 'Theo’s signet',
+    claim: 'Theo alone recognizes the royal signet.', visibility: 'gm_only', confidence: 0.9,
+    extractorVersion: 'fixture-v1', sources: [{ messageId: first.id }],
+  }).proposal
+  store.decideCanonProposal(owner.campaign.id, owner.player.id, proposal.id, {
+    action: 'accept', visibility: 'characters', audiencePlayerIds: [theo.player.id],
+  })
+  assert.equal(store.listCanonEntries(owner.campaign.id, { viewerPlayerId: nina.player.id }).length, 0)
+  const visible = store.listCanonEntries(owner.campaign.id, { viewerPlayerId: theo.player.id })[0]
+  assert.equal(visible.visibility, 'characters')
+  assert.deepEqual(visible.audienceNames, ['Theo'])
+  const revised = store.reviseCanonEntry(owner.campaign.id, owner.player.id, visible.id, {
+    action: 'revised', title: visible.title, claim: 'Theo and Nina recognize the royal signet.',
+    visibility: 'characters', audiencePlayerIds: [theo.player.id, nina.player.id], expectedRevision: 0,
+  })
+  assert.deepEqual(revised.entry.audienceNames, ['Nina', 'Theo'])
+  const history = store.listCanonEntryHistory(owner.campaign.id, visible.id, { includeGmOnly: true })
+  assert.deepEqual(history.revisions.map((revision) => revision.audienceNames), [['Nina', 'Theo'], ['Theo']])
+  assert.equal(store.getCharacterKnowledge(owner.campaign.id, nina.player.id).entries.length, 1)
+  store.close()
+})
+
 test('contradiction reports preserve canon snapshots and campaign transcript evidence', () => {
   const { store, owner, first, second } = seededStore()
   const proposal = store.createCanonProposal({
@@ -324,13 +351,19 @@ test('contradiction reports preserve canon snapshots and campaign transcript evi
   }).proposal
   store.decideCanonProposal(owner.campaign.id, owner.player.id, proposal.id, { action: 'accept', visibility: 'gm_only' })
   const entry = store.listCanonEntries(owner.campaign.id, { includeGmOnly: true })[0]
+  const session = store.listCampaignSessions(owner.campaign.id)[0]
   const created = store.createContradictionReport({
     campaignId: owner.campaign.id, playerId: owner.player.id, generatorVersion: 'radar-v1',
+    session,
     findings: [{ canonEntryId: entry.id, title: 'Promise conflicts', explanation: 'The newer statement denies the accepted account.', confidence: 0.88, sources: [{ messageId: second.id, excerpt: 'promised to return' }] }],
   })
   assert.equal(created.outcome, 'created')
   assert.equal(created.report.findings[0].canonClaim, 'Ilyra keeps the lighthouse.')
   assert.equal(created.report.findings[0].sources[0].messageId, second.id)
+  assert.deepEqual(created.report.contextSession, {
+    id: 'current', title: 'Current session', status: 'open',
+    startSequence: session.startSequence, endSequence: session.endSequence,
+  })
   assert.equal(store.createContradictionReport({
     campaignId: owner.campaign.id, playerId: owner.player.id, generatorVersion: 'radar-v1',
     findings: [{ canonEntryId: 'unknown', title: 'Invalid', explanation: 'Invalid source.', confidence: 0.5, sources: [{ messageId: second.id }] }],
@@ -340,15 +373,22 @@ test('contradiction reports preserve canon snapshots and campaign transcript evi
 
 test('continuity briefs retain cited threads and append owner feedback', () => {
   const { store, owner, second } = seededStore()
+  const session = store.listCampaignSessions(owner.campaign.id)[0]
   const created = store.createContinuityBrief({
     campaignId: owner.campaign.id,
     playerId: owner.player.id,
     generatorVersion: 'fixture-continuity-v1',
+    session,
     threads: [{ title: 'Return before moonrise', summary: 'The party promised to return.', whyItMatters: 'The promise remains unresolved.', confidence: 0.9, sources: [{ messageId: second.id, excerpt: 'promised to return' }] }],
   })
   assert.equal(created.outcome, 'created')
   assert.equal(created.brief.threads[0].sources[0].messageId, second.id)
   assert.equal(created.brief.threads[0].feedback, null)
+  assert.equal(created.brief.contextSession.endSequence, session.endSequence)
+  assert.equal(created.brief.threads[0].lifecycle.status, 'open')
+  const resolved = store.transitionContinuityThread(owner.campaign.id, owner.player.id, created.brief.threads[0].id, 'resolved', 'The compass was returned.')
+  assert.equal(resolved.threads[0].lifecycle.status, 'resolved')
+  assert.equal(resolved.threads[0].lifecycleHistory[0].reason, 'The compass was returned.')
   const rated = store.recordContinuityFeedback(owner.campaign.id, owner.player.id, created.brief.threads[0].id, 'useful')
   assert.equal(rated.threads[0].feedback.rating, 'useful')
   store.recordContinuityFeedback(owner.campaign.id, owner.player.id, created.brief.threads[0].id, 'secret_leak')
@@ -359,6 +399,22 @@ test('continuity briefs retain cited threads and append owner feedback', () => {
     text: fixture.thread.sources[0].text,
   })), [{ generatorVersion: 'fixture-continuity-v1', rating: 'secret_leak', text: 'We promised to return before moonrise.' }])
   assert.equal(store.recordContinuityFeedback(owner.campaign.id, owner.player.id, 'unknown-thread', 'useful'), null)
+  store.close()
+})
+
+test('session recaps remain drafts until a GM publishes them', () => {
+  const { store, owner, first } = seededStore()
+  const session = store.listCampaignSessions(owner.campaign.id)[0]
+  const created = store.createSessionRecap({
+    campaignId: owner.campaign.id, playerId: owner.player.id, generatorVersion: 'recap-v1', session,
+    publicSummary: 'The party met Ilyra.', gmNotes: 'Ilyra remains suspicious.', sources: [{ messageId: first.id }],
+  })
+  assert.equal(created.recap.status, 'draft')
+  assert.equal(store.getLatestSessionRecap(owner.campaign.id), null)
+  const published = store.publishSessionRecap(owner.campaign.id, owner.player.id, created.recap.id)
+  assert.equal(published.recap.status, 'published')
+  assert.equal(store.getLatestSessionRecap(owner.campaign.id).gmNotes, null)
+  assert.equal(store.getLatestSessionRecap(owner.campaign.id, { includeGmNotes: true }).gmNotes, 'Ilyra remains suspicious.')
   store.close()
 })
 
@@ -392,5 +448,14 @@ test('AI feedback export retains judged model output without human names', () =>
   })
   assert.equal(JSON.stringify(exported).includes('Mara'), false)
   assert.deepEqual(store.exportAiFeedback('another-campaign'), { canon: [], continuity: [], deduplication: [] })
+  store.close()
+})
+
+test('AI evaluation runs are append-only and comparable', () => {
+  const { store, owner } = seededStore()
+  store.recordAiEvaluationRun({ campaignId: owner.campaign.id, suite: 'canon', model: 'test-model', generatorVersion: 'canon-v2', passed: 8, total: 8 })
+  store.recordAiEvaluationRun({ campaignId: owner.campaign.id, suite: 'canon', model: 'test-model', generatorVersion: 'canon-v3', passed: 7, total: 8, notes: 'One correction regression.' })
+  const runs = store.listAiEvaluationRuns(owner.campaign.id)
+  assert.deepEqual(runs.map((run) => [run.generatorVersion, run.passed, run.total]), [['canon-v3', 7, 8], ['canon-v2', 8, 8]])
   store.close()
 })

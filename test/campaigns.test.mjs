@@ -1317,6 +1317,8 @@ test('contradiction reports are owner-private, read-only, and doubly cited', asy
   assert.equal(checked.status, 200)
   assert.equal(checked.body.report.findings[0].canonEntryId, accepted.body.entries[0].id)
   assert.equal(checked.body.report.findings[0].sources[0].messageId, message.id)
+  assert.equal(checked.body.report.contextSession.title, 'Ilyra’s denial')
+  assert.equal((await json(`${origin}/api/campaign/contradictions`, { headers: ownerAuthorization })).body.report.contextSession.title, 'Ilyra’s denial')
   assert.equal(radarInput.acceptedCanon.length, 1)
   assert.deepEqual(radarInput.messages.map((item) => item.text), ['Ilyra has never tended a lighthouse.'])
   assert.equal((await json(`${origin}/api/campaign/contradictions`, { headers: { authorization: `Bearer ${joined.body.player.token}` } })).status, 403)
@@ -1369,6 +1371,8 @@ test('continuity briefs are owner-private, canon-aware, cited, and rateable', as
   const generated = await json(`${origin}/api/campaign/continuity/extract`, { method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ sessionId: closed.body.sessions[0].id }) })
   assert.equal(generated.status, 200)
   assert.equal(generated.body.brief.threads[0].sources[0].messageId, message.id)
+  assert.equal(generated.body.brief.contextSession.title, 'Moonrise promise')
+  assert.equal((await json(`${origin}/api/campaign/continuity`, { headers: ownerAuthorization })).body.brief.contextSession.title, 'Moonrise promise')
   assert.equal(generatorInput.acceptedCanon.length, 1)
   assert.equal(generatorInput.acceptedCanon[0].visibility, 'gm_only')
   assert.equal(generatorInput.messages.some((item) => item.text === 'This belongs to the next session.'), false)
@@ -1376,6 +1380,10 @@ test('continuity briefs are owner-private, canon-aware, cited, and rateable', as
   const feedback = await json(`${origin}/api/campaign/continuity/threads/${generated.body.brief.threads[0].id}/feedback`, { method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ rating: 'useful' }) })
   assert.equal(feedback.status, 200)
   assert.equal(feedback.body.brief.threads[0].feedback.rating, 'useful')
+  const resolved = await json(`${origin}/api/campaign/continuity/threads/${generated.body.brief.threads[0].id}/lifecycle`, { method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ status: 'resolved', reason: 'The promise was fulfilled.' }) })
+  assert.equal(resolved.status, 200)
+  assert.equal(resolved.body.brief.threads[0].lifecycle.status, 'resolved')
+  assert.equal((await json(`${origin}/api/campaign/continuity/threads/${generated.body.brief.threads[0].id}/lifecycle`, { method: 'POST', headers: memberAuthorization, body: JSON.stringify({ status: 'open', reason: 'No.' }) })).status, 403)
 })
 
 test('room transcript survives a server restart', async (t) => {

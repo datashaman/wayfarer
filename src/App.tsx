@@ -33,7 +33,9 @@ import {
   createEvent,
   type ConnectionState,
   type Campaign,
+  type AiReadiness,
   type CanonLedger,
+  type CanonAudience,
   type CanonConstitution,
   type CanonEntry,
   type CanonEntryRevision,
@@ -51,6 +53,7 @@ import {
   type RoomMessage,
   type RuntimeConfig,
   type SeatEntry,
+  type SessionRecap,
   type ServerEvent,
   type TableSession,
   type TranscriptSearchResult,
@@ -482,11 +485,15 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
   const [editing, setEditing] = useState<CanonProposal | null>(null)
   const [editTitle, setEditTitle] = useState('')
   const [editClaim, setEditClaim] = useState('')
-  const [editVisibility, setEditVisibility] = useState<'campaign' | 'gm_only'>('gm_only')
+  const [editVisibility, setEditVisibility] = useState<CanonAudience>('gm_only')
+  const [audiencePlayerIds, setAudiencePlayerIds] = useState<string[]>([])
+  const [campaignMembers, setCampaignMembers] = useState<CampaignManagement['players']>([])
+  const [knowledgePlayerId, setKnowledgePlayerId] = useState('')
+  const [knowledgeLens, setKnowledgeLens] = useState<{ player: CampaignManagement['players'][number]; entries: CanonEntry[]; sessions: CampaignSession[] } | null>(null)
   const [entryMode, setEntryMode] = useState<{ entry: CanonEntry; action: 'revise' | 'supersede' | 'retract' } | null>(null)
   const [entryTitle, setEntryTitle] = useState('')
   const [entryClaim, setEntryClaim] = useState('')
-  const [entryVisibility, setEntryVisibility] = useState<'campaign' | 'gm_only'>('gm_only')
+  const [entryVisibility, setEntryVisibility] = useState<CanonAudience>('gm_only')
   const [entryReason, setEntryReason] = useState('')
   const [entryHistory, setEntryHistory] = useState<Record<string, CanonEntryRevision[]>>({})
   const [continuityBrief, setContinuityBrief] = useState<ContinuityBrief | null>(null)
@@ -501,9 +508,42 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
   const [campaignSessions, setCampaignSessions] = useState<CampaignSession[]>([])
   const [selectedSessionId, setSelectedSessionId] = useState('')
   const [sessionTitle, setSessionTitle] = useState('')
+  const [sessionRecap, setSessionRecap] = useState<SessionRecap | null>(null)
+  const [recapPending, setRecapPending] = useState(false)
+  const [aiReadiness, setAiReadiness] = useState<AiReadiness | null>(null)
   const [error, setError] = useState('')
   const authorization = { authorization: `Bearer ${session.player.token}` }
   const isGm = session.player.knowledgeRole === 'gm'
+
+  useEffect(() => {
+    void api<{ recap: SessionRecap | null }>('/api/campaign/recaps/latest', { headers: { authorization: `Bearer ${session.player.token}` } })
+      .then(({ recap }) => setSessionRecap(recap))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'The session recap could not be opened.'))
+  }, [session.player.token])
+
+  useEffect(() => {
+    if (!isGm) return
+    void api<{ readiness: AiReadiness }>('/api/campaign/ai/readiness', { headers: { authorization: `Bearer ${session.player.token}` } })
+      .then(({ readiness }) => setAiReadiness(readiness))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'AI readiness could not be loaded.'))
+  }, [isGm, ledger, session.player.token])
+
+  useEffect(() => {
+    if (!isGm) return
+    void api<CampaignManagement>('/api/campaign/members', { headers: { authorization: `Bearer ${session.player.token}` } })
+      .then(({ players }) => {
+        setCampaignMembers(players)
+        setKnowledgePlayerId((current) => current || players.find((player) => player.knowledgeRole === 'player')?.id || players[0]?.id || '')
+      })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'Campaign seats could not be loaded.'))
+  }, [isGm, session.player.token])
+
+  useEffect(() => {
+    if (!isGm || !knowledgePlayerId) return
+    void api<{ player: CampaignManagement['players'][number]; entries: CanonEntry[]; sessions: CampaignSession[] }>(`/api/campaign/knowledge/players/${knowledgePlayerId}`, { headers: { authorization: `Bearer ${session.player.token}` } })
+      .then(setKnowledgeLens)
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'The character knowledge lens could not be loaded.'))
+  }, [isGm, knowledgePlayerId, ledger, session.player.token])
 
   useEffect(() => {
     if (!isGm) return
@@ -550,14 +590,14 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [onClose])
 
-  const decide = async (proposal: CanonProposal, action: 'accept' | 'edit_accept' | 'dispute' | 'reject', reason?: 'incorrect' | 'secret_leak' | 'not_useful', visibility?: 'campaign' | 'gm_only') => {
+  const decide = async (proposal: CanonProposal, action: 'accept' | 'edit_accept' | 'dispute' | 'reject', reason?: 'incorrect' | 'secret_leak' | 'not_useful', visibility?: CanonAudience) => {
     setPending(proposal.id)
     setError('')
     try {
       const result = await api<CanonLedger & { proposal: CanonProposal }>(`/api/campaign/canon/proposals/${proposal.id}/decisions`, {
         method: 'POST',
         headers: authorization,
-        body: JSON.stringify({ action, reason, visibility, ...(action === 'edit_accept' ? { title: editTitle, claim: editClaim } : {}) }),
+        body: JSON.stringify({ action, reason, visibility, audiencePlayerIds, ...(action === 'edit_accept' ? { title: editTitle, claim: editClaim } : {}) }),
       })
       onLedger({
         proposals: result.proposals,
@@ -565,6 +605,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
         coverage: result.coverage,
       })
       setEditing(null)
+      setAudiencePlayerIds([])
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The canon decision could not be recorded.')
     } finally {
@@ -577,6 +618,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     setEditTitle(proposal.title)
     setEditClaim(proposal.claim)
     setEditVisibility(constitution?.defaultVisibility ?? 'gm_only')
+    setAudiencePlayerIds([])
   }
 
   const beginConstitutionEdit = () => {
@@ -640,6 +682,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     setEntryTitle(entry.title)
     setEntryClaim(entry.claim)
     setEntryVisibility(entry.visibility)
+    setAudiencePlayerIds(entry.audiencePlayerIds)
     setEntryReason('')
   }
 
@@ -654,7 +697,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
         headers: authorization,
         body: JSON.stringify(retracting
           ? { revision: entryMode.entry.revision, reason: entryReason }
-          : { action: entryMode.action, title: entryTitle, claim: entryClaim, visibility: entryVisibility, revision: entryMode.entry.revision, reason: entryReason }),
+          : { action: entryMode.action, title: entryTitle, claim: entryClaim, visibility: entryVisibility, audiencePlayerIds, revision: entryMode.entry.revision, reason: entryReason }),
       })
       onLedger({ proposals: result.proposals, entries: result.entries, coverage: result.coverage })
       setEntryMode(null)
@@ -701,6 +744,33 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     }
   }
 
+  const prepareSessionRecap = async () => {
+    setRecapPending(true)
+    setError('')
+    try {
+      const { recap } = await api<{ recap: SessionRecap }>('/api/campaign/recaps/extract', { method: 'POST', headers: authorization, body: JSON.stringify({ sessionId: selectedSessionId }) })
+      setSessionRecap(recap)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The session recap could not be prepared.')
+    } finally {
+      setRecapPending(false)
+    }
+  }
+
+  const publishSessionRecap = async () => {
+    if (!sessionRecap) return
+    setRecapPending(true)
+    setError('')
+    try {
+      const { recap } = await api<{ recap: SessionRecap }>(`/api/campaign/recaps/${sessionRecap.id}/publish`, { method: 'POST', headers: authorization })
+      setSessionRecap(recap)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The session recap could not be published.')
+    } finally {
+      setRecapPending(false)
+    }
+  }
+
   const checkContradictions = async () => {
     setContradictionsPending(true)
     setError('')
@@ -729,6 +799,23 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     }
   }
 
+  const transitionContinuityThread = async (thread: ContinuityBrief['threads'][number], status: 'open' | 'dormant' | 'resolved') => {
+    const reason = window.prompt(`${status === 'open' ? 'Reopen' : status === 'dormant' ? 'Mark dormant' : 'Resolve'} “${thread.title}” — why?`)
+    if (!reason?.trim()) return
+    setPending(thread.id)
+    setError('')
+    try {
+      const result = await api<{ brief: ContinuityBrief }>(`/api/campaign/continuity/threads/${thread.id}/lifecycle`, {
+        method: 'POST', headers: authorization, body: JSON.stringify({ status, reason }),
+      })
+      setContinuityBrief(result.brief)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The continuity status could not be changed.')
+    } finally {
+      setPending('')
+    }
+  }
+
   const pendingProposals = ledger?.proposals.filter((proposal) => proposal.status === 'proposed') ?? []
   const coverage = ledger?.coverage
 
@@ -745,7 +832,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
               {isGm && <section className="canon-section" aria-labelledby="campaign-sessions-heading">
                 <div className="canon-section-title"><h3 id="campaign-sessions-heading">Session chapters</h3></div>
                 {campaignSessions[0]?.status === 'open' ? <div className="session-chapter-current"><div><strong>Current session</strong><span>{campaignSessions[0].messageCount} transcript {campaignSessions[0].messageCount === 1 ? 'message' : 'messages'} · {campaignSessions[0].participants.map((participant) => participant.name).join(', ') || 'No speakers'}</span></div><div className="session-close-form"><input aria-label="Session title" value={sessionTitle} onChange={(event) => setSessionTitle(event.target.value)} maxLength={80} placeholder="Name this session…" /><button className="folio-button" onClick={() => void closeCampaignSession()} disabled={!sessionTitle.trim() || pending === 'close-session'}>{pending === 'close-session' ? 'Closing…' : 'Close session'}</button></div></div> : <div className="canon-empty"><BookOpen size={18} /><span>The next transcript message will open a new session.</span></div>}
-                {campaignSessions.length > 0 && <div className="session-context-picker"><label htmlFor="session-context">AI context session</label><select id="session-context" value={selectedSessionId} onChange={(event) => setSelectedSessionId(event.target.value)}>{campaignSessions.map((item) => <option value={item.id} key={item.id}>{item.title} · {item.messageCount} messages · {item.canonCoverage}</option>)}</select><small>Continuity and contradiction checks use this complete session, up to the 250-message safety limit.</small></div>}
+                {campaignSessions.length > 0 && <div className="session-context-picker"><label htmlFor="session-context">AI context session</label><select id="session-context" value={selectedSessionId} onChange={(event) => setSelectedSessionId(event.target.value)}>{campaignSessions.map((item) => <option value={item.id} key={item.id}>{item.title} · {item.messageCount} messages · {item.canonCoverage}</option>)}</select><small>Long sessions are read in overlapping chunks, up to 5,000 messages.</small></div>}
               </section>}
               {isGm && <section className="canon-section" aria-labelledby="canon-constitution-heading">
                 <div className="canon-section-title"><h3 id="canon-constitution-heading">Table constitution</h3>{!editingConstitution && <button className="folio-small-action" onClick={beginConstitutionEdit} disabled={!constitution}>Revise policy</button>}</div>
@@ -759,6 +846,8 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
                   <div className="canon-actions"><button className="primary-action" onClick={() => void saveConstitution()} disabled={pending === 'constitution'}>{pending === 'constitution' ? 'Saving…' : 'Save constitution'}</button><button className="folio-button" onClick={() => { setEditingConstitution(false); setConstitutionDraft(null) }}>Cancel</button></div>
                 </div> : <div className="canon-constitution-summary"><p>{constitution.canonThreshold === 'explicit_only' ? 'Explicit statements, commitments, and rulings can become canon.' : constitution.canonThreshold === 'table_consensus' ? 'Clear table consensus can become canon.' : 'Facts established through play can become canon.'}</p><span>World declarations: {constitution.playerDeclarations === 'require_confirmation' ? 'confirmation required' : 'stand unless challenged'} · OOC: {constitution.oocPolicy === 'exclude' ? 'excluded' : 'corrections only'} · Corrections: {constitution.correctionPolicy === 'latest_explicit' ? 'latest wins' : 'flag conflicts'}</span>{constitution.guidance && <q>{constitution.guidance}</q>}<small>Revision {constitution.revision}{constitution.updatedByName ? ` · ${constitution.updatedByName}` : ''}</small></div>}
               </section>}
+              <section className="canon-section" aria-labelledby="session-recap-heading"><div className="canon-section-title"><h3 id="session-recap-heading">Session recap</h3>{isGm && <button className="folio-small-action" onClick={() => void prepareSessionRecap()} disabled={recapPending || !selectedSessionId}>{recapPending ? 'Preparing…' : sessionRecap ? 'Prepare another' : 'Prepare draft'}</button>}</div>{!sessionRecap ? <div className="canon-empty"><BookOpen size={18} /><span>{isGm ? 'No recap draft has been prepared.' : 'No session recap has been published.'}</span></div> : <article className="canon-entry"><div className="canon-card-meta"><span>{sessionRecap.status}</span><span>{sessionRecap.contextSession.title}</span><span>Messages {sessionRecap.contextSession.startSequence}–{sessionRecap.contextSession.endSequence}</span></div><h4>For the table</h4><p>{sessionRecap.publicSummary}</p>{isGm && sessionRecap.gmNotes && <><strong>Private GM notes</strong><p>{sessionRecap.gmNotes}</p></>}<div className="canon-citations">{sessionRecap.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span></button>)}</div>{isGm && sessionRecap.status === 'draft' && <div className="canon-actions"><button className="primary-action" disabled={recapPending} onClick={() => void publishSessionRecap()}>{recapPending ? 'Publishing…' : 'Publish recap to campaign'}</button><span className="continuity-feedback">Drafts are never published automatically.</span></div>}</article>}</section>
+              {isGm && aiReadiness && <section className="canon-section" aria-labelledby="ai-readiness-heading"><div className="canon-section-title"><h3 id="ai-readiness-heading">Automation readiness</h3><span>{aiReadiness.eligible ? 'Eligible' : 'Not ready'}</span></div><p className="canon-coverage">Even when eligible, automation may prepare drafts only. A GM always publishes.</p><ol className="canon-history">{aiReadiness.checks.map((check) => <li key={check.id}><span>{check.passed ? 'Passed' : 'Waiting'}</span><strong>{check.label}</strong><small>Current value: {check.value ?? 'no data'}</small></li>)}</ol></section>}
               {isGm && <section className="canon-section" aria-labelledby="canon-proposals-heading">
                 <div className="canon-section-title"><h3 id="canon-proposals-heading">Awaiting review</h3><div><span>{pendingProposals.length}</span><button className="folio-small-action" onClick={() => void extractCanon()} disabled={extracting || !coverage?.unscannedCount}>{extracting ? 'Reading…' : coverage?.unscannedCount ? 'Find passages' : 'Up to date'}</button></div></div>
                 {coverage && <p className="canon-coverage">{coverage.unscannedCount > 0 ? `${coverage.unscannedCount} new transcript ${coverage.unscannedCount === 1 ? 'message' : 'messages'} ready to scan.` : coverage.latestSequence > 0 ? 'The transcript is scanned through its latest message.' : 'The transcript has no messages to scan yet.'}</p>}
@@ -770,12 +859,13 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
                       <div className="canon-edit">
                         <label htmlFor={`canon-title-${proposal.id}`}>Canon title</label><input id={`canon-title-${proposal.id}`} value={editTitle} onChange={(event) => setEditTitle(event.target.value)} maxLength={80} />
                         <label htmlFor={`canon-claim-${proposal.id}`}>Canon wording</label><textarea id={`canon-claim-${proposal.id}`} value={editClaim} onChange={(event) => setEditClaim(event.target.value)} maxLength={2_000} />
-                        <label htmlFor={`canon-visibility-${proposal.id}`}>Who can read this?</label><select id={`canon-visibility-${proposal.id}`} value={editVisibility} onChange={(event) => setEditVisibility(event.target.value as 'campaign' | 'gm_only')}><option value="gm_only">Keep GM-only</option><option value="campaign">Share with party</option></select>
+                        <label htmlFor={`canon-visibility-${proposal.id}`}>Who can read this?</label><select id={`canon-visibility-${proposal.id}`} value={editVisibility} onChange={(event) => { setEditVisibility(event.target.value as CanonAudience); setAudiencePlayerIds([]) }}><option value="gm_only">Keep GM-only</option><option value="campaign">Share with party</option><option value="characters">Specific characters</option></select>
+                        {editVisibility === 'characters' && <fieldset className="canon-audience"><legend>Character seats</legend>{campaignMembers.filter((player) => player.knowledgeRole === 'player').map((player) => <label key={player.id}><input type="checkbox" checked={audiencePlayerIds.includes(player.id)} onChange={(event) => setAudiencePlayerIds((current) => event.target.checked ? [...current, player.id] : current.filter((id) => id !== player.id))} />{player.name}</label>)}</fieldset>}
                       </div>
                     ) : <><h4>{proposal.title}</h4><p>{proposal.claim}</p></>}
                     <div className="canon-citations" aria-label="Transcript citations">{proposal.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span><q>{source.excerpt ?? source.text}</q></button>)}</div>
                     <div className="canon-actions">
-                      {editing?.id === proposal.id ? <><button className="primary-action" disabled={!editTitle.trim() || !editClaim.trim() || pending === proposal.id} onClick={() => void decide(proposal, 'edit_accept', undefined, editVisibility)}>{pending === proposal.id ? 'Recording…' : editVisibility === 'campaign' ? 'Edit and share' : 'Keep edited passage private'}</button><button className="folio-button" onClick={() => setEditing(null)}>Cancel</button></> : <><button className="primary-action" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'accept', undefined, constitution?.defaultVisibility ?? 'gm_only')}>{constitution?.defaultVisibility === 'campaign' ? 'Share with party' : 'Keep GM-only'}</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'accept', undefined, constitution?.defaultVisibility === 'campaign' ? 'gm_only' : 'campaign')}>{constitution?.defaultVisibility === 'campaign' ? 'Keep GM-only' : 'Share with party'}</button><button className="folio-button" onClick={() => beginEditing(proposal)}>Edit first</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'dispute', 'incorrect')}>Incorrect</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'reject', 'secret_leak')}>Secret leak</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'reject', 'not_useful')}>Not useful</button></>}
+                      {editing?.id === proposal.id ? <><button className="primary-action" disabled={!editTitle.trim() || !editClaim.trim() || (editVisibility === 'characters' && !audiencePlayerIds.length) || pending === proposal.id} onClick={() => void decide(proposal, 'edit_accept', undefined, editVisibility)}>{pending === proposal.id ? 'Recording…' : editVisibility === 'campaign' ? 'Edit and share' : editVisibility === 'characters' ? 'Share with selected characters' : 'Keep edited passage private'}</button><button className="folio-button" onClick={() => setEditing(null)}>Cancel</button></> : <><button className="primary-action" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'accept', undefined, constitution?.defaultVisibility ?? 'gm_only')}>{constitution?.defaultVisibility === 'campaign' ? 'Share with party' : 'Keep GM-only'}</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'accept', undefined, constitution?.defaultVisibility === 'campaign' ? 'gm_only' : 'campaign')}>{constitution?.defaultVisibility === 'campaign' ? 'Keep GM-only' : 'Share with party'}</button><button className="folio-button" onClick={() => beginEditing(proposal)}>Edit or target</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'dispute', 'incorrect')}>Incorrect</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'reject', 'secret_leak')}>Secret leak</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'reject', 'not_useful')}>Not useful</button></>}
                     </div>
                   </article>
                 ))}
@@ -784,22 +874,23 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
                 <div className="canon-section-title"><h3 id="accepted-canon-heading">Accepted canon</h3><span>{ledger.entries.length}</span></div>
                 {!ledger.entries.length && <div className="canon-empty"><BookOpen size={18} /><span>No passages have been accepted yet.</span></div>}
                 {ledger.entries.map((entry) => <article className="canon-entry" key={entry.id}>
-                  <div className="canon-card-meta"><span>{entry.kind}</span><span>{entry.visibility === 'gm_only' ? 'GM only' : 'Whole campaign'}</span><span>Revision {entry.revision}</span></div>
+                  <div className="canon-card-meta"><span>{entry.kind}</span><span>{entry.visibility === 'gm_only' ? 'GM only' : entry.visibility === 'characters' ? entry.audienceNames.join(', ') : 'Whole campaign'}</span><span>Revision {entry.revision}</span></div>
                   {entryMode?.entry.id === entry.id ? <div className="canon-edit">
                     <strong>{entryMode.action === 'retract' ? 'Retract this passage?' : entryMode.action === 'supersede' ? 'Supersede this version' : 'Revise this passage'}</strong>
-                    {entryMode.action !== 'retract' && <><label htmlFor={`entry-title-${entry.id}`}>Canon title</label><input id={`entry-title-${entry.id}`} value={entryTitle} onChange={(event) => setEntryTitle(event.target.value)} maxLength={80} /><label htmlFor={`entry-claim-${entry.id}`}>Canon wording</label><textarea id={`entry-claim-${entry.id}`} value={entryClaim} onChange={(event) => setEntryClaim(event.target.value)} maxLength={2_000} /><label htmlFor={`entry-visibility-${entry.id}`}>Who can read this?</label><select id={`entry-visibility-${entry.id}`} value={entryVisibility} onChange={(event) => setEntryVisibility(event.target.value as 'campaign' | 'gm_only')}><option value="gm_only">Keep GM-only</option><option value="campaign">Share with party</option></select></>}
+                    {entryMode.action !== 'retract' && <><label htmlFor={`entry-title-${entry.id}`}>Canon title</label><input id={`entry-title-${entry.id}`} value={entryTitle} onChange={(event) => setEntryTitle(event.target.value)} maxLength={80} /><label htmlFor={`entry-claim-${entry.id}`}>Canon wording</label><textarea id={`entry-claim-${entry.id}`} value={entryClaim} onChange={(event) => setEntryClaim(event.target.value)} maxLength={2_000} /><label htmlFor={`entry-visibility-${entry.id}`}>Who can read this?</label><select id={`entry-visibility-${entry.id}`} value={entryVisibility} onChange={(event) => { setEntryVisibility(event.target.value as CanonAudience); setAudiencePlayerIds([]) }}><option value="gm_only">Keep GM-only</option><option value="campaign">Share with party</option><option value="characters">Specific characters</option></select>{entryVisibility === 'characters' && <fieldset className="canon-audience"><legend>Character seats</legend>{campaignMembers.filter((player) => player.knowledgeRole === 'player').map((player) => <label key={player.id}><input type="checkbox" checked={audiencePlayerIds.includes(player.id)} onChange={(event) => setAudiencePlayerIds((current) => event.target.checked ? [...current, player.id] : current.filter((id) => id !== player.id))} />{player.name}</label>)}</fieldset>}</>}
                     <label htmlFor={`entry-reason-${entry.id}`}>{entryMode.action === 'revise' ? 'Reason (optional)' : 'Reason'}</label><input id={`entry-reason-${entry.id}`} value={entryReason} onChange={(event) => setEntryReason(event.target.value)} maxLength={500} placeholder={entryMode.action === 'retract' ? 'Why should the table stop relying on this?' : 'What changed?'} />
-                    <div className="canon-actions"><button className={entryMode.action === 'retract' ? 'folio-button folio-button--danger' : 'primary-action'} disabled={pending === entry.id || !entryTitle.trim() || !entryClaim.trim() || (entryMode.action !== 'revise' && !entryReason.trim())} onClick={() => void saveEntryAction()}>{pending === entry.id ? 'Recording…' : entryMode.action === 'retract' ? 'Confirm retraction' : entryMode.action === 'supersede' ? 'Record new version' : 'Save revision'}</button><button className="folio-button" onClick={() => setEntryMode(null)}>Cancel</button></div>
-                  </div> : <><h4>{entry.title}</h4><p>{entry.claim}</p></>}
+                    <div className="canon-actions"><button className={entryMode.action === 'retract' ? 'folio-button folio-button--danger' : 'primary-action'} disabled={pending === entry.id || !entryTitle.trim() || !entryClaim.trim() || (entryVisibility === 'characters' && !audiencePlayerIds.length) || (entryMode.action !== 'revise' && !entryReason.trim())} onClick={() => void saveEntryAction()}>{pending === entry.id ? 'Recording…' : entryMode.action === 'retract' ? 'Confirm retraction' : entryMode.action === 'supersede' ? 'Record new version' : 'Save revision'}</button><button className="folio-button" onClick={() => setEntryMode(null)}>Cancel</button></div>
+                  </div> : <><h4>{entry.title}</h4><p>{entry.claim}</p>{entry.latestReason && <p className="continuity-note">Latest change: {entry.latestReason}</p>}</>}
                   <div className="canon-citations">{entry.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span></button>)}</div>
                   <small>Accepted by {entry.createdByName ?? 'a GM'}</small>
                   <div className="canon-actions"><button className="folio-button" onClick={() => void toggleHistory(entry)}>{entryHistory[entry.id] ? 'Hide history' : 'History'}</button>{isGm && <><button className="folio-button" onClick={() => beginEntryAction(entry, 'revise')}>Edit</button><button className="folio-button" onClick={() => beginEntryAction(entry, 'supersede')}>Supersede</button><button className="folio-button" onClick={() => beginEntryAction(entry, 'retract')}>Retract</button></>}</div>
-                  {entryHistory[entry.id] && <ol className="canon-history">{entryHistory[entry.id].map((revision) => <li key={revision.id}><span>Revision {revision.revision} · {revision.action}</span><strong>{revision.title}</strong><p>{revision.claim}</p><small>{revision.createdByName}{revision.reason ? ` · ${revision.reason}` : ''}</small></li>)}</ol>}
+                  {entryHistory[entry.id] && <ol className="canon-history">{entryHistory[entry.id].map((revision, index, revisions) => { const previous = revisions[index + 1]; const changes = previous ? [revision.title !== previous.title && 'title', revision.claim !== previous.claim && 'wording', revision.visibility !== previous.visibility && 'audience'].filter(Boolean) : []; return <li key={revision.id}><span>Revision {revision.revision} · {revision.action}{changes.length ? ` · changed ${changes.join(', ')}` : ''}</span><strong>{revision.title}</strong><p>{revision.claim}</p><small>{revision.createdByName}{revision.reason ? ` · ${revision.reason}` : ''}</small></li> })}</ol>}
                 </article>)}
               </section>
+              {isGm && campaignMembers.length > 0 && <section className="canon-section" aria-labelledby="knowledge-lens-heading"><div className="canon-section-title"><h3 id="knowledge-lens-heading">Character knowledge</h3></div><div className="session-context-picker"><label htmlFor="knowledge-character">View the ledger from a character’s seat</label><select id="knowledge-character" value={knowledgePlayerId} onChange={(event) => setKnowledgePlayerId(event.target.value)}>{campaignMembers.filter((player) => player.knowledgeRole === 'player').map((player) => <option value={player.id} key={player.id}>{player.name}</option>)}</select></div>{knowledgeLens && <div className="canon-constitution-summary"><p>{knowledgeLens.player.name} can read {knowledgeLens.entries.length} canon {knowledgeLens.entries.length === 1 ? 'passage' : 'passages'}.</p><span>Present in {knowledgeLens.sessions.length} recorded {knowledgeLens.sessions.length === 1 ? 'session' : 'sessions'}.</span>{knowledgeLens.entries.map((entry) => <q key={entry.id}>{entry.title}: {entry.claim}</q>)}</div>}</section>}
               {isGm && <section className="canon-section" aria-labelledby="contradictions-heading">
                 <div className="canon-section-title"><h3 id="contradictions-heading">Contradiction watch</h3><button className="folio-small-action" onClick={() => void checkContradictions()} disabled={contradictionsPending || !ledger.entries.length || !selectedSessionId}>{contradictionsPending ? 'Checking…' : contradictionReport ? 'Check again' : 'Check session'}</button></div>
-                {!ledger.entries.length ? <div className="canon-empty"><BookMarked size={18} /><span>Accept canon before checking it against the transcript.</span></div> : !contradictionReport && contradictionsLoaded ? <div className="canon-empty"><BookMarked size={18} /><span>No private contradiction check has been prepared.</span></div> : contradictionReport && <><p className="continuity-note">Private to GMs · checked {new Date(contradictionReport.createdAt).toLocaleString()}</p>{!contradictionReport.findings.length && <div className="canon-empty"><Check size={18} /><span>No well-supported contradictions were found.</span></div>}{contradictionReport.findings.map((finding) => <article className="contradiction-card" key={finding.id}>
+                {!ledger.entries.length ? <div className="canon-empty"><BookMarked size={18} /><span>Accept canon before checking it against the transcript.</span></div> : !contradictionReport && contradictionsLoaded ? <div className="canon-empty"><BookMarked size={18} /><span>No private contradiction check has been prepared.</span></div> : contradictionReport && <><p className="continuity-note">Private to GMs · checked {new Date(contradictionReport.createdAt).toLocaleString()}{contradictionReport.contextSession ? ` · ${contradictionReport.contextSession.title} · messages ${contradictionReport.contextSession.startSequence}–${contradictionReport.contextSession.endSequence}` : ''}</p>{!contradictionReport.findings.length && <div className="canon-empty"><Check size={18} /><span>No well-supported contradictions were found.</span></div>}{contradictionReport.findings.map((finding) => <article className="contradiction-card" key={finding.id}>
                   <div className="canon-card-meta"><span>Private check</span><span>Read only</span></div><h4>{finding.title}</h4><p>{finding.explanation}</p>
                   <div className="contradiction-canon"><strong>Canon under question</strong><span>{finding.canonTitle}</span><q>{finding.canonClaim}</q></div>
                   <div className="canon-citations">{finding.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open contradiction citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span><q>{source.excerpt ?? source.text}</q></button>)}</div>
@@ -808,9 +899,11 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
               {isGm && <section className="canon-section" aria-labelledby="continuity-heading">
                 <div className="canon-section-title"><h3 id="continuity-heading">Session continuity</h3><button className="folio-small-action" onClick={() => void prepareContinuityBrief()} disabled={continuityPending || !selectedSessionId}>{continuityPending ? 'Reading…' : continuityBrief ? 'Refresh brief' : 'Prepare brief'}</button></div>
                 {!continuityBrief && continuityLoaded && <div className="canon-empty"><BookMarked size={18} /><span>No private continuity brief has been prepared.</span></div>}
-                {continuityBrief && <><p className="continuity-note">Private to GMs · prepared {new Date(continuityBrief.createdAt).toLocaleString()}</p>{!continuityBrief.threads.length && <div className="canon-empty"><Check size={18} /><span>No well-supported loose threads were found.</span></div>}{continuityBrief.threads.map((thread) => <article className="continuity-card" key={thread.id}>
-                  <div className="canon-card-meta"><span>GM only</span><span>{Math.round(thread.confidence * 100)}% confidence</span></div><h4>{thread.title}</h4><p>{thread.summary}</p><strong>Why it matters</strong><p>{thread.whyItMatters}</p>
+                {continuityBrief && <><p className="continuity-note">Private to GMs · prepared {new Date(continuityBrief.createdAt).toLocaleString()}{continuityBrief.contextSession ? ` · ${continuityBrief.contextSession.title} · messages ${continuityBrief.contextSession.startSequence}–${continuityBrief.contextSession.endSequence}` : ''}</p>{!continuityBrief.threads.length && <div className="canon-empty"><Check size={18} /><span>No well-supported loose threads were found.</span></div>}{continuityBrief.threads.map((thread) => <article className="continuity-card" key={thread.id}>
+                  <div className="canon-card-meta"><span>GM only</span><span>{thread.lifecycle.status}</span></div><h4>{thread.title}</h4><p>{thread.summary}</p><strong>Why it matters</strong><p>{thread.whyItMatters}</p>
                   <div className="canon-citations">{thread.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open continuity citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span><q>{source.excerpt ?? source.text}</q></button>)}</div>
+                  <div className="canon-actions" aria-label={`Lifecycle for ${thread.title}`}>{thread.lifecycle.status !== 'open' && <button className="folio-button" disabled={pending === thread.id} onClick={() => void transitionContinuityThread(thread, 'open')}>Reopen</button>}{thread.lifecycle.status !== 'dormant' && <button className="folio-button" disabled={pending === thread.id} onClick={() => void transitionContinuityThread(thread, 'dormant')}>Mark dormant</button>}{thread.lifecycle.status !== 'resolved' && <button className="folio-button" disabled={pending === thread.id} onClick={() => void transitionContinuityThread(thread, 'resolved')}>Resolve</button>}</div>
+                  {thread.lifecycle.reason && <p className="continuity-note">{thread.lifecycle.createdByName}: {thread.lifecycle.reason}</p>}
                   <div className="canon-actions" aria-label={`Feedback for ${thread.title}`}><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'useful')}>Useful</button><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'incorrect')}>Incorrect</button><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'secret_leak')}>Secret leak</button><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'not_useful')}>Not useful</button>{thread.feedback && <span className="continuity-feedback">Recorded: {thread.feedback.rating.replace('_', ' ')}</span>}</div>
                 </article>)}</>}
               </section>}

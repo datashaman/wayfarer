@@ -94,6 +94,7 @@ export type CampaignSession = {
 
 export type CanonKind = 'fact' | 'character' | 'relationship' | 'promise' | 'event' | 'question' | 'contradiction' | 'rule'
 export type CanonVisibility = 'campaign' | 'gm_only'
+export type CanonAudience = CanonVisibility | 'characters'
 export type CanonProposalStatus = 'proposed' | 'accepted' | 'disputed' | 'rejected'
 
 export type CanonConstitution = {
@@ -141,12 +142,15 @@ export type CanonEntry = {
   kind: CanonKind
   title: string
   claim: string
-  visibility: CanonVisibility
+  visibility: CanonAudience
+  audiencePlayerIds: Id[]
+  audienceNames: string[]
   revision: number
   status: 'active' | 'superseded' | 'retracted'
   createdAt: string
   updatedAt: string
   createdByName: string | null
+  latestReason: string | null
   sources: CanonProposalSource[]
 }
 
@@ -157,7 +161,9 @@ export type CanonEntryRevision = {
   action: 'accepted' | 'revised' | 'superseded' | 'retracted'
   title: string
   claim: string
-  visibility: CanonVisibility
+  visibility: CanonAudience
+  audiencePlayerIds: Id[]
+  audienceNames: string[]
   reason: string | null
   createdAt: string
   createdByName: string
@@ -191,8 +197,11 @@ export type ContradictionReport = {
   generatorVersion: string
   createdAt: string
   createdByName: string
+  contextSession: AiContextSession | null
   findings: ContradictionFinding[]
 }
+
+export type AiContextSession = Pick<CampaignSession, 'id' | 'title' | 'status' | 'startSequence' | 'endSequence'>
 
 export type ContinuityFeedbackRating = 'useful' | 'incorrect' | 'secret_leak' | 'not_useful'
 
@@ -203,7 +212,16 @@ export type ContinuityThread = {
   whyItMatters: string
   confidence: number
   feedback: { rating: ContinuityFeedbackRating; createdAt: string } | null
+  lifecycle: ContinuityLifecycleEvent
+  lifecycleHistory: ContinuityLifecycleEvent[]
   sources: CanonProposalSource[]
+}
+
+export type ContinuityLifecycleEvent = {
+  status: 'open' | 'dormant' | 'resolved'
+  reason: string | null
+  createdAt: string
+  createdByName: string
 }
 
 export type ContinuityBrief = {
@@ -212,7 +230,27 @@ export type ContinuityBrief = {
   generatorVersion: string
   createdAt: string
   createdByName: string
+  contextSession: AiContextSession | null
   threads: ContinuityThread[]
+}
+
+export type SessionRecap = {
+  id: Id
+  campaignId: Id
+  generatorVersion: string
+  status: 'draft' | 'published'
+  publicSummary: string
+  gmNotes: string | null
+  contextSession: AiContextSession
+  createdAt: string
+  publishedAt: string | null
+  sources: CanonProposalSource[]
+}
+
+export type AiReadiness = {
+  eligible: boolean
+  mode: 'prepare_only'
+  checks: Array<{ id: string; label: string; passed: boolean; value: number | null }>
 }
 
 export type ClientVoiceSignal = Envelope<

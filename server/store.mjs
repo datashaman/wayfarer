@@ -90,7 +90,7 @@ function publicCanonProposal(row, sources = []) {
   }
 }
 
-function publicCanonEntry(row, sources = []) {
+function publicCanonEntry(row, sources = [], audiences = []) {
   return {
     id: row.id,
     proposalId: row.proposal_id,
@@ -98,12 +98,15 @@ function publicCanonEntry(row, sources = []) {
     kind: row.kind,
     title: row.title,
     claim: row.claim,
-    visibility: row.visibility,
+    visibility: audiences.length ? 'characters' : row.visibility,
+    audiencePlayerIds: audiences.map((audience) => audience.id),
+    audienceNames: audiences.map((audience) => audience.name),
     revision: row.revision,
     status: row.status === 'active' ? 'active' : row.retired_reason ?? 'superseded',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     createdByName: row.created_by_name ?? null,
+    latestReason: row.latest_reason ?? null,
     sources: sources.map((source) => ({
       messageId: source.message_id,
       roomId: source.room_id,
@@ -117,7 +120,7 @@ function publicCanonEntry(row, sources = []) {
   }
 }
 
-function publicCanonRevision(row) {
+function publicCanonRevision(row, audiences = []) {
   return {
     id: row.id,
     entryId: row.entry_id,
@@ -125,7 +128,9 @@ function publicCanonRevision(row) {
     action: row.action,
     title: row.title,
     claim: row.claim,
-    visibility: row.visibility,
+    visibility: audiences.length ? 'characters' : row.visibility,
+    audiencePlayerIds: audiences.map((audience) => audience.id),
+    audienceNames: audiences.map((audience) => audience.name),
     reason: row.reason,
     createdAt: row.created_at,
     createdByName: row.created_by_name,
@@ -153,6 +158,13 @@ function publicContinuityBrief(row, threads = []) {
     generatorVersion: row.generator_version,
     createdAt: row.created_at,
     createdByName: row.created_by_name,
+    contextSession: row.session_start_sequence == null ? null : {
+      id: row.session_id,
+      title: row.session_title,
+      status: row.session_status,
+      startSequence: row.session_start_sequence,
+      endSequence: row.session_end_sequence,
+    },
     threads,
   }
 }
@@ -164,7 +176,32 @@ function publicContradictionReport(row, findings = []) {
     generatorVersion: row.generator_version,
     createdAt: row.created_at,
     createdByName: row.created_by_name,
+    contextSession: row.session_start_sequence == null ? null : {
+      id: row.session_id,
+      title: row.session_title,
+      status: row.session_status,
+      startSequence: row.session_start_sequence,
+      endSequence: row.session_end_sequence,
+    },
     findings,
+  }
+}
+
+function publicSessionRecap(row, sources = [], { includeGmNotes = false } = {}) {
+  return {
+    id: row.id,
+    campaignId: row.campaign_id,
+    generatorVersion: row.generator_version,
+    status: row.status,
+    publicSummary: row.public_summary,
+    gmNotes: includeGmNotes ? row.gm_notes : null,
+    contextSession: {
+      id: row.session_id, title: row.session_title, status: row.session_status,
+      startSequence: row.session_start_sequence, endSequence: row.session_end_sequence,
+    },
+    createdAt: row.created_at,
+    publishedAt: row.published_at,
+    sources,
   }
 }
 
@@ -291,6 +328,16 @@ export function createStore(databasePath) {
       created_at TEXT NOT NULL,
       UNIQUE(entry_id, revision)
     );
+    CREATE TABLE IF NOT EXISTS canon_entry_audiences (
+      entry_id TEXT NOT NULL REFERENCES canon_entries(id) ON DELETE CASCADE,
+      player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      PRIMARY KEY (entry_id, player_id)
+    );
+    CREATE TABLE IF NOT EXISTS canon_revision_audiences (
+      revision_id TEXT NOT NULL REFERENCES canon_entry_revisions(id) ON DELETE CASCADE,
+      player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      PRIMARY KEY (revision_id, player_id)
+    );
     CREATE TABLE IF NOT EXISTS canon_scan_state (
       campaign_id TEXT PRIMARY KEY REFERENCES campaigns(id) ON DELETE CASCADE,
       last_scanned_sequence INTEGER NOT NULL DEFAULT 0,
@@ -324,6 +371,11 @@ export function createStore(databasePath) {
       id TEXT PRIMARY KEY,
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
       generator_version TEXT NOT NULL,
+      session_id TEXT,
+      session_title TEXT,
+      session_status TEXT CHECK(session_status IS NULL OR session_status IN ('open', 'closed')),
+      session_start_sequence INTEGER,
+      session_end_sequence INTEGER,
       created_by_player_id TEXT NOT NULL REFERENCES players(id),
       created_at TEXT NOT NULL
     );
@@ -348,6 +400,11 @@ export function createStore(databasePath) {
       id TEXT PRIMARY KEY,
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
       generator_version TEXT NOT NULL,
+      session_id TEXT,
+      session_title TEXT,
+      session_status TEXT CHECK(session_status IS NULL OR session_status IN ('open', 'closed')),
+      session_start_sequence INTEGER,
+      session_end_sequence INTEGER,
       created_by_player_id TEXT NOT NULL REFERENCES players(id),
       created_at TEXT NOT NULL
     );
@@ -371,6 +428,48 @@ export function createStore(databasePath) {
       thread_id TEXT NOT NULL REFERENCES continuity_threads(id) ON DELETE CASCADE,
       player_id TEXT NOT NULL REFERENCES players(id),
       rating TEXT NOT NULL CHECK(rating IN ('useful', 'incorrect', 'secret_leak', 'not_useful')),
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS continuity_thread_transitions (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES continuity_threads(id) ON DELETE CASCADE,
+      status TEXT NOT NULL CHECK(status IN ('open', 'dormant', 'resolved')),
+      reason TEXT NOT NULL,
+      player_id TEXT NOT NULL REFERENCES players(id),
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS session_recaps (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      generator_version TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'published')),
+      public_summary TEXT NOT NULL,
+      gm_notes TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      session_title TEXT NOT NULL,
+      session_status TEXT NOT NULL CHECK(session_status IN ('open', 'closed')),
+      session_start_sequence INTEGER NOT NULL,
+      session_end_sequence INTEGER NOT NULL,
+      created_by_player_id TEXT NOT NULL REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      published_by_player_id TEXT REFERENCES players(id),
+      published_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS session_recap_sources (
+      recap_id TEXT NOT NULL REFERENCES session_recaps(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
+      excerpt TEXT,
+      PRIMARY KEY (recap_id, message_id)
+    );
+    CREATE TABLE IF NOT EXISTS ai_evaluation_runs (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT REFERENCES campaigns(id) ON DELETE CASCADE,
+      suite TEXT NOT NULL,
+      model TEXT NOT NULL,
+      generator_version TEXT NOT NULL,
+      passed INTEGER NOT NULL CHECK(passed >= 0),
+      total INTEGER NOT NULL CHECK(total > 0 AND passed <= total),
+      notes TEXT,
       created_at TEXT NOT NULL
     );
   `)
@@ -405,6 +504,14 @@ export function createStore(databasePath) {
   if (!canonDecisionColumns.some((column) => column.name === 'accepted_visibility')) database.exec("ALTER TABLE canon_decisions ADD COLUMN accepted_visibility TEXT CHECK(accepted_visibility IS NULL OR accepted_visibility IN ('campaign', 'gm_only'))")
   const canonEntryColumns = database.prepare('PRAGMA table_info(canon_entries)').all()
   if (!canonEntryColumns.some((column) => column.name === 'retired_reason')) database.exec("ALTER TABLE canon_entries ADD COLUMN retired_reason TEXT CHECK(retired_reason IS NULL OR retired_reason IN ('superseded', 'retracted'))")
+  for (const table of ['continuity_briefs', 'contradiction_reports']) {
+    const columns = database.prepare(`PRAGMA table_info(${table})`).all()
+    if (!columns.some((column) => column.name === 'session_id')) database.exec(`ALTER TABLE ${table} ADD COLUMN session_id TEXT`)
+    if (!columns.some((column) => column.name === 'session_title')) database.exec(`ALTER TABLE ${table} ADD COLUMN session_title TEXT`)
+    if (!columns.some((column) => column.name === 'session_status')) database.exec(`ALTER TABLE ${table} ADD COLUMN session_status TEXT CHECK(session_status IS NULL OR session_status IN ('open', 'closed'))`)
+    if (!columns.some((column) => column.name === 'session_start_sequence')) database.exec(`ALTER TABLE ${table} ADD COLUMN session_start_sequence INTEGER`)
+    if (!columns.some((column) => column.name === 'session_end_sequence')) database.exec(`ALTER TABLE ${table} ADD COLUMN session_end_sequence INTEGER`)
+  }
   database.exec(`
     INSERT OR IGNORE INTO canon_entry_revisions (
       id, entry_id, revision, action, title, claim, visibility, reason, player_id, created_at
@@ -749,13 +856,15 @@ export function createStore(databasePath) {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, ?, ?)
   `)
   const canonEntryById = database.prepare(`
-    SELECT canon_entries.*, players.name AS created_by_name
+    SELECT canon_entries.*, players.name AS created_by_name,
+           (SELECT reason FROM canon_entry_revisions WHERE entry_id = canon_entries.id ORDER BY revision DESC LIMIT 1) AS latest_reason
     FROM canon_entries
     JOIN players ON players.id = canon_entries.created_by_player_id
     WHERE canon_entries.id = ? AND canon_entries.campaign_id = ?
   `)
   const canonEntriesForCampaign = database.prepare(`
-    SELECT canon_entries.*, players.name AS created_by_name
+    SELECT canon_entries.*, players.name AS created_by_name,
+           (SELECT reason FROM canon_entry_revisions WHERE entry_id = canon_entries.id ORDER BY revision DESC LIMIT 1) AS latest_reason
     FROM canon_entries
     JOIN players ON players.id = canon_entries.created_by_player_id
     WHERE canon_entries.campaign_id = ? AND canon_entries.status = 'active'
@@ -773,6 +882,19 @@ export function createStore(databasePath) {
     WHERE canon_entries.id = ?
     ORDER BY messages.rowid
   `)
+  const canonAudiencesForEntry = database.prepare(`
+    SELECT players.id, players.name FROM canon_entry_audiences
+    JOIN players ON players.id = canon_entry_audiences.player_id
+    WHERE canon_entry_audiences.entry_id = ? ORDER BY players.name
+  `)
+  const canonAudiencesForRevision = database.prepare(`
+    SELECT players.id, players.name FROM canon_revision_audiences
+    JOIN players ON players.id = canon_revision_audiences.player_id
+    WHERE canon_revision_audiences.revision_id = ? ORDER BY players.name
+  `)
+  const insertCanonEntryAudience = database.prepare('INSERT INTO canon_entry_audiences (entry_id, player_id) VALUES (?, ?)')
+  const deleteCanonEntryAudiences = database.prepare('DELETE FROM canon_entry_audiences WHERE entry_id = ?')
+  const insertCanonRevisionAudience = database.prepare('INSERT INTO canon_revision_audiences (revision_id, player_id) VALUES (?, ?)')
   const insertCanonEntryRevision = database.prepare(`
     INSERT INTO canon_entry_revisions (
       id, entry_id, revision, action, title, claim, visibility, reason, player_id, created_at
@@ -796,12 +918,16 @@ export function createStore(databasePath) {
     ORDER BY canon_entry_revisions.revision DESC
   `)
   const insertContinuityBrief = database.prepare(`
-    INSERT INTO continuity_briefs (id, campaign_id, generator_version, created_by_player_id, created_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO continuity_briefs (
+      id, campaign_id, generator_version, session_id, session_title, session_status,
+      session_start_sequence, session_end_sequence, created_by_player_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertContradictionReport = database.prepare(`
-    INSERT INTO contradiction_reports (id, campaign_id, generator_version, created_by_player_id, created_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO contradiction_reports (
+      id, campaign_id, generator_version, session_id, session_title, session_status,
+      session_start_sequence, session_end_sequence, created_by_player_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertContradictionFinding = database.prepare(`
     INSERT INTO contradiction_findings (id, report_id, position, canon_entry_id, canon_title, canon_claim, title, explanation, confidence)
@@ -862,6 +988,17 @@ export function createStore(databasePath) {
   const continuityFeedbackForThread = database.prepare(`
     SELECT rating, created_at FROM continuity_feedback WHERE thread_id = ? ORDER BY rowid DESC LIMIT 1
   `)
+  const continuityTransitionsForThread = database.prepare(`
+    SELECT continuity_thread_transitions.*, players.name AS created_by_name
+    FROM continuity_thread_transitions
+    JOIN players ON players.id = continuity_thread_transitions.player_id
+    WHERE continuity_thread_transitions.thread_id = ?
+    ORDER BY continuity_thread_transitions.rowid DESC
+  `)
+  const insertContinuityTransition = database.prepare(`
+    INSERT INTO continuity_thread_transitions (id, thread_id, status, reason, player_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `)
   const continuityThreadForCampaign = database.prepare(`
     SELECT continuity_threads.* FROM continuity_threads
     JOIN continuity_briefs ON continuity_briefs.id = continuity_threads.brief_id
@@ -885,6 +1022,26 @@ export function createStore(databasePath) {
     ) AND (? IS NULL OR continuity_briefs.campaign_id = ?)
     ORDER BY continuity_briefs.campaign_id, continuity_feedback.rowid
   `)
+  const insertSessionRecap = database.prepare(`
+    INSERT INTO session_recaps (
+      id, campaign_id, generator_version, public_summary, gm_notes, session_id, session_title,
+      session_status, session_start_sequence, session_end_sequence, created_by_player_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const insertSessionRecapSource = database.prepare('INSERT INTO session_recap_sources (recap_id, message_id, excerpt) VALUES (?, ?, ?)')
+  const latestSessionRecap = database.prepare(`SELECT * FROM session_recaps WHERE campaign_id = ? ORDER BY rowid DESC LIMIT 1`)
+  const latestPublishedSessionRecap = database.prepare(`SELECT * FROM session_recaps WHERE campaign_id = ? AND status = 'published' ORDER BY rowid DESC LIMIT 1`)
+  const sessionRecapById = database.prepare('SELECT * FROM session_recaps WHERE id = ? AND campaign_id = ?')
+  const publishSessionRecap = database.prepare("UPDATE session_recaps SET status = 'published', published_by_player_id = ?, published_at = ? WHERE id = ? AND campaign_id = ? AND status = 'draft'")
+  const sessionRecapSources = database.prepare(`
+    SELECT session_recap_sources.message_id, session_recap_sources.excerpt, messages.text, messages.sent_at, messages.rowid AS sequence,
+           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+    FROM session_recap_sources JOIN messages ON messages.id = session_recap_sources.message_id
+    JOIN rooms ON rooms.id = messages.room_id JOIN players ON players.id = messages.player_id
+    WHERE session_recap_sources.recap_id = ? ORDER BY messages.rowid
+  `)
+  const insertAiEvaluationRun = database.prepare(`INSERT INTO ai_evaluation_runs (id, campaign_id, suite, model, generator_version, passed, total, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  const aiEvaluationRuns = database.prepare(`SELECT * FROM ai_evaluation_runs WHERE (? IS NULL OR campaign_id = ?) ORDER BY rowid DESC LIMIT ?`)
 
   function createPlayer(campaignId, name, role = 'member') {
     const token = randomBytes(32).toString('base64url')
@@ -961,6 +1118,10 @@ export function createStore(databasePath) {
 
     getCampaignManagement(campaignId) {
       return { players: playersByCampaign.all(campaignId).map((row) => publicPlayer(row)) }
+    },
+
+    listCampaignMembers(campaignId) {
+      return playersByCampaign.all(campaignId).map((row) => publicPlayer(row))
     },
 
     setPlayerKnowledgeRole(campaignId, playerId, knowledgeRole) {
@@ -1265,14 +1426,16 @@ export function createStore(databasePath) {
         .map((row) => publicCanonProposal(row, canonSourcesForProposal.all(row.id)))
     },
 
-    decideCanonProposal(campaignId, playerId, proposalId, { action, reason = null, title = null, claim = null, visibility = null }) {
+    decideCanonProposal(campaignId, playerId, proposalId, { action, reason = null, title = null, claim = null, visibility = null, audiencePlayerIds = [] }) {
       const proposal = canonProposalById.get(proposalId, campaignId)
       if (!proposal) return { outcome: 'not_found' }
       if (proposal.status !== 'proposed') return { outcome: 'already_decided', proposal: this.getCanonProposal(campaignId, proposalId) }
       const nextStatus = action === 'accept' || action === 'edit_accept' ? 'accepted' : action === 'dispute' ? 'disputed' : 'rejected'
       const acceptedTitle = action === 'edit_accept' ? title : proposal.title
       const acceptedClaim = action === 'edit_accept' ? claim : proposal.claim
-      const acceptedVisibility = nextStatus === 'accepted' ? visibility ?? proposal.visibility : null
+      const acceptedVisibility = nextStatus === 'accepted' ? visibility === 'characters' ? 'gm_only' : visibility ?? proposal.visibility : null
+      const audiences = visibility === 'characters' ? [...new Set(audiencePlayerIds)] : []
+      if (audiences.some((audienceId) => !playerForCampaign.get(audienceId, campaignId))) return { outcome: 'invalid_audience' }
       const now = new Date().toISOString()
       database.exec('BEGIN IMMEDIATE')
       try {
@@ -1280,8 +1443,13 @@ export function createStore(databasePath) {
         insertCanonDecision.run(randomUUID(), proposalId, playerId, action, reason, acceptedTitle, acceptedClaim, acceptedVisibility, now)
         if (nextStatus === 'accepted') {
           const entryId = randomUUID()
+          const revisionId = randomUUID()
           insertCanonEntry.run(entryId, proposalId, campaignId, proposal.kind, acceptedTitle, acceptedClaim, acceptedVisibility, playerId, now, now)
-          insertCanonEntryRevision.run(randomUUID(), entryId, 0, 'accepted', acceptedTitle, acceptedClaim, acceptedVisibility, reason, playerId, now)
+          insertCanonEntryRevision.run(revisionId, entryId, 0, 'accepted', acceptedTitle, acceptedClaim, acceptedVisibility, reason, playerId, now)
+          for (const audienceId of audiences) {
+            insertCanonEntryAudience.run(entryId, audienceId)
+            insertCanonRevisionAudience.run(revisionId, audienceId)
+          }
         }
         database.exec('COMMIT')
       } catch (error) {
@@ -1362,27 +1530,46 @@ export function createStore(databasePath) {
       return { canon, continuity, deduplication: this.getCanonProposalMatchMetrics(campaignId) }
     },
 
-    listCanonEntries(campaignId, { includeGmOnly = false } = {}) {
+    listContinuityFeedbackExamples(campaignId, limit = 20) {
+      return continuityFeedbackForExport.all(campaignId, campaignId).slice(-limit).map((row) => ({
+        thread: { title: row.title, summary: row.summary, whyItMatters: row.why_it_matters },
+        rating: row.rating,
+        generatorVersion: row.generator_version,
+      }))
+    },
+
+    listCanonEntries(campaignId, { includeGmOnly = false, viewerPlayerId = null } = {}) {
       return canonEntriesForCampaign.all(campaignId)
-        .filter((row) => includeGmOnly || row.visibility === 'campaign')
-        .map((row) => publicCanonEntry(row, canonSourcesForEntry.all(row.id)))
+        .map((row) => ({ row, audiences: canonAudiencesForEntry.all(row.id) }))
+        .filter(({ row, audiences }) => includeGmOnly || row.visibility === 'campaign' || audiences.some((audience) => audience.id === viewerPlayerId))
+        .map(({ row, audiences }) => publicCanonEntry(row, canonSourcesForEntry.all(row.id), audiences))
     },
 
-    getCanonEntry(campaignId, entryId, { includeGmOnly = false } = {}) {
+    getCanonEntry(campaignId, entryId, { includeGmOnly = false, viewerPlayerId = null } = {}) {
       const row = canonEntryById.get(entryId, campaignId)
-      if (!row || (!includeGmOnly && row.visibility !== 'campaign')) return null
-      return publicCanonEntry(row, canonSourcesForEntry.all(entryId))
+      const audiences = row ? canonAudiencesForEntry.all(entryId) : []
+      if (!row || (!includeGmOnly && row.visibility !== 'campaign' && !audiences.some((audience) => audience.id === viewerPlayerId))) return null
+      return publicCanonEntry(row, canonSourcesForEntry.all(entryId), audiences)
     },
 
-    reviseCanonEntry(campaignId, playerId, entryId, { action, title, claim, visibility, reason = null, expectedRevision }) {
+    reviseCanonEntry(campaignId, playerId, entryId, { action, title, claim, visibility, audiencePlayerIds = [], reason = null, expectedRevision }) {
       const current = canonEntryById.get(entryId, campaignId)
       if (!current) return { outcome: 'not_found' }
       if (current.status !== 'active' || current.revision !== expectedRevision) return { outcome: 'conflict', entry: this.getCanonEntry(campaignId, entryId, { includeGmOnly: true }) }
       const now = new Date().toISOString()
+      const storedVisibility = visibility === 'characters' ? 'gm_only' : visibility
+      const audiences = visibility === 'characters' ? [...new Set(audiencePlayerIds)] : []
+      if (audiences.some((audienceId) => !playerForCampaign.get(audienceId, campaignId))) return { outcome: 'invalid_audience' }
       database.exec('BEGIN IMMEDIATE')
       try {
-        if (updateCanonEntry.run(title, claim, visibility, now, entryId, campaignId, expectedRevision).changes !== 1) throw new Error('canon_entry_conflict')
-        insertCanonEntryRevision.run(randomUUID(), entryId, expectedRevision + 1, action, title, claim, visibility, reason, playerId, now)
+        if (updateCanonEntry.run(title, claim, storedVisibility, now, entryId, campaignId, expectedRevision).changes !== 1) throw new Error('canon_entry_conflict')
+        const revisionId = randomUUID()
+        insertCanonEntryRevision.run(revisionId, entryId, expectedRevision + 1, action, title, claim, storedVisibility, reason, playerId, now)
+        deleteCanonEntryAudiences.run(entryId)
+        for (const audienceId of audiences) {
+          insertCanonEntryAudience.run(entryId, audienceId)
+          insertCanonRevisionAudience.run(revisionId, audienceId)
+        }
         database.exec('COMMIT')
       } catch (error) {
         database.exec('ROLLBACK')
@@ -1399,7 +1586,9 @@ export function createStore(databasePath) {
       database.exec('BEGIN IMMEDIATE')
       try {
         if (retractCanonEntry.run(now, entryId, campaignId, expectedRevision).changes !== 1) throw new Error('canon_entry_conflict')
-        insertCanonEntryRevision.run(randomUUID(), entryId, expectedRevision + 1, 'retracted', current.title, current.claim, current.visibility, reason, playerId, now)
+        const revisionId = randomUUID()
+        insertCanonEntryRevision.run(revisionId, entryId, expectedRevision + 1, 'retracted', current.title, current.claim, current.visibility, reason, playerId, now)
+        for (const audience of canonAudiencesForEntry.all(entryId)) insertCanonRevisionAudience.run(revisionId, audience.id)
         database.exec('COMMIT')
       } catch (error) {
         database.exec('ROLLBACK')
@@ -1411,10 +1600,20 @@ export function createStore(databasePath) {
     listCanonEntryHistory(campaignId, entryId, { includeGmOnly = false } = {}) {
       const entry = this.getCanonEntry(campaignId, entryId, { includeGmOnly })
       if (!entry) return null
-      return { entry, revisions: canonRevisionsForEntry.all(entryId).map(publicCanonRevision) }
+      return { entry, revisions: canonRevisionsForEntry.all(entryId).map((revision) => publicCanonRevision(revision, canonAudiencesForRevision.all(revision.id))) }
     },
 
-    createContradictionReport({ campaignId, playerId, generatorVersion, findings }) {
+    getCharacterKnowledge(campaignId, playerId) {
+      const player = playerForCampaign.get(playerId, campaignId)
+      if (!player) return null
+      return {
+        player: publicPlayer(player),
+        entries: this.listCanonEntries(campaignId, { viewerPlayerId: playerId }),
+        sessions: this.listCampaignSessions(campaignId).filter((session) => session.participants.some((participant) => participant.id === playerId)),
+      }
+    },
+
+    createContradictionReport({ campaignId, playerId, generatorVersion, session = null, findings }) {
       const resolved = findings.map((finding) => ({
         ...finding,
         canon: canonEntryById.get(finding.canonEntryId, campaignId),
@@ -1425,7 +1624,11 @@ export function createStore(databasePath) {
       const createdAt = new Date().toISOString()
       database.exec('BEGIN IMMEDIATE')
       try {
-        insertContradictionReport.run(reportId, campaignId, generatorVersion, playerId, createdAt)
+        insertContradictionReport.run(
+          reportId, campaignId, generatorVersion, session?.id ?? null, session?.title ?? null,
+          session?.status ?? null, session?.startSequence ?? null, session?.endSequence ?? null,
+          playerId, createdAt,
+        )
         resolved.forEach((finding, position) => {
           const findingId = randomUUID()
           insertContradictionFinding.run(findingId, reportId, position, finding.canonEntryId, finding.canon.title, finding.canon.claim, finding.title, finding.explanation, finding.confidence)
@@ -1464,7 +1667,7 @@ export function createStore(databasePath) {
       return publicContradictionReport(row, findings)
     },
 
-    createContinuityBrief({ campaignId, playerId, generatorVersion, threads }) {
+    createContinuityBrief({ campaignId, playerId, generatorVersion, session = null, threads }) {
       const resolved = threads.map((thread) => ({
         ...thread,
         sources: thread.sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) })),
@@ -1474,7 +1677,11 @@ export function createStore(databasePath) {
       const createdAt = new Date().toISOString()
       database.exec('BEGIN IMMEDIATE')
       try {
-        insertContinuityBrief.run(briefId, campaignId, generatorVersion, playerId, createdAt)
+        insertContinuityBrief.run(
+          briefId, campaignId, generatorVersion, session?.id ?? null, session?.title ?? null,
+          session?.status ?? null, session?.startSequence ?? null, session?.endSequence ?? null,
+          playerId, createdAt,
+        )
         resolved.forEach((thread, position) => {
           const threadId = randomUUID()
           insertContinuityThread.run(threadId, briefId, position, thread.title, thread.summary, thread.whyItMatters, thread.confidence)
@@ -1493,6 +1700,12 @@ export function createStore(databasePath) {
       if (!row) return null
       const threads = continuityThreadsForBrief.all(row.id).map((thread) => {
         const feedback = continuityFeedbackForThread.get(thread.id)
+        const lifecycleHistory = continuityTransitionsForThread.all(thread.id).map((transition) => ({
+          status: transition.status,
+          reason: transition.reason,
+          createdAt: transition.created_at,
+          createdByName: transition.created_by_name,
+        }))
         return {
           id: thread.id,
           title: thread.title,
@@ -1500,6 +1713,8 @@ export function createStore(databasePath) {
           whyItMatters: thread.why_it_matters,
           confidence: thread.confidence,
           feedback: feedback ? { rating: feedback.rating, createdAt: feedback.created_at } : null,
+          lifecycle: lifecycleHistory[0] ?? { status: 'open', reason: null, createdAt: row.created_at, createdByName: row.created_by_name },
+          lifecycleHistory,
           sources: continuitySourcesForThread.all(thread.id).map((source) => ({
             messageId: source.message_id,
             roomId: source.room_id,
@@ -1519,6 +1734,62 @@ export function createStore(databasePath) {
       if (!continuityThreadForCampaign.get(threadId, campaignId)) return null
       insertContinuityFeedback.run(randomUUID(), threadId, playerId, rating, new Date().toISOString())
       return this.getLatestContinuityBrief(campaignId)
+    },
+
+    transitionContinuityThread(campaignId, playerId, threadId, status, reason) {
+      if (!continuityThreadForCampaign.get(threadId, campaignId)) return null
+      insertContinuityTransition.run(randomUUID(), threadId, status, reason, playerId, new Date().toISOString())
+      return this.getLatestContinuityBrief(campaignId)
+    },
+
+    createSessionRecap({ campaignId, playerId, generatorVersion, session, publicSummary, gmNotes, sources }) {
+      const resolved = sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) }))
+      if (resolved.some((source) => !source.row)) return { outcome: 'invalid_source' }
+      const id = randomUUID()
+      const createdAt = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        insertSessionRecap.run(id, campaignId, generatorVersion, publicSummary, gmNotes, session.id, session.title, session.status, session.startSequence, session.endSequence, playerId, createdAt)
+        for (const source of resolved) insertSessionRecapSource.run(id, source.messageId, source.excerpt ?? null)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return { outcome: 'created', recap: this.getLatestSessionRecap(campaignId, { includeDrafts: true, includeGmNotes: true }) }
+    },
+
+    getLatestSessionRecap(campaignId, { includeDrafts = false, includeGmNotes = false } = {}) {
+      const row = (includeDrafts ? latestSessionRecap : latestPublishedSessionRecap).get(campaignId)
+      if (!row) return null
+      const sources = sessionRecapSources.all(row.id).map((source) => ({
+        messageId: source.message_id, roomId: source.room_id, roomName: source.room_name,
+        senderName: source.sender_name, text: source.text, excerpt: source.excerpt,
+        sentAt: source.sent_at, sequence: source.sequence,
+      }))
+      return publicSessionRecap(row, sources, { includeGmNotes })
+    },
+
+    publishSessionRecap(campaignId, playerId, recapId) {
+      const current = sessionRecapById.get(recapId, campaignId)
+      if (!current) return { outcome: 'not_found' }
+      if (current.status === 'published') return { outcome: 'already_published', recap: this.getLatestSessionRecap(campaignId, { includeDrafts: true, includeGmNotes: true }) }
+      publishSessionRecap.run(playerId, new Date().toISOString(), recapId, campaignId)
+      return { outcome: 'published', recap: this.getLatestSessionRecap(campaignId, { includeDrafts: true, includeGmNotes: true }) }
+    },
+
+    recordAiEvaluationRun({ campaignId = null, suite, model, generatorVersion, passed, total, notes = null }) {
+      const run = { id: randomUUID(), campaignId, suite, model, generatorVersion, passed, total, notes, createdAt: new Date().toISOString() }
+      insertAiEvaluationRun.run(run.id, campaignId, suite, model, generatorVersion, passed, total, notes, run.createdAt)
+      return run
+    },
+
+    listAiEvaluationRuns(campaignId = null, limit = 50) {
+      return aiEvaluationRuns.all(campaignId, campaignId, limit).map((row) => ({
+        id: row.id, campaignId: row.campaign_id, suite: row.suite, model: row.model,
+        generatorVersion: row.generator_version, passed: row.passed, total: row.total,
+        notes: row.notes, createdAt: row.created_at,
+      }))
     },
 
     close() {

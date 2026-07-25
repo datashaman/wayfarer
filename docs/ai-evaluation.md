@@ -8,6 +8,14 @@ npm run eval:record -- --suite canon --model gpt-5.6-luna --version openai:gpt-5
 
 Use `--campaign ID` for table-specific results and `--notes TEXT` for fixture or prompt changes. Runs are append-only in `ai_evaluation_runs`.
 
+Run and record every live generator suite in one command with:
+
+```sh
+npm run eval:all -- --campaign ID --notes "prompt or fixture change"
+```
+
+Omit `--campaign` for an operator-wide run. A failed suite is still recorded so regressions remain visible.
+
 Post-session preparation is not eligible until one campaign has all of:
 
 - at least 20 reviewed canon suggestions;

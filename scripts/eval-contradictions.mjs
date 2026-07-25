@@ -54,7 +54,11 @@ for (const fixture of fixtures) {
       fixture.forbidSource === undefined || findings.every((finding) => finding.sources.every((source) => source.messageId !== fixture.forbidSource)),
     ]
     if (checks.every(Boolean)) console.log(`PASS ${fixture.name} (${findings.length} findings)`)
-    else { failures += 1; console.error(`FAIL ${fixture.name} (${findings.length} findings)`) }
+    else {
+      failures += 1
+      console.error(`FAIL ${fixture.name} (${findings.length} findings)`)
+      for (const finding of findings) console.error(`  ${finding.title}: ${finding.explanation}`)
+    }
   } catch (error) {
     failures += 1
     console.error(`FAIL ${fixture.name}: ${error.code ?? error.name ?? 'error'}`)

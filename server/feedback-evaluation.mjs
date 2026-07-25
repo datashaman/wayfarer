@@ -74,6 +74,7 @@ export function calculateFeedbackMetrics({ canon = [], continuity = [] }) {
 export function createFeedbackEvaluationExport(feedback) {
   const canon = feedback.canon ?? []
   const continuity = feedback.continuity ?? []
+  const deduplication = feedback.deduplication ?? []
   return {
     schemaVersion: feedbackEvaluationSchemaVersion,
     privacy: {
@@ -82,6 +83,6 @@ export function createFeedbackEvaluationExport(feedback) {
       playerAndCampaignNamesExcluded: true,
     },
     fixtures: { canon, continuity },
-    metrics: calculateFeedbackMetrics({ canon, continuity }),
+    metrics: { ...calculateFeedbackMetrics({ canon, continuity }), deduplication },
   }
 }

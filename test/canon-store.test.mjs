@@ -78,6 +78,102 @@ test('canon proposals retain campaign-scoped transcript citations', () => {
   store.close()
 })
 
+test('near-duplicate canon merges pending evidence and suppresses repeated rulings', () => {
+  const { store, owner, first, second } = seededStore()
+  const initial = store.createCanonProposal({
+    campaignId: owner.campaign.id,
+    playerId: owner.player.id,
+    kind: 'promise',
+    title: 'Return before moonrise',
+    claim: 'The party promised to return before moonrise.',
+    visibility: 'gm_only',
+    confidence: 0.84,
+    extractorVersion: 'fixture-v1',
+    sources: [{ messageId: first.id }],
+  })
+  const merged = store.createCanonProposal({
+    campaignId: owner.campaign.id,
+    playerId: owner.player.id,
+    kind: 'promise',
+    title: 'Moonrise return',
+    claim: 'Before moonrise, the party promises they will return.',
+    visibility: 'gm_only',
+    confidence: 0.91,
+    extractorVersion: 'fixture-v2',
+    sources: [{ messageId: second.id }],
+  })
+
+  assert.equal(merged.outcome, 'merged')
+  assert.equal(merged.proposal.id, initial.proposal.id)
+  assert.deepEqual(merged.proposal.sources.map((source) => source.messageId), [first.id, second.id])
+  assert.equal(store.listCanonProposals(owner.campaign.id, { includeGmOnly: true }).length, 1)
+  const existing = store.createCanonProposal({
+    campaignId: owner.campaign.id,
+    playerId: owner.player.id,
+    kind: 'promise',
+    title: 'Moonrise return',
+    claim: 'Before moonrise, the party promises they will return.',
+    visibility: 'gm_only',
+    confidence: 0.91,
+    extractorVersion: 'fixture-v2',
+    sources: [{ messageId: second.id }],
+  })
+  assert.equal(existing.outcome, 'existing')
+
+  store.decideCanonProposal(owner.campaign.id, owner.player.id, initial.proposal.id, { action: 'reject', reason: 'Already resolved.' })
+  const suppressed = store.createCanonProposal({
+    campaignId: owner.campaign.id,
+    playerId: owner.player.id,
+    kind: 'promise',
+    title: 'Return at moonrise',
+    claim: 'The party promises to return before moonrise.',
+    visibility: 'gm_only',
+    confidence: 0.95,
+    extractorVersion: 'fixture-v2',
+    sources: [{ messageId: second.id }],
+  })
+  assert.equal(suppressed.outcome, 'suppressed')
+  assert.equal(suppressed.matchedStatus, 'rejected')
+  assert.deepEqual(store.getCanonProposalMatchMetrics(owner.campaign.id), [{
+    extractorVersion: 'fixture-v2', total: 3, existing: 1, merged: 1, suppressed: 1,
+  }])
+  store.close()
+})
+
+test('changed canon claims remain reviewable instead of being deduplicated', () => {
+  const { store, owner, first, second } = seededStore()
+  const initial = store.createCanonProposal({
+    campaignId: owner.campaign.id, playerId: owner.player.id, kind: 'character', title: 'Ilyra',
+    claim: 'Ilyra keeps the western lighthouse.', visibility: 'gm_only', confidence: 0.8,
+    extractorVersion: 'fixture-v1', sources: [{ messageId: first.id }],
+  }).proposal
+  store.decideCanonProposal(owner.campaign.id, owner.player.id, initial.id, { action: 'accept', visibility: 'gm_only' })
+
+  const represented = store.createCanonProposal({
+    campaignId: owner.campaign.id, playerId: owner.player.id, kind: 'character', title: 'Ilyra',
+    claim: 'Ilyra keeps the western lighthouse.', visibility: 'gm_only', confidence: 0.9,
+    extractorVersion: 'fixture-v2', sources: [{ messageId: second.id }],
+  })
+
+  const ended = store.createCanonProposal({
+    campaignId: owner.campaign.id, playerId: owner.player.id, kind: 'character', title: 'Ilyra',
+    claim: 'Ilyra no longer keeps the western lighthouse.', visibility: 'gm_only', confidence: 0.9,
+    extractorVersion: 'fixture-v2', sources: [{ messageId: second.id }],
+  })
+  const moved = store.createCanonProposal({
+    campaignId: owner.campaign.id, playerId: owner.player.id, kind: 'character', title: 'Ilyra',
+    claim: 'Ilyra keeps the eastern lighthouse.', visibility: 'gm_only', confidence: 0.9,
+    extractorVersion: 'fixture-v2', sources: [{ messageId: second.id }],
+  })
+
+  assert.equal(represented.outcome, 'suppressed')
+  assert.equal(represented.matchedStatus, 'accepted')
+  assert.equal(ended.outcome, 'created')
+  assert.equal(moved.outcome, 'created')
+  assert.equal(store.listCanonProposals(owner.campaign.id, { includeGmOnly: true }).length, 3)
+  store.close()
+})
+
 test('canon review is append-only and acceptance creates a human-authored entry', () => {
   const { store, owner, first } = seededStore()
   const created = store.createCanonProposal({
@@ -231,6 +327,6 @@ test('AI feedback export retains judged model output without human names', () =>
     title: 'Ilyra, lighthouse keeper', claim: 'Ilyra keeps the lighthouse.', visibility: 'campaign',
   })
   assert.equal(JSON.stringify(exported).includes('Mara'), false)
-  assert.deepEqual(store.exportAiFeedback('another-campaign'), { canon: [], continuity: [] })
+  assert.deepEqual(store.exportAiFeedback('another-campaign'), { canon: [], continuity: [], deduplication: [] })
   store.close()
 })

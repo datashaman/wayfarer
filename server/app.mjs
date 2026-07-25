@@ -263,8 +263,12 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 400, { error: 'Every citation must belong to this campaign.' })
           return
         }
+        if (result.outcome === 'sources_required') {
+          sendJson(response, 400, { error: 'Canon proposals require transcript citations.' })
+          return
+        }
         broadcastCanon(requestSession.campaign.id)
-        sendJson(response, 201, { proposal: result.proposal })
+        sendJson(response, result.outcome === 'created' ? 201 : 200, { outcome: result.outcome, proposal: result.proposal })
         return
       }
 

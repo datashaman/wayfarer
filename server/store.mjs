@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { findNearDuplicateCanon } from './canon-similarity.mjs'
 
 const defaultRooms = [
   ['fireside', 'fireside', 'The party table · everyone welcome'],
@@ -272,6 +273,16 @@ export function createStore(databasePath) {
       updated_by_player_id TEXT NOT NULL REFERENCES players(id),
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS canon_proposal_matches (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      matched_proposal_id TEXT NOT NULL REFERENCES canon_proposals(id) ON DELETE CASCADE,
+      extractor_version TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK(outcome IN ('existing', 'merged', 'suppressed')),
+      matched_status TEXT NOT NULL CHECK(matched_status IN ('proposed', 'accepted', 'disputed', 'rejected')),
+      similarity REAL NOT NULL CHECK(similarity >= 0 AND similarity <= 1),
+      created_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS contradiction_reports (
       id TEXT PRIMARY KEY,
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
@@ -536,6 +547,9 @@ export function createStore(databasePath) {
   const insertCanonProposalSource = database.prepare(`
     INSERT INTO canon_proposal_sources (proposal_id, message_id, excerpt) VALUES (?, ?, ?)
   `)
+  const insertCanonProposalSourceIfNew = database.prepare(`
+    INSERT OR IGNORE INTO canon_proposal_sources (proposal_id, message_id, excerpt) VALUES (?, ?, ?)
+  `)
   const canonProposalById = database.prepare(`
     SELECT canon_proposals.*, players.name AS created_by_name
     FROM canon_proposals
@@ -554,6 +568,34 @@ export function createStore(databasePath) {
     FROM canon_proposals
     LEFT JOIN players ON players.id = canon_proposals.created_by_player_id
     WHERE canon_proposals.campaign_id = ? AND canon_proposals.extraction_key = ?
+  `)
+  const canonProposalCandidates = database.prepare(`
+    SELECT canon_proposals.id, canon_proposals.kind,
+           CASE WHEN canon_proposals.status = 'accepted' THEN canon_entries.title ELSE canon_proposals.title END AS title,
+           CASE WHEN canon_proposals.status = 'accepted' THEN canon_entries.claim ELSE canon_proposals.claim END AS claim,
+           canon_proposals.status
+    FROM canon_proposals
+    LEFT JOIN canon_entries ON canon_entries.proposal_id = canon_proposals.id AND canon_entries.status = 'active'
+    WHERE canon_proposals.campaign_id = ?
+      AND canon_proposals.kind = ?
+      AND (canon_proposals.status != 'accepted' OR canon_entries.id IS NOT NULL)
+    ORDER BY canon_proposals.rowid DESC
+  `)
+  const insertCanonProposalMatch = database.prepare(`
+    INSERT INTO canon_proposal_matches (
+      id, campaign_id, matched_proposal_id, extractor_version, outcome, matched_status, similarity, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const canonProposalMatchMetrics = database.prepare(`
+    SELECT extractor_version,
+           COUNT(*) AS total,
+           SUM(outcome = 'existing') AS existing,
+           SUM(outcome = 'merged') AS merged,
+           SUM(outcome = 'suppressed') AS suppressed
+    FROM canon_proposal_matches
+    WHERE (? IS NULL OR campaign_id = ?)
+    GROUP BY extractor_version
+    ORDER BY extractor_version
   `)
   const canonSourcesForProposal = database.prepare(`
     SELECT canon_proposal_sources.message_id, canon_proposal_sources.excerpt,
@@ -994,8 +1036,36 @@ export function createStore(databasePath) {
         visibility,
         sources.map((source) => source.messageId).sort(),
       ])).digest('hex')
-      const existing = canonProposalByExtractionKey.get(campaignId, extractionKey)
-      if (existing) return { outcome: 'existing', proposal: publicCanonProposal(existing, canonSourcesForProposal.all(existing.id)) }
+      const semanticMatch = findNearDuplicateCanon(
+        { kind, title, claim },
+        canonProposalCandidates.all(campaignId, kind),
+      )
+      const exactMatch = semanticMatch ? null : canonProposalByExtractionKey.get(campaignId, extractionKey)
+      const match = semanticMatch ?? (exactMatch ? { item: exactMatch, similarity: 1 } : null)
+      if (match) {
+        const existingSources = canonSourcesForProposal.all(match.item.id)
+        const existingMessageIds = new Set(existingSources.map((source) => source.message_id))
+        const additions = match.item.status === 'proposed'
+          ? resolvedSources.filter((source) => !existingMessageIds.has(source.messageId)).slice(0, Math.max(0, 10 - existingSources.length))
+          : []
+        const outcome = match.item.status !== 'proposed' ? 'suppressed' : additions.length ? 'merged' : 'existing'
+        database.exec('BEGIN IMMEDIATE')
+        try {
+          for (const source of additions) insertCanonProposalSourceIfNew.run(match.item.id, source.messageId, source.excerpt ?? null)
+          insertCanonProposalMatch.run(randomUUID(), campaignId, match.item.id, extractorVersion, outcome, match.item.status, match.similarity, new Date().toISOString())
+          database.exec('COMMIT')
+        } catch (error) {
+          database.exec('ROLLBACK')
+          throw error
+        }
+        const existing = canonProposalById.get(match.item.id, campaignId)
+        return {
+          outcome,
+          matchedStatus: match.item.status,
+          similarity: match.similarity,
+          proposal: publicCanonProposal(existing, canonSourcesForProposal.all(match.item.id)),
+        }
+      }
       const proposalId = randomUUID()
       const createdAt = new Date().toISOString()
       database.exec('BEGIN IMMEDIATE')
@@ -1009,6 +1079,16 @@ export function createStore(databasePath) {
       }
       const row = canonProposalById.get(proposalId, campaignId)
       return { outcome: 'created', proposal: publicCanonProposal(row, canonSourcesForProposal.all(proposalId)) }
+    },
+
+    getCanonProposalMatchMetrics(campaignId = null) {
+      return canonProposalMatchMetrics.all(campaignId, campaignId).map((row) => ({
+        extractorVersion: row.extractor_version,
+        total: row.total,
+        existing: row.existing,
+        merged: row.merged,
+        suppressed: row.suppressed,
+      }))
     },
 
     getCanonProposal(campaignId, proposalId) {
@@ -1116,7 +1196,7 @@ export function createStore(databasePath) {
         },
         feedback: { rating: row.rating, ratedAt: row.rated_at },
       }))
-      return { canon, continuity }
+      return { canon, continuity, deduplication: this.getCanonProposalMatchMetrics(campaignId) }
     },
 
     listCanonEntries(campaignId, { includeGmOnly = false } = {}) {

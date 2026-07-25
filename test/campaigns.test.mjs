@@ -1003,13 +1003,13 @@ test('canon proposals require cited campaign messages and owner review', async (
   })
   assert.equal(memberAttempt.status, 403)
 
-  const createProposal = (visibility, title) => json(`${origin}/api/campaign/canon/proposals`, {
+  const createProposal = (visibility, title, claim = 'The lighthouse keeper is called Ilyra.') => json(`${origin}/api/campaign/canon/proposals`, {
     method: 'POST',
     headers: ownerAuthorization,
     body: JSON.stringify({
       kind: 'character',
       title,
-      claim: 'The lighthouse keeper is called Ilyra.',
+      claim,
       visibility,
       confidence: 0.91,
       extractorVersion: 'fixture-v1',
@@ -1017,9 +1017,10 @@ test('canon proposals require cited campaign messages and owner review', async (
     }),
   })
   const shared = await createProposal('campaign', 'Ilyra')
-  const privateProposal = await createProposal('gm_only', 'Ilyra’s secret')
+  const privateProposal = await createProposal('gm_only', 'Ilyra’s secret', 'Ilyra hides a royal lineage.')
   assert.equal(shared.status, 201)
   assert.equal(privateProposal.status, 201)
+  assert.equal(shared.body.outcome, 'created')
 
   const memberLedger = await json(`${origin}/api/campaign/canon`, { headers: memberAuthorization })
   assert.deepEqual(memberLedger.body.proposals.map((proposal) => proposal.title), ['Ilyra'])

@@ -29,6 +29,7 @@ test('feedback evaluation reports outcomes overall and by generator version', ()
   })
   assert.equal(evaluation.metrics.byGeneratorVersion.canon['canon-v1'].acceptanceRate, 1)
   assert.equal(evaluation.metrics.byGeneratorVersion.continuity['continuity-v2'].incorrectRate, 0.5)
+  assert.deepEqual(evaluation.metrics.deduplication, [])
 })
 
 test('empty feedback produces explicit null rates instead of misleading zeroes', () => {

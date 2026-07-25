@@ -2,7 +2,7 @@ import { Check, Plus, RefreshCw, X } from 'lucide-react'
 import { FormEvent, useEffect, useState } from 'react'
 import { api } from './lib/api'
 import { readinessRequirement } from './lib/readiness'
-import type { CampaignIntelligenceOverview, CampaignSession, CanonEntry, CanonProposalSource, FactionClock, HouseRule, HouseRuleRevision, SpotlightReport, TableSession } from './types/protocol'
+import type { CampaignIntelligenceOverview, CampaignSession, CanonEntry, CanonProposalSource, FactionClock, HouseRule, HouseRuleRevision, SpotlightConsent, SpotlightReport, TableSession } from './types/protocol'
 
 const blankRule = { title: '', sourceRule: '', interpretation: '', ruling: '', reason: '' }
 const blankClock = { name: '', goal: '', progress: 0, segments: 6 }
@@ -13,7 +13,7 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft, onOpen
   const [overview, setOverview] = useState<CampaignIntelligenceOverview | null>(null)
   const [sessions, setSessions] = useState<CampaignSession[]>([])
   const [rules, setRules] = useState<HouseRule[]>([])
-  const [consent, setConsent] = useState(false)
+  const [consent, setConsent] = useState<SpotlightConsent>({ enabled: false, updatedAt: null, history: [], reports: [] })
   const [question, setQuestion] = useState('')
   const [knowledge, setKnowledge] = useState<{ answerId: string; answer: string; generatorVersion: string; citations: CanonEntry[]; feedback?: 'useful' | 'incorrect' | 'incomplete' | 'secret_leak' } | null>(null)
   const [intent, setIntent] = useState('')
@@ -34,12 +34,12 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft, onOpen
     const [{ rules: nextRules }, { sessions: nextSessions }, consentResult] = await Promise.all([
       api<{ rules: HouseRule[] }>('/api/campaign/intelligence/rules', { headers: authorization }),
       api<{ sessions: CampaignSession[] }>('/api/campaign/sessions', { headers: authorization }),
-      api<{ consent: { enabled: boolean } }>('/api/campaign/intelligence/spotlight/consent', { headers: authorization }),
+      api<{ consent: SpotlightConsent }>('/api/campaign/intelligence/spotlight/consent', { headers: authorization }),
     ])
     setRules(nextRules)
     setSessions(nextSessions)
     setSelectedSession((current) => current || nextSessions.find((item) => item.status === 'closed')?.id || '')
-    setConsent(consentResult.consent.enabled)
+    setConsent(consentResult.consent)
     if (isGm) setOverview(await api<CampaignIntelligenceOverview>('/api/campaign/intelligence', { headers: authorization }))
   }
 
@@ -49,14 +49,14 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft, onOpen
     Promise.all([
       api<{ rules: HouseRule[] }>('/api/campaign/intelligence/rules', { headers }),
       api<{ sessions: CampaignSession[] }>('/api/campaign/sessions', { headers }),
-      api<{ consent: { enabled: boolean } }>('/api/campaign/intelligence/spotlight/consent', { headers }),
+      api<{ consent: SpotlightConsent }>('/api/campaign/intelligence/spotlight/consent', { headers }),
       isGm ? api<CampaignIntelligenceOverview>('/api/campaign/intelligence', { headers }) : Promise.resolve(null),
     ]).then(([rulesResult, sessionsResult, consentResult, overviewResult]) => {
       if (!active) return
       setRules(rulesResult.rules)
       setSessions(sessionsResult.sessions)
       setSelectedSession(sessionsResult.sessions.find((item) => item.status === 'closed')?.id || '')
-      setConsent(consentResult.consent.enabled)
+      setConsent(consentResult.consent)
       if (overviewResult) setOverview(overviewResult)
     }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : 'Campaign intelligence could not be opened.') })
     return () => { active = false }
@@ -88,8 +88,8 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft, onOpen
   }
 
   const toggleConsent = () => void run('consent', async () => {
-    const result = await api<{ consent: { enabled: boolean } }>('/api/campaign/intelligence/spotlight/consent', { method: 'PUT', headers: authorization, body: JSON.stringify({ enabled: !consent }) })
-    setConsent(result.consent.enabled)
+    const result = await api<{ consent: SpotlightConsent }>('/api/campaign/intelligence/spotlight/consent', { method: 'PUT', headers: authorization, body: JSON.stringify({ enabled: !consent.enabled }) })
+    setConsent(result.consent)
     if (isGm) await refresh()
   })
 
@@ -190,7 +190,7 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft, onOpen
         {drafts.length > 0 && <ol className="intent-drafts">{drafts.map((item) => <li key={item}><q>{item}</q><button className="folio-small-action" onClick={() => { onUseDraft(item); onClose() }}>Use in composer</button></li>)}</ol>}
       </section>
 
-      <section className="intelligence-section spotlight-consent" aria-labelledby="spotlight-consent-heading"><div><span>Spotlight consent</span><h2 id="spotlight-consent-heading">Include my future text activity</h2><p>Optional reports count messages after you opt in. They do not record audio or infer emotion, intent, or engagement.</p></div><button className={consent ? 'folio-button consent-on' : 'folio-button'} onClick={toggleConsent} disabled={pending === 'consent'}>{consent ? <><Check size={14} />Opted in</> : 'Opt in'}</button></section>
+      <section className="intelligence-section spotlight-consent" aria-labelledby="spotlight-consent-heading"><div><span>Spotlight consent</span><h2 id="spotlight-consent-heading">Include my future text activity</h2><p>Optional reports count messages only while you are opted in. Revoking stops future counts without changing reports already created. Audio, emotion, intent, and engagement are never inferred.</p></div><button className={consent.enabled ? 'folio-button consent-on' : 'folio-button'} onClick={toggleConsent} disabled={pending === 'consent'}>{consent.enabled ? <><Check size={14} />Revoke future counts</> : 'Opt in'}</button>{(consent.history.length > 0 || consent.reports.length > 0) && <div className="consent-ledger"><div><strong>Consent history</strong>{consent.history.map((event) => <span key={`${event.createdAt}-${event.enabled}`}>{event.enabled ? 'Opted in' : 'Revoked'} · {new Date(event.createdAt).toLocaleString()}</span>)}</div><div><strong>Reports that included you</strong>{consent.reports.length ? consent.reports.map((report) => <span key={report.id}>{report.session.title} · {report.messages} of {report.totalMessages} counted messages · {new Date(report.createdAt).toLocaleDateString()}</span>) : <span>No created report has included your text.</span>}</div></div>}</section>
 
       {isGm && overview && <>
         <section className="intelligence-section" aria-labelledby="preparation-heading">

@@ -145,13 +145,12 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
         sendJson(response, 200, { consent: store.setSpotlightConsent(playerId, body.enabled) }); return true
       }
       if (request.method === 'GET' && request.url === '/api/campaign/intelligence/spotlight/consent') {
-        const participant = store.getSpotlightParticipants(campaignId).find((item) => item.id === playerId)
-        sendJson(response, 200, { consent: { enabled: participant?.enabled ?? false } }); return true
+        sendJson(response, 200, { consent: store.getSpotlightConsent(playerId) }); return true
       }
       if (request.method === 'POST' && request.url === '/api/campaign/intelligence/spotlight/report') {
         if (!isGm) { sendJson(response, 403, { error: 'Spotlight reports are private to GMs.' }); return true }
         const body = await readJson(request)
-        const report = typeof body.sessionId === 'string' ? store.createSpotlightReport(campaignId, body.sessionId) : null
+        const report = typeof body.sessionId === 'string' ? store.createSpotlightReport(campaignId, playerId, body.sessionId) : null
         sendJson(response, report ? 200 : 400, report ? { report } : { error: 'Choose a campaign session.' }); return true
       }
       if (request.method === 'GET' && request.url.startsWith('/api/campaign/intelligence/rules/evidence?')) {

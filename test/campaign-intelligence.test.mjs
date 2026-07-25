@@ -71,11 +71,14 @@ test('campaign intelligence records reversible rulings, proposals, consent, and 
   assert.equal(proposed.proposals[0].sources[0].messageId, firstMessage.id)
   assert.equal(store.decideFactionProposal(owner.campaign.id, owner.player.id, proposalId, 'accept').clocks[0].progress, 3)
 
-  assert.deepEqual(store.createSpotlightReport(owner.campaign.id, session.id).participants.map((item) => item.name), ['Mara'])
+  assert.deepEqual(store.createSpotlightReport(owner.campaign.id, owner.player.id, session.id).participants.map((item) => item.name), ['Mara'])
   store.setSpotlightConsent(guest.player.id, true)
-  assert.deepEqual(store.createSpotlightReport(owner.campaign.id, session.id).participants.map((item) => item.name), ['Mara'])
+  assert.deepEqual(store.createSpotlightReport(owner.campaign.id, owner.player.id, session.id).participants.map((item) => item.name), ['Mara'])
   store.addMessage({ roomId, playerId: guest.player.id, clientMessageId: 'm3', text: 'Theo speaks after opting in.' })
   const later = store.closeCampaignSession(owner.campaign.id, owner.player.id, 'After consent').sessions[0]
-  assert.deepEqual(store.createSpotlightReport(owner.campaign.id, later.id).participants.map((item) => item.name), ['Theo'])
+  assert.deepEqual(store.createSpotlightReport(owner.campaign.id, owner.player.id, later.id).participants.map((item) => item.name), ['Theo'])
+  store.setSpotlightConsent(guest.player.id, false)
+  assert.equal(store.getSpotlightConsent(guest.player.id).history.length, 2)
+  assert.deepEqual(store.listSpotlightReportsForPlayer(guest.player.id).map((report) => report.session.title), ['After consent'])
   store.close()
 })

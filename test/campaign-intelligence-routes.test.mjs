@@ -106,4 +106,13 @@ test('campaign intelligence keeps preparation, memory, rules, factions, spotligh
   await json(`${origin}/api/campaign/intelligence/spotlight/consent`, { method: 'PUT', headers: guestHeaders, body: JSON.stringify({ enabled: true }) })
   const spotlight = await json(`${origin}/api/campaign/intelligence/spotlight/report`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ sessionId: closed.id }) })
   assert.deepEqual(spotlight.body.report.participants.map((participant) => participant.name), [])
+  app.store.addMessage({ roomId, playerId: joined.body.player.id, clientMessageId: 'consented-spotlight-message', text: 'Theo offers a route through the gate.' })
+  const consentSession = app.store.closeCampaignSession(campaignId, created.body.player.id, 'After spotlight consent').sessions[0]
+  await json(`${origin}/api/campaign/intelligence/spotlight/report`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ sessionId: consentSession.id }) })
+  let guestConsent = await json(`${origin}/api/campaign/intelligence/spotlight/consent`, { headers: guestHeaders })
+  assert.deepEqual(guestConsent.body.consent.reports.map((report) => report.session.title), ['After spotlight consent'])
+  await json(`${origin}/api/campaign/intelligence/spotlight/consent`, { method: 'PUT', headers: guestHeaders, body: JSON.stringify({ enabled: false }) })
+  guestConsent = await json(`${origin}/api/campaign/intelligence/spotlight/consent`, { headers: guestHeaders })
+  assert.deepEqual(guestConsent.body.consent.history.map((event) => event.enabled), [false, true])
+  assert.equal(guestConsent.body.consent.reports.length, 1)
 })

@@ -416,10 +416,19 @@ export type CampaignIntelligenceOverview = {
 }
 
 export type SpotlightReport = {
-  session: CampaignSession
+  id: Id
+  session: Pick<CampaignSession, 'id' | 'title' | 'status' | 'startSequence' | 'endSequence'>
   basis: 'opted_in_text_messages'
   participants: Array<{ id: Id; name: string; messages: number; share: number }>
   totalMessages: number
+  createdAt: string
+}
+
+export type SpotlightConsent = {
+  enabled: boolean
+  updatedAt: string | null
+  history: Array<{ enabled: boolean; effectiveSequence: number; createdAt: string }>
+  reports: Array<{ id: Id; session: { id: Id; title: string }; messages: number; share: number; totalMessages: number; createdAt: string }>
 }
 
 export type ClientVoiceSignal = Envelope<

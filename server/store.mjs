@@ -640,6 +640,32 @@ export function createStore(databasePath) {
       start_sequence INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS spotlight_consent_events (
+      id TEXT PRIMARY KEY,
+      player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+      effective_sequence INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS spotlight_reports (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES campaign_sessions(id) ON DELETE RESTRICT,
+      session_title TEXT NOT NULL,
+      session_start_sequence INTEGER NOT NULL,
+      session_end_sequence INTEGER NOT NULL,
+      total_messages INTEGER NOT NULL,
+      created_by_player_id TEXT NOT NULL REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      UNIQUE(campaign_id, session_id)
+    );
+    CREATE TABLE IF NOT EXISTS spotlight_report_participants (
+      report_id TEXT NOT NULL REFERENCES spotlight_reports(id) ON DELETE CASCADE,
+      player_id TEXT NOT NULL REFERENCES players(id) ON DELETE RESTRICT,
+      message_count INTEGER NOT NULL,
+      share REAL NOT NULL,
+      PRIMARY KEY (report_id, player_id)
+    );
   `)
 
   const playerColumns = database.prepare('PRAGMA table_info(players)').all()
@@ -1306,10 +1332,35 @@ export function createStore(databasePath) {
   const advanceFactionClock = database.prepare(`UPDATE faction_clocks SET progress = ?, revision = revision + 1, updated_at = ? WHERE id = ?`)
   const latestMessageSequence = database.prepare('SELECT COALESCE(MAX(rowid), 0) AS sequence FROM messages')
   const upsertSpotlightConsent = database.prepare(`INSERT INTO spotlight_consents (player_id, enabled, start_sequence, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(player_id) DO UPDATE SET enabled = excluded.enabled, start_sequence = excluded.start_sequence, updated_at = excluded.updated_at`)
+  const insertSpotlightConsentEvent = database.prepare('INSERT INTO spotlight_consent_events (id, player_id, enabled, effective_sequence, created_at) VALUES (?, ?, ?, ?, ?)')
   const spotlightConsentForPlayer = database.prepare('SELECT enabled, updated_at FROM spotlight_consents WHERE player_id = ?')
+  const spotlightConsentHistory = database.prepare('SELECT enabled, effective_sequence, created_at FROM spotlight_consent_events WHERE player_id = ? ORDER BY rowid DESC')
   const spotlightParticipants = database.prepare(`SELECT players.id, players.name, COALESCE(spotlight_consents.enabled, 0) AS enabled FROM players LEFT JOIN spotlight_consents ON spotlight_consents.player_id = players.id WHERE players.campaign_id = ? AND players.removed_at IS NULL ORDER BY players.rowid`)
-  const spotlightMessageCounts = database.prepare(`SELECT players.id, players.name, COUNT(messages.id) AS message_count FROM players JOIN messages ON messages.player_id = players.id JOIN spotlight_consents ON spotlight_consents.player_id = players.id WHERE players.campaign_id = ? AND players.removed_at IS NULL AND spotlight_consents.enabled = 1 AND messages.rowid > spotlight_consents.start_sequence AND messages.rowid BETWEEN ? AND ? GROUP BY players.id ORDER BY players.rowid`)
+  const spotlightMessageCounts = database.prepare(`
+    SELECT players.id, players.name, COUNT(messages.id) AS message_count
+    FROM players JOIN messages ON messages.player_id = players.id
+    WHERE players.campaign_id = ? AND players.removed_at IS NULL AND messages.rowid BETWEEN ? AND ?
+      AND 1 = (SELECT enabled FROM spotlight_consent_events WHERE player_id = players.id AND effective_sequence < messages.rowid ORDER BY rowid DESC LIMIT 1)
+    GROUP BY players.id ORDER BY players.rowid
+  `)
+  const insertSpotlightReport = database.prepare('INSERT OR IGNORE INTO spotlight_reports (id, campaign_id, session_id, session_title, session_start_sequence, session_end_sequence, total_messages, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+  const spotlightReportForSession = database.prepare('SELECT * FROM spotlight_reports WHERE campaign_id = ? AND session_id = ?')
+  const insertSpotlightReportParticipant = database.prepare('INSERT INTO spotlight_report_participants (report_id, player_id, message_count, share) VALUES (?, ?, ?, ?)')
+  const spotlightReportParticipants = database.prepare(`SELECT spotlight_report_participants.*, players.name FROM spotlight_report_participants JOIN players ON players.id = spotlight_report_participants.player_id WHERE report_id = ? ORDER BY players.rowid`)
+  const spotlightReportsForPlayer = database.prepare(`SELECT spotlight_reports.* FROM spotlight_reports JOIN spotlight_report_participants ON spotlight_report_participants.report_id = spotlight_reports.id WHERE spotlight_report_participants.player_id = ? ORDER BY spotlight_reports.rowid DESC`)
   const recentPlayerMessages = database.prepare(`SELECT messages.text, messages.sent_at FROM messages JOIN rooms ON rooms.id = messages.room_id WHERE rooms.campaign_id = ? AND messages.player_id = ? ORDER BY messages.rowid DESC LIMIT ?`)
+
+  function publicSpotlightReport(row) {
+    const participants = spotlightReportParticipants.all(row.id).map((participant) => ({
+      id: participant.player_id, name: participant.name, messages: participant.message_count, share: participant.share,
+    }))
+    return {
+      id: row.id,
+      session: { id: row.session_id, title: row.session_title, status: 'closed', startSequence: row.session_start_sequence, endSequence: row.session_end_sequence },
+      basis: 'opted_in_text_messages', participants, totalMessages: row.total_messages,
+      createdAt: row.created_at,
+    }
+  }
 
   function createPlayer(campaignId, name, role = 'member') {
     const token = randomBytes(32).toString('base64url')
@@ -2371,29 +2422,62 @@ export function createStore(databasePath) {
     },
 
     setSpotlightConsent(playerId, enabled) {
-      upsertSpotlightConsent.run(playerId, enabled ? 1 : 0, latestMessageSequence.get().sequence, new Date().toISOString())
+      const current = spotlightConsentForPlayer.get(playerId)
+      if (current && (current.enabled === 1) === enabled) return this.getSpotlightConsent(playerId)
+      const sequence = latestMessageSequence.get().sequence
+      const now = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        upsertSpotlightConsent.run(playerId, enabled ? 1 : 0, sequence, now)
+        insertSpotlightConsentEvent.run(randomUUID(), playerId, enabled ? 1 : 0, sequence, now)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return this.getSpotlightConsent(playerId)
+    },
+
+    getSpotlightConsent(playerId) {
       const row = spotlightConsentForPlayer.get(playerId)
-      return { enabled: row.enabled === 1, updatedAt: row.updated_at }
+      return {
+        enabled: row?.enabled === 1,
+        updatedAt: row?.updated_at ?? null,
+        history: spotlightConsentHistory.all(playerId).map((event) => ({ enabled: event.enabled === 1, effectiveSequence: event.effective_sequence, createdAt: event.created_at })),
+        reports: this.listSpotlightReportsForPlayer(playerId),
+      }
     },
 
     getSpotlightParticipants(campaignId) {
       return spotlightParticipants.all(campaignId).map((row) => ({ id: row.id, name: row.name, enabled: row.enabled === 1 }))
     },
 
-    createSpotlightReport(campaignId, sessionId) {
+    createSpotlightReport(campaignId, playerId, sessionId) {
       const context = this.getCampaignSessionMessages(campaignId, sessionId, 5_000)
       if (!context || context.truncated) return null
+      const existing = spotlightReportForSession.get(campaignId, sessionId)
+      if (existing) return publicSpotlightReport(existing)
       const participants = spotlightMessageCounts.all(campaignId, context.session.startSequence, context.session.endSequence)
       const totalMessages = participants.reduce((sum, participant) => sum + participant.message_count, 0)
-      return {
-        session: context.session,
-        basis: 'opted_in_text_messages',
-        participants: participants.map((participant) => ({
-          id: participant.id, name: participant.name, messages: participant.message_count,
-          share: totalMessages ? Number((participant.message_count / totalMessages).toFixed(4)) : 0,
-        })),
-        totalMessages,
+      const id = randomUUID()
+      const now = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        insertSpotlightReport.run(id, campaignId, sessionId, context.session.title, context.session.startSequence, context.session.endSequence, totalMessages, playerId, now)
+        for (const participant of participants) insertSpotlightReportParticipant.run(id, participant.id, participant.message_count, totalMessages ? Number((participant.message_count / totalMessages).toFixed(4)) : 0)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
       }
+      return publicSpotlightReport(spotlightReportForSession.get(campaignId, sessionId))
+    },
+
+    listSpotlightReportsForPlayer(playerId) {
+      return spotlightReportsForPlayer.all(playerId).map((row) => {
+        const participant = spotlightReportParticipants.all(row.id).find((item) => item.player_id === playerId)
+        return { id: row.id, session: { id: row.session_id, title: row.session_title }, messages: participant.message_count, share: participant.share, totalMessages: row.total_messages, createdAt: row.created_at }
+      })
     },
 
     listPlayerMessages(campaignId, playerId, limit = 20) {

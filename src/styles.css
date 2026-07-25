@@ -493,6 +493,12 @@ textarea:focus-visible {
   gap: 4px;
 }
 
+.desktop-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .connection-state {
   display: flex;
   align-items: center;
@@ -1248,6 +1254,91 @@ textarea:focus-visible {
 
 .empty-transcript span {
   margin-top: 6px;
+  font-size: 10px;
+}
+
+.table-next-step {
+  display: grid;
+  max-width: 540px;
+  justify-items: center;
+  margin: 56px auto 0;
+  padding: 32px clamp(20px, 5vw, 48px);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-medium);
+  color: var(--parchment-muted);
+  text-align: center;
+}
+
+.table-next-step > svg {
+  margin: 14px 0 12px;
+  color: var(--wax-bright);
+}
+
+.table-next-step > strong {
+  color: var(--parchment);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.table-next-step p {
+  max-width: 430px;
+  margin: 10px 0 20px;
+  color: var(--parchment-dim);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.mobile-tools-drawer {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(360px, 92vw);
+  border-left: 1px solid var(--border-strong);
+  background: var(--soot-925);
+}
+
+.mobile-tool-list {
+  display: grid;
+  padding: 12px;
+}
+
+.mobile-tool-list > button {
+  display: grid;
+  min-height: 56px;
+  grid-template-columns: 28px 1fr;
+  align-items: center;
+  padding: 9px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--parchment-dim);
+  cursor: pointer;
+  text-align: left;
+}
+
+.mobile-tool-list > button:hover {
+  background: var(--soot-875);
+  color: var(--parchment);
+}
+
+.mobile-tool-list > button > span {
+  display: grid;
+  gap: 3px;
+}
+
+.mobile-tool-list strong {
+  color: var(--parchment-soft);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mobile-tool-list small {
+  color: var(--parchment-muted);
   font-size: 10px;
 }
 
@@ -4762,6 +4853,10 @@ textarea:focus-visible {
     display: inline-grid;
   }
 
+  .desktop-tools {
+    display: none;
+  }
+
   .drawer-layer {
     position: fixed;
     z-index: 20;
@@ -4864,6 +4959,15 @@ textarea:focus-visible {
 
   .timeline {
     padding: 18px 15px 24px;
+  }
+
+  .table-next-step {
+    margin-top: 18px;
+    padding: 24px 18px;
+  }
+
+  .table-next-step > strong {
+    font-size: 17px;
   }
 
   .message {

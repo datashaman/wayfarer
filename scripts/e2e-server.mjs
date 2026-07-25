@@ -17,7 +17,8 @@ const campaignIntelligence = {
   version: 'e2e:intelligence-v1',
   async answerKnowledge({ canon }) { return { answer: 'Ilyra is the lighthouse keeper.', citations: [canon[0].id] } },
   async draftIntent() { return ['I raise the lantern and call the party onward.', 'Let the lighthouse guide us.'] },
-  async proposeFaction({ clock }) { return { summary: 'The watchers move toward the old gate.', assumptions: 'The road remains open.', proposedProgress: Math.min(clock.segments, clock.progress + 1) } },
+  async proposeFaction({ clock, messages }) { return { summary: 'The watchers move toward the old gate.', assumptions: 'The road remains open.', proposedProgress: Math.min(clock.segments, clock.progress + 1), citations: [messages[0].id] } },
+  async compileHouseRule({ messages }) { return { title: 'Lantern searches', sourceRule: 'Core perception rule.', interpretation: 'Bright light reveals old marks.', ruling: 'Careful searches gain advantage.', citations: [messages[0].id] } },
 }
 const app = createRoomServer({ databasePath: ':memory:', dev: true, continuityGenerator, recapGenerator, campaignIntelligence })
 await app.listen(Number(process.env.PORT ?? 8792))

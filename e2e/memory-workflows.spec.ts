@@ -73,6 +73,6 @@ test('a GM edits and publishes a recap and resolves continuity inline', async ({
   await expect(intelligence.getByRole('heading', { name: 'Moth Court' })).toBeVisible()
   await intelligence.getByRole('button', { name: 'Propose next motion' }).click()
   await expect(intelligence.getByText('The watchers move toward the old gate.', { exact: true })).toBeVisible()
-  await intelligence.getByRole('button', { name: 'Accept change' }).click()
+  await intelligence.getByRole('button', { name: 'Accept exact change' }).click()
   await expect(intelligence.getByText('1/6', { exact: true })).toBeVisible()
 })

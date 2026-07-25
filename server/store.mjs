@@ -584,6 +584,19 @@ export function createStore(databasePath) {
     WHERE canon_proposals.campaign_id = ?
     ORDER BY canon_decisions.rowid DESC LIMIT ?
   `)
+  const canonFeedbackForExport = database.prepare(`
+    SELECT canon_proposals.id AS proposal_id, canon_proposals.campaign_id,
+           canon_proposals.kind, canon_proposals.title, canon_proposals.claim,
+           canon_proposals.visibility, canon_proposals.confidence,
+           canon_proposals.extractor_version, canon_proposals.created_at,
+           canon_decisions.action, canon_decisions.reason,
+           canon_decisions.accepted_title, canon_decisions.accepted_claim,
+           canon_decisions.accepted_visibility, canon_decisions.created_at AS decided_at
+    FROM canon_decisions
+    JOIN canon_proposals ON canon_proposals.id = canon_decisions.proposal_id
+    WHERE (? IS NULL OR canon_proposals.campaign_id = ?)
+    ORDER BY canon_proposals.campaign_id, canon_decisions.rowid
+  `)
   const insertCanonEntry = database.prepare(`
     INSERT INTO canon_entries (
       id, proposal_id, campaign_id, kind, title, claim, visibility, revision,
@@ -711,6 +724,21 @@ export function createStore(databasePath) {
   `)
   const insertContinuityFeedback = database.prepare(`
     INSERT INTO continuity_feedback (id, thread_id, player_id, rating, created_at) VALUES (?, ?, ?, ?, ?)
+  `)
+  const continuityFeedbackForExport = database.prepare(`
+    SELECT continuity_threads.id AS thread_id, continuity_briefs.campaign_id,
+           continuity_briefs.generator_version, continuity_briefs.created_at,
+           continuity_threads.title, continuity_threads.summary,
+           continuity_threads.why_it_matters, continuity_threads.confidence,
+           continuity_feedback.rating, continuity_feedback.created_at AS rated_at
+    FROM continuity_feedback
+    JOIN continuity_threads ON continuity_threads.id = continuity_feedback.thread_id
+    JOIN continuity_briefs ON continuity_briefs.id = continuity_threads.brief_id
+    WHERE continuity_feedback.rowid = (
+      SELECT MAX(latest.rowid) FROM continuity_feedback AS latest
+      WHERE latest.thread_id = continuity_feedback.thread_id
+    ) AND (? IS NULL OR continuity_briefs.campaign_id = ?)
+    ORDER BY continuity_briefs.campaign_id, continuity_feedback.rowid
   `)
 
   function createPlayer(campaignId, name, role = 'member') {
@@ -1033,6 +1061,62 @@ export function createStore(databasePath) {
         extractorVersion: row.extractor_version,
         decidedAt: row.created_at,
       }))
+    },
+
+    exportAiFeedback(campaignId = null) {
+      const canon = canonFeedbackForExport.all(campaignId, campaignId).map((row) => ({
+        fixtureId: `canon:${row.proposal_id}`,
+        campaignRef: row.campaign_id,
+        generatorVersion: row.extractor_version,
+        generatedAt: row.created_at,
+        proposal: {
+          kind: row.kind,
+          title: row.title,
+          claim: row.claim,
+          visibility: row.visibility,
+          confidence: row.confidence,
+          sources: canonSourcesForProposal.all(row.proposal_id).map((source) => ({
+            messageId: source.message_id,
+            roomId: source.room_id,
+            text: source.text,
+            excerpt: source.excerpt,
+            sentAt: source.sent_at,
+            sequence: source.sequence,
+          })),
+        },
+        decision: {
+          action: row.action,
+          reason: row.reason,
+          accepted: row.accepted_title ? {
+            title: row.accepted_title,
+            claim: row.accepted_claim,
+            visibility: row.accepted_visibility,
+          } : null,
+          decidedAt: row.decided_at,
+        },
+      }))
+      const continuity = continuityFeedbackForExport.all(campaignId, campaignId).map((row) => ({
+        fixtureId: `continuity:${row.thread_id}`,
+        campaignRef: row.campaign_id,
+        generatorVersion: row.generator_version,
+        generatedAt: row.created_at,
+        thread: {
+          title: row.title,
+          summary: row.summary,
+          whyItMatters: row.why_it_matters,
+          confidence: row.confidence,
+          sources: continuitySourcesForThread.all(row.thread_id).map((source) => ({
+            messageId: source.message_id,
+            roomId: source.room_id,
+            text: source.text,
+            excerpt: source.excerpt,
+            sentAt: source.sent_at,
+            sequence: source.sequence,
+          })),
+        },
+        feedback: { rating: row.rating, ratedAt: row.rated_at },
+      }))
+      return { canon, continuity }
     },
 
     listCanonEntries(campaignId, { includeGmOnly = false } = {}) {

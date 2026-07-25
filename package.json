@@ -13,6 +13,7 @@
     "eval:canon": "node --env-file-if-exists=.env.local scripts/eval-canon.mjs",
     "eval:continuity": "node --env-file-if-exists=.env.local scripts/eval-continuity.mjs",
     "eval:contradictions": "node --env-file-if-exists=.env.local scripts/eval-contradictions.mjs",
+    "eval:feedback": "node --env-file-if-exists=.env.local scripts/eval-feedback.mjs",
     "lint": "eslint ."
   },
   "dependencies": {

@@ -191,6 +191,46 @@ test('continuity briefs retain cited threads and append owner feedback', () => {
   assert.equal(created.brief.threads[0].feedback, null)
   const rated = store.recordContinuityFeedback(owner.campaign.id, owner.player.id, created.brief.threads[0].id, 'useful')
   assert.equal(rated.threads[0].feedback.rating, 'useful')
+  store.recordContinuityFeedback(owner.campaign.id, owner.player.id, created.brief.threads[0].id, 'secret_leak')
+  const exported = store.exportAiFeedback(owner.campaign.id)
+  assert.deepEqual(exported.continuity.map((fixture) => ({
+    generatorVersion: fixture.generatorVersion,
+    rating: fixture.feedback.rating,
+    text: fixture.thread.sources[0].text,
+  })), [{ generatorVersion: 'fixture-continuity-v1', rating: 'secret_leak', text: 'We promised to return before moonrise.' }])
   assert.equal(store.recordContinuityFeedback(owner.campaign.id, owner.player.id, 'unknown-thread', 'useful'), null)
+  store.close()
+})
+
+test('AI feedback export retains judged model output without human names', () => {
+  const { store, owner, first } = seededStore()
+  const proposal = store.createCanonProposal({
+    campaignId: owner.campaign.id,
+    playerId: owner.player.id,
+    kind: 'character',
+    title: 'The lighthouse keeper',
+    claim: 'The lighthouse keeper is called Ilyra.',
+    visibility: 'gm_only',
+    confidence: 0.82,
+    extractorVersion: 'fixture-canon-v2',
+    sources: [{ messageId: first.id, excerpt: 'called Ilyra' }],
+  }).proposal
+  store.decideCanonProposal(owner.campaign.id, owner.player.id, proposal.id, {
+    action: 'edit_accept',
+    title: 'Ilyra, lighthouse keeper',
+    claim: 'Ilyra keeps the lighthouse.',
+    visibility: 'campaign',
+    reason: 'Tighter wording.',
+  })
+
+  const exported = store.exportAiFeedback(owner.campaign.id)
+  assert.equal(exported.canon.length, 1)
+  assert.equal(exported.canon[0].generatorVersion, 'fixture-canon-v2')
+  assert.equal(exported.canon[0].proposal.sources[0].text, 'The lighthouse keeper is called Ilyra.')
+  assert.deepEqual(exported.canon[0].decision.accepted, {
+    title: 'Ilyra, lighthouse keeper', claim: 'Ilyra keeps the lighthouse.', visibility: 'campaign',
+  })
+  assert.equal(JSON.stringify(exported).includes('Mara'), false)
+  assert.deepEqual(store.exportAiFeedback('another-campaign'), { canon: [], continuity: [] })
   store.close()
 })

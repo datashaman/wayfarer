@@ -33,6 +33,7 @@ import {
   createEvent,
   type ConnectionState,
   type Campaign,
+  type AiReadiness,
   type CanonLedger,
   type CanonAudience,
   type CanonConstitution,
@@ -509,6 +510,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
   const [sessionTitle, setSessionTitle] = useState('')
   const [sessionRecap, setSessionRecap] = useState<SessionRecap | null>(null)
   const [recapPending, setRecapPending] = useState(false)
+  const [aiReadiness, setAiReadiness] = useState<AiReadiness | null>(null)
   const [error, setError] = useState('')
   const authorization = { authorization: `Bearer ${session.player.token}` }
   const isGm = session.player.knowledgeRole === 'gm'
@@ -518,6 +520,13 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
       .then(({ recap }) => setSessionRecap(recap))
       .catch((reason) => setError(reason instanceof Error ? reason.message : 'The session recap could not be opened.'))
   }, [session.player.token])
+
+  useEffect(() => {
+    if (!isGm) return
+    void api<{ readiness: AiReadiness }>('/api/campaign/ai/readiness', { headers: { authorization: `Bearer ${session.player.token}` } })
+      .then(({ readiness }) => setAiReadiness(readiness))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'AI readiness could not be loaded.'))
+  }, [isGm, ledger, session.player.token])
 
   useEffect(() => {
     if (!isGm) return
@@ -838,6 +847,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
                 </div> : <div className="canon-constitution-summary"><p>{constitution.canonThreshold === 'explicit_only' ? 'Explicit statements, commitments, and rulings can become canon.' : constitution.canonThreshold === 'table_consensus' ? 'Clear table consensus can become canon.' : 'Facts established through play can become canon.'}</p><span>World declarations: {constitution.playerDeclarations === 'require_confirmation' ? 'confirmation required' : 'stand unless challenged'} · OOC: {constitution.oocPolicy === 'exclude' ? 'excluded' : 'corrections only'} · Corrections: {constitution.correctionPolicy === 'latest_explicit' ? 'latest wins' : 'flag conflicts'}</span>{constitution.guidance && <q>{constitution.guidance}</q>}<small>Revision {constitution.revision}{constitution.updatedByName ? ` · ${constitution.updatedByName}` : ''}</small></div>}
               </section>}
               <section className="canon-section" aria-labelledby="session-recap-heading"><div className="canon-section-title"><h3 id="session-recap-heading">Session recap</h3>{isGm && <button className="folio-small-action" onClick={() => void prepareSessionRecap()} disabled={recapPending || !selectedSessionId}>{recapPending ? 'Preparing…' : sessionRecap ? 'Prepare another' : 'Prepare draft'}</button>}</div>{!sessionRecap ? <div className="canon-empty"><BookOpen size={18} /><span>{isGm ? 'No recap draft has been prepared.' : 'No session recap has been published.'}</span></div> : <article className="canon-entry"><div className="canon-card-meta"><span>{sessionRecap.status}</span><span>{sessionRecap.contextSession.title}</span><span>Messages {sessionRecap.contextSession.startSequence}–{sessionRecap.contextSession.endSequence}</span></div><h4>For the table</h4><p>{sessionRecap.publicSummary}</p>{isGm && sessionRecap.gmNotes && <><strong>Private GM notes</strong><p>{sessionRecap.gmNotes}</p></>}<div className="canon-citations">{sessionRecap.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span></button>)}</div>{isGm && sessionRecap.status === 'draft' && <div className="canon-actions"><button className="primary-action" disabled={recapPending} onClick={() => void publishSessionRecap()}>{recapPending ? 'Publishing…' : 'Publish recap to campaign'}</button><span className="continuity-feedback">Drafts are never published automatically.</span></div>}</article>}</section>
+              {isGm && aiReadiness && <section className="canon-section" aria-labelledby="ai-readiness-heading"><div className="canon-section-title"><h3 id="ai-readiness-heading">Automation readiness</h3><span>{aiReadiness.eligible ? 'Eligible' : 'Not ready'}</span></div><p className="canon-coverage">Even when eligible, automation may prepare drafts only. A GM always publishes.</p><ol className="canon-history">{aiReadiness.checks.map((check) => <li key={check.id}><span>{check.passed ? 'Passed' : 'Waiting'}</span><strong>{check.label}</strong><small>Current value: {check.value ?? 'no data'}</small></li>)}</ol></section>}
               {isGm && <section className="canon-section" aria-labelledby="canon-proposals-heading">
                 <div className="canon-section-title"><h3 id="canon-proposals-heading">Awaiting review</h3><div><span>{pendingProposals.length}</span><button className="folio-small-action" onClick={() => void extractCanon()} disabled={extracting || !coverage?.unscannedCount}>{extracting ? 'Reading…' : coverage?.unscannedCount ? 'Find passages' : 'Up to date'}</button></div></div>
                 {coverage && <p className="canon-coverage">{coverage.unscannedCount > 0 ? `${coverage.unscannedCount} new transcript ${coverage.unscannedCount === 1 ? 'message' : 'messages'} ready to scan.` : coverage.latestSequence > 0 ? 'The transcript is scanned through its latest message.' : 'The transcript has no messages to scan yet.'}</p>}

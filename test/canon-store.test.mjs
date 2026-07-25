@@ -450,3 +450,12 @@ test('AI feedback export retains judged model output without human names', () =>
   assert.deepEqual(store.exportAiFeedback('another-campaign'), { canon: [], continuity: [], deduplication: [] })
   store.close()
 })
+
+test('AI evaluation runs are append-only and comparable', () => {
+  const { store, owner } = seededStore()
+  store.recordAiEvaluationRun({ campaignId: owner.campaign.id, suite: 'canon', model: 'test-model', generatorVersion: 'canon-v2', passed: 8, total: 8 })
+  store.recordAiEvaluationRun({ campaignId: owner.campaign.id, suite: 'canon', model: 'test-model', generatorVersion: 'canon-v3', passed: 7, total: 8, notes: 'One correction regression.' })
+  const runs = store.listAiEvaluationRuns(owner.campaign.id)
+  assert.deepEqual(runs.map((run) => [run.generatorVersion, run.passed, run.total]), [['canon-v3', 7, 8], ['canon-v2', 8, 8]])
+  store.close()
+})

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createFeedbackEvaluationExport, feedbackEvaluationSchemaVersion } from '../server/feedback-evaluation.mjs'
+import { calculateAutomationReadiness, createFeedbackEvaluationExport, feedbackEvaluationSchemaVersion } from '../server/feedback-evaluation.mjs'
 
 test('feedback evaluation reports outcomes overall and by generator version', () => {
   const evaluation = createFeedbackEvaluationExport({
@@ -39,4 +39,16 @@ test('empty feedback produces explicit null rates instead of misleading zeroes',
   assert.equal(evaluation.metrics.canon.acceptanceRate, null)
   assert.equal(evaluation.metrics.continuity.usefulRate, null)
   assert.deepEqual(evaluation.metrics.byGeneratorVersion, { canon: {}, continuity: {} })
+})
+
+test('automation readiness requires strong samples and fails on any secret leak', () => {
+  const ready = calculateAutomationReadiness({
+    canon: Array.from({ length: 20 }, () => ({ decision: { action: 'accept' }, generatorVersion: 'v1' })),
+    continuity: Array.from({ length: 10 }, () => ({ feedback: { rating: 'useful' }, generatorVersion: 'v1' })),
+  })
+  assert.equal(ready.eligible, true)
+  assert.equal(calculateAutomationReadiness({
+    canon: Array.from({ length: 20 }, () => ({ decision: { action: 'accept' }, generatorVersion: 'v1' })),
+    continuity: [...Array.from({ length: 10 }, () => ({ feedback: { rating: 'useful' }, generatorVersion: 'v1' })), { feedback: { rating: 'secret_leak' }, generatorVersion: 'v1' }],
+  }).eligible, false)
 })

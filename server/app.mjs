@@ -6,6 +6,7 @@ import { WebSocket, WebSocketServer } from 'ws'
 import { defaultIceServers } from './config.mjs'
 import { createStore } from './store.mjs'
 import { analyzeSessionInChunks, chunkSessionMessages } from './session-analysis.mjs'
+import { calculateAutomationReadiness } from './feedback-evaluation.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const dist = join(root, 'dist')
@@ -291,6 +292,22 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         }
         const recap = store.getLatestSessionRecap(requestSession.campaign.id, { includeDrafts: hasGmKnowledge, includeGmNotes: hasGmKnowledge })
         sendJson(response, 200, { recap })
+        return
+      }
+
+      if (request.method === 'GET' && request.url === '/api/campaign/ai/readiness') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'AI readiness is private to GMs.' })
+          return
+        }
+        sendJson(response, 200, {
+          readiness: calculateAutomationReadiness(store.exportAiFeedback(requestSession.campaign.id)),
+          evaluationRuns: store.listAiEvaluationRuns(requestSession.campaign.id, 10),
+        })
         return
       }
 

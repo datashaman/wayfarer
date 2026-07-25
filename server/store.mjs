@@ -461,6 +461,17 @@ export function createStore(databasePath) {
       excerpt TEXT,
       PRIMARY KEY (recap_id, message_id)
     );
+    CREATE TABLE IF NOT EXISTS ai_evaluation_runs (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT REFERENCES campaigns(id) ON DELETE CASCADE,
+      suite TEXT NOT NULL,
+      model TEXT NOT NULL,
+      generator_version TEXT NOT NULL,
+      passed INTEGER NOT NULL CHECK(passed >= 0),
+      total INTEGER NOT NULL CHECK(total > 0 AND passed <= total),
+      notes TEXT,
+      created_at TEXT NOT NULL
+    );
   `)
 
   const playerColumns = database.prepare('PRAGMA table_info(players)').all()
@@ -1029,6 +1040,8 @@ export function createStore(databasePath) {
     JOIN rooms ON rooms.id = messages.room_id JOIN players ON players.id = messages.player_id
     WHERE session_recap_sources.recap_id = ? ORDER BY messages.rowid
   `)
+  const insertAiEvaluationRun = database.prepare(`INSERT INTO ai_evaluation_runs (id, campaign_id, suite, model, generator_version, passed, total, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  const aiEvaluationRuns = database.prepare(`SELECT * FROM ai_evaluation_runs WHERE (? IS NULL OR campaign_id = ?) ORDER BY rowid DESC LIMIT ?`)
 
   function createPlayer(campaignId, name, role = 'member') {
     const token = randomBytes(32).toString('base64url')
@@ -1763,6 +1776,20 @@ export function createStore(databasePath) {
       if (current.status === 'published') return { outcome: 'already_published', recap: this.getLatestSessionRecap(campaignId, { includeDrafts: true, includeGmNotes: true }) }
       publishSessionRecap.run(playerId, new Date().toISOString(), recapId, campaignId)
       return { outcome: 'published', recap: this.getLatestSessionRecap(campaignId, { includeDrafts: true, includeGmNotes: true }) }
+    },
+
+    recordAiEvaluationRun({ campaignId = null, suite, model, generatorVersion, passed, total, notes = null }) {
+      const run = { id: randomUUID(), campaignId, suite, model, generatorVersion, passed, total, notes, createdAt: new Date().toISOString() }
+      insertAiEvaluationRun.run(run.id, campaignId, suite, model, generatorVersion, passed, total, notes, run.createdAt)
+      return run
+    },
+
+    listAiEvaluationRuns(campaignId = null, limit = 50) {
+      return aiEvaluationRuns.all(campaignId, campaignId, limit).map((row) => ({
+        id: row.id, campaignId: row.campaign_id, suite: row.suite, model: row.model,
+        generatorVersion: row.generator_version, passed: row.passed, total: row.total,
+        notes: row.notes, createdAt: row.created_at,
+      }))
     },
 
     close() {

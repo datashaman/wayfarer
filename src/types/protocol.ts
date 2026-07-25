@@ -247,6 +247,12 @@ export type SessionRecap = {
   sources: CanonProposalSource[]
 }
 
+export type AiReadiness = {
+  eligible: boolean
+  mode: 'prepare_only'
+  checks: Array<{ id: string; label: string; passed: boolean; value: number | null }>
+}
+
 export type ClientVoiceSignal = Envelope<
   'voice.offer' | 'voice.answer',
   { targetPlayerId: Id; sdp: RTCSessionDescriptionInit }

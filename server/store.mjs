@@ -489,6 +489,86 @@ export function createStore(databasePath) {
       notes TEXT,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS campaign_intelligence_settings (
+      campaign_id TEXT PRIMARY KEY REFERENCES campaigns(id) ON DELETE CASCADE,
+      auto_prepare INTEGER NOT NULL DEFAULT 0 CHECK(auto_prepare IN (0, 1)),
+      prepare_canon INTEGER NOT NULL DEFAULT 1 CHECK(prepare_canon IN (0, 1)),
+      prepare_continuity INTEGER NOT NULL DEFAULT 1 CHECK(prepare_continuity IN (0, 1)),
+      prepare_recap INTEGER NOT NULL DEFAULT 1 CHECK(prepare_recap IN (0, 1)),
+      updated_by_player_id TEXT REFERENCES players(id),
+      updated_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS preparation_runs (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES campaign_sessions(id) ON DELETE CASCADE,
+      status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'complete', 'failed')),
+      tasks TEXT NOT NULL,
+      result TEXT,
+      error TEXT,
+      requested_by_player_id TEXT NOT NULL REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      completed_at TEXT,
+      UNIQUE(campaign_id, session_id)
+    );
+    CREATE TABLE IF NOT EXISTS house_rules (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      source_rule TEXT NOT NULL,
+      interpretation TEXT NOT NULL,
+      ruling TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'retired')),
+      revision INTEGER NOT NULL DEFAULT 0,
+      created_by_player_id TEXT NOT NULL REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS house_rule_revisions (
+      id TEXT PRIMARY KEY,
+      rule_id TEXT NOT NULL REFERENCES house_rules(id) ON DELETE CASCADE,
+      revision INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      source_rule TEXT NOT NULL,
+      interpretation TEXT NOT NULL,
+      ruling TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('active', 'retired')),
+      reason TEXT NOT NULL,
+      player_id TEXT NOT NULL REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      UNIQUE(rule_id, revision)
+    );
+    CREATE TABLE IF NOT EXISTS faction_clocks (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      goal TEXT NOT NULL,
+      progress INTEGER NOT NULL DEFAULT 0,
+      segments INTEGER NOT NULL DEFAULT 6 CHECK(segments BETWEEN 2 AND 12),
+      revision INTEGER NOT NULL DEFAULT 0,
+      created_by_player_id TEXT NOT NULL REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS faction_clock_proposals (
+      id TEXT PRIMARY KEY,
+      clock_id TEXT NOT NULL REFERENCES faction_clocks(id) ON DELETE CASCADE,
+      summary TEXT NOT NULL,
+      assumptions TEXT NOT NULL,
+      proposed_progress INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'proposed' CHECK(status IN ('proposed', 'accepted', 'rejected')),
+      generator_version TEXT NOT NULL,
+      created_by_player_id TEXT NOT NULL REFERENCES players(id),
+      decided_by_player_id TEXT REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      decided_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS spotlight_consents (
+      player_id TEXT PRIMARY KEY REFERENCES players(id) ON DELETE CASCADE,
+      enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0, 1)),
+      start_sequence INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
   `)
 
   const playerColumns = database.prepare('PRAGMA table_info(players)').all()
@@ -521,6 +601,8 @@ export function createStore(databasePath) {
   if (!canonDecisionColumns.some((column) => column.name === 'accepted_visibility')) database.exec("ALTER TABLE canon_decisions ADD COLUMN accepted_visibility TEXT CHECK(accepted_visibility IS NULL OR accepted_visibility IN ('campaign', 'gm_only'))")
   const canonEntryColumns = database.prepare('PRAGMA table_info(canon_entries)').all()
   if (!canonEntryColumns.some((column) => column.name === 'retired_reason')) database.exec("ALTER TABLE canon_entries ADD COLUMN retired_reason TEXT CHECK(retired_reason IS NULL OR retired_reason IN ('superseded', 'retracted'))")
+  const spotlightConsentColumns = database.prepare('PRAGMA table_info(spotlight_consents)').all()
+  if (!spotlightConsentColumns.some((column) => column.name === 'start_sequence')) database.exec('ALTER TABLE spotlight_consents ADD COLUMN start_sequence INTEGER NOT NULL DEFAULT 0')
   for (const table of ['continuity_briefs', 'contradiction_reports']) {
     const columns = database.prepare(`PRAGMA table_info(${table})`).all()
     if (!columns.some((column) => column.name === 'session_id')) database.exec(`ALTER TABLE ${table} ADD COLUMN session_id TEXT`)
@@ -550,6 +632,7 @@ export function createStore(databasePath) {
     )
   `)
   database.exec("INSERT OR IGNORE INTO campaign_notes (campaign_id) SELECT id FROM campaigns")
+  database.exec("INSERT OR IGNORE INTO campaign_intelligence_settings (campaign_id) SELECT id FROM campaigns")
   database.exec(`
     INSERT OR IGNORE INTO canon_constitution_revisions (
       campaign_id, revision, canon_threshold, player_declarations, ooc_policy,
@@ -1071,6 +1154,33 @@ export function createStore(databasePath) {
   `)
   const insertAiEvaluationRun = database.prepare(`INSERT INTO ai_evaluation_runs (id, campaign_id, suite, model, generator_version, passed, total, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   const aiEvaluationRuns = database.prepare(`SELECT * FROM ai_evaluation_runs WHERE (? IS NULL OR campaign_id = ?) ORDER BY rowid DESC LIMIT ?`)
+  const intelligenceSettings = database.prepare('SELECT * FROM campaign_intelligence_settings WHERE campaign_id = ?')
+  const insertIntelligenceSettings = database.prepare('INSERT INTO campaign_intelligence_settings (campaign_id) VALUES (?)')
+  const updateIntelligenceSettings = database.prepare(`UPDATE campaign_intelligence_settings SET auto_prepare = ?, prepare_canon = ?, prepare_continuity = ?, prepare_recap = ?, updated_by_player_id = ?, updated_at = ? WHERE campaign_id = ?`)
+  const insertPreparationRun = database.prepare(`INSERT OR IGNORE INTO preparation_runs (id, campaign_id, session_id, status, tasks, requested_by_player_id, created_at) VALUES (?, ?, ?, 'queued', ?, ?, ?)`)
+  const preparationRunForSession = database.prepare('SELECT * FROM preparation_runs WHERE campaign_id = ? AND session_id = ?')
+  const preparationRuns = database.prepare('SELECT * FROM preparation_runs WHERE campaign_id = ? ORDER BY rowid DESC LIMIT ?')
+  const updatePreparationRun = database.prepare(`UPDATE preparation_runs SET status = ?, result = ?, error = ?, completed_at = ? WHERE id = ? AND campaign_id = ?`)
+  const insertHouseRule = database.prepare(`INSERT INTO house_rules (id, campaign_id, title, source_rule, interpretation, ruling, created_by_player_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  const insertHouseRuleRevision = database.prepare(`INSERT INTO house_rule_revisions (id, rule_id, revision, title, source_rule, interpretation, ruling, status, reason, player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  const houseRules = database.prepare('SELECT * FROM house_rules WHERE campaign_id = ? ORDER BY status, title COLLATE NOCASE')
+  const houseRuleForCampaign = database.prepare('SELECT * FROM house_rules WHERE id = ? AND campaign_id = ?')
+  const houseRuleRevisions = database.prepare(`SELECT house_rule_revisions.*, players.name AS player_name FROM house_rule_revisions JOIN players ON players.id = house_rule_revisions.player_id WHERE rule_id = ? ORDER BY revision DESC`)
+  const updateHouseRule = database.prepare(`UPDATE house_rules SET title = ?, source_rule = ?, interpretation = ?, ruling = ?, status = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND campaign_id = ? AND revision = ?`)
+  const insertFactionClock = database.prepare(`INSERT INTO faction_clocks (id, campaign_id, name, goal, progress, segments, created_by_player_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  const factionClocks = database.prepare('SELECT * FROM faction_clocks WHERE campaign_id = ? ORDER BY name COLLATE NOCASE')
+  const factionClockForCampaign = database.prepare('SELECT * FROM faction_clocks WHERE id = ? AND campaign_id = ?')
+  const insertFactionProposal = database.prepare(`INSERT INTO faction_clock_proposals (id, clock_id, summary, assumptions, proposed_progress, generator_version, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+  const factionProposals = database.prepare(`SELECT faction_clock_proposals.* FROM faction_clock_proposals JOIN faction_clocks ON faction_clocks.id = faction_clock_proposals.clock_id WHERE faction_clocks.campaign_id = ? ORDER BY faction_clock_proposals.rowid DESC`)
+  const factionProposalForCampaign = database.prepare(`SELECT faction_clock_proposals.*, faction_clocks.progress, faction_clocks.segments FROM faction_clock_proposals JOIN faction_clocks ON faction_clocks.id = faction_clock_proposals.clock_id WHERE faction_clock_proposals.id = ? AND faction_clocks.campaign_id = ?`)
+  const decideFactionProposal = database.prepare(`UPDATE faction_clock_proposals SET status = ?, decided_by_player_id = ?, decided_at = ? WHERE id = ? AND status = 'proposed'`)
+  const advanceFactionClock = database.prepare(`UPDATE faction_clocks SET progress = ?, revision = revision + 1, updated_at = ? WHERE id = ?`)
+  const latestMessageSequence = database.prepare('SELECT COALESCE(MAX(rowid), 0) AS sequence FROM messages')
+  const upsertSpotlightConsent = database.prepare(`INSERT INTO spotlight_consents (player_id, enabled, start_sequence, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(player_id) DO UPDATE SET enabled = excluded.enabled, start_sequence = excluded.start_sequence, updated_at = excluded.updated_at`)
+  const spotlightConsentForPlayer = database.prepare('SELECT enabled, updated_at FROM spotlight_consents WHERE player_id = ?')
+  const spotlightParticipants = database.prepare(`SELECT players.id, players.name, COALESCE(spotlight_consents.enabled, 0) AS enabled FROM players LEFT JOIN spotlight_consents ON spotlight_consents.player_id = players.id WHERE players.campaign_id = ? AND players.removed_at IS NULL ORDER BY players.rowid`)
+  const spotlightMessageCounts = database.prepare(`SELECT players.id, players.name, COUNT(messages.id) AS message_count FROM players JOIN messages ON messages.player_id = players.id JOIN spotlight_consents ON spotlight_consents.player_id = players.id WHERE players.campaign_id = ? AND players.removed_at IS NULL AND spotlight_consents.enabled = 1 AND messages.rowid > spotlight_consents.start_sequence AND messages.rowid BETWEEN ? AND ? GROUP BY players.id ORDER BY players.rowid`)
+  const recentPlayerMessages = database.prepare(`SELECT messages.text, messages.sent_at FROM messages JOIN rooms ON rooms.id = messages.room_id WHERE rooms.campaign_id = ? AND messages.player_id = ? ORDER BY messages.rowid DESC LIMIT ?`)
 
   function createPlayer(campaignId, name, role = 'member') {
     const token = randomBytes(32).toString('base64url')
@@ -1096,6 +1206,7 @@ export function createStore(databasePath) {
         const { recoveryCode, ...player } = createPlayer(campaign.id, playerName, 'owner')
         insertCampaignNote.run(campaign.id)
         insertDefaultCanonConstitution.run(campaign.id, player.id, new Date().toISOString())
+        insertIntelligenceSettings.run(campaign.id)
         database.exec('COMMIT')
         return { campaign: publicCampaign(campaignById.get(campaign.id), roomsByCampaign.all(campaign.id)), player, recoveryCode }
       } catch (error) {
@@ -1863,6 +1974,167 @@ export function createStore(databasePath) {
         generatorVersion: row.generator_version, passed: row.passed, total: row.total,
         notes: row.notes, createdAt: row.created_at,
       }))
+    },
+
+    getIntelligenceSettings(campaignId) {
+      const row = intelligenceSettings.get(campaignId)
+      return row ? {
+        autoPrepare: row.auto_prepare === 1,
+        tasks: { canon: row.prepare_canon === 1, continuity: row.prepare_continuity === 1, recap: row.prepare_recap === 1 },
+        updatedAt: row.updated_at,
+      } : null
+    },
+
+    updateIntelligenceSettings(campaignId, playerId, { autoPrepare, tasks }) {
+      updateIntelligenceSettings.run(autoPrepare ? 1 : 0, tasks.canon ? 1 : 0, tasks.continuity ? 1 : 0, tasks.recap ? 1 : 0, playerId, new Date().toISOString(), campaignId)
+      return this.getIntelligenceSettings(campaignId)
+    },
+
+    queuePreparationRun(campaignId, sessionId, playerId, tasks) {
+      const id = randomUUID()
+      insertPreparationRun.run(id, campaignId, sessionId, JSON.stringify(tasks), playerId, new Date().toISOString())
+      const row = preparationRunForSession.get(campaignId, sessionId)
+      return {
+        id: row.id, campaignId: row.campaign_id, sessionId: row.session_id, status: row.status,
+        tasks: JSON.parse(row.tasks), result: row.result ? JSON.parse(row.result) : null,
+        error: row.error, createdAt: row.created_at, completedAt: row.completed_at,
+      }
+    },
+
+    finishPreparationRun(campaignId, runId, { status, result = null, error = null }) {
+      updatePreparationRun.run(status, result ? JSON.stringify(result) : null, error, status === 'complete' || status === 'failed' ? new Date().toISOString() : null, runId, campaignId)
+      return this.listPreparationRuns(campaignId).find((run) => run.id === runId) ?? null
+    },
+
+    listPreparationRuns(campaignId, limit = 20) {
+      return preparationRuns.all(campaignId, limit).map((row) => ({
+        id: row.id, campaignId: row.campaign_id, sessionId: row.session_id, status: row.status,
+        tasks: JSON.parse(row.tasks), result: row.result ? JSON.parse(row.result) : null,
+        error: row.error, createdAt: row.created_at, completedAt: row.completed_at,
+      }))
+    },
+
+    listHouseRules(campaignId) {
+      return houseRules.all(campaignId).map((row) => ({
+        id: row.id, title: row.title, sourceRule: row.source_rule, interpretation: row.interpretation,
+        ruling: row.ruling, status: row.status, revision: row.revision,
+        createdAt: row.created_at, updatedAt: row.updated_at,
+      }))
+    },
+
+    createHouseRule(campaignId, playerId, { title, sourceRule, interpretation, ruling, reason }) {
+      const id = randomUUID()
+      const now = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        insertHouseRule.run(id, campaignId, title, sourceRule, interpretation, ruling, playerId, now, now)
+        insertHouseRuleRevision.run(randomUUID(), id, 0, title, sourceRule, interpretation, ruling, 'active', reason, playerId, now)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return this.listHouseRules(campaignId).find((rule) => rule.id === id)
+    },
+
+    reviseHouseRule(campaignId, playerId, ruleId, { title, sourceRule, interpretation, ruling, status, reason, expectedRevision }) {
+      const current = houseRuleForCampaign.get(ruleId, campaignId)
+      if (!current) return { outcome: 'not_found' }
+      if (current.revision !== expectedRevision) return { outcome: 'conflict', rule: this.listHouseRules(campaignId).find((rule) => rule.id === ruleId) }
+      const now = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        if (updateHouseRule.run(title, sourceRule, interpretation, ruling, status, now, ruleId, campaignId, expectedRevision).changes !== 1) throw new Error('house_rule_conflict')
+        insertHouseRuleRevision.run(randomUUID(), ruleId, expectedRevision + 1, title, sourceRule, interpretation, ruling, status, reason, playerId, now)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return { outcome: 'revised', rule: this.listHouseRules(campaignId).find((rule) => rule.id === ruleId) }
+    },
+
+    listHouseRuleHistory(campaignId, ruleId) {
+      if (!houseRuleForCampaign.get(ruleId, campaignId)) return null
+      return houseRuleRevisions.all(ruleId).map((row) => ({
+        id: row.id, revision: row.revision, title: row.title, sourceRule: row.source_rule,
+        interpretation: row.interpretation, ruling: row.ruling, status: row.status,
+        reason: row.reason, playerName: row.player_name, createdAt: row.created_at,
+      }))
+    },
+
+    listFactionClocks(campaignId) {
+      const proposals = factionProposals.all(campaignId)
+      return factionClocks.all(campaignId).map((row) => ({
+        id: row.id, name: row.name, goal: row.goal, progress: row.progress, segments: row.segments,
+        revision: row.revision, createdAt: row.created_at, updatedAt: row.updated_at,
+        proposals: proposals.filter((proposal) => proposal.clock_id === row.id).map((proposal) => ({
+          id: proposal.id, summary: proposal.summary, assumptions: proposal.assumptions,
+          proposedProgress: proposal.proposed_progress, status: proposal.status,
+          generatorVersion: proposal.generator_version, createdAt: proposal.created_at, decidedAt: proposal.decided_at,
+        })),
+      }))
+    },
+
+    createFactionClock(campaignId, playerId, { name, goal, progress, segments }) {
+      const id = randomUUID()
+      const now = new Date().toISOString()
+      insertFactionClock.run(id, campaignId, name, goal, progress, segments, playerId, now, now)
+      return this.listFactionClocks(campaignId).find((clock) => clock.id === id)
+    },
+
+    createFactionProposal(campaignId, playerId, clockId, { summary, assumptions, proposedProgress, generatorVersion }) {
+      if (!factionClockForCampaign.get(clockId, campaignId)) return null
+      const id = randomUUID()
+      insertFactionProposal.run(id, clockId, summary, assumptions, proposedProgress, generatorVersion, playerId, new Date().toISOString())
+      return this.listFactionClocks(campaignId).find((clock) => clock.id === clockId)
+    },
+
+    decideFactionProposal(campaignId, playerId, proposalId, action) {
+      const proposal = factionProposalForCampaign.get(proposalId, campaignId)
+      if (!proposal) return { outcome: 'not_found' }
+      if (proposal.status !== 'proposed') return { outcome: 'decided', clocks: this.listFactionClocks(campaignId) }
+      const now = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        decideFactionProposal.run(action === 'accept' ? 'accepted' : 'rejected', playerId, now, proposalId)
+        if (action === 'accept') advanceFactionClock.run(Math.min(proposal.segments, Math.max(0, proposal.proposed_progress)), now, proposal.clock_id)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return { outcome: action === 'accept' ? 'accepted' : 'rejected', clocks: this.listFactionClocks(campaignId) }
+    },
+
+    setSpotlightConsent(playerId, enabled) {
+      upsertSpotlightConsent.run(playerId, enabled ? 1 : 0, latestMessageSequence.get().sequence, new Date().toISOString())
+      const row = spotlightConsentForPlayer.get(playerId)
+      return { enabled: row.enabled === 1, updatedAt: row.updated_at }
+    },
+
+    getSpotlightParticipants(campaignId) {
+      return spotlightParticipants.all(campaignId).map((row) => ({ id: row.id, name: row.name, enabled: row.enabled === 1 }))
+    },
+
+    createSpotlightReport(campaignId, sessionId) {
+      const context = this.getCampaignSessionMessages(campaignId, sessionId, 5_000)
+      if (!context || context.truncated) return null
+      const participants = spotlightMessageCounts.all(campaignId, context.session.startSequence, context.session.endSequence)
+      const totalMessages = participants.reduce((sum, participant) => sum + participant.message_count, 0)
+      return {
+        session: context.session,
+        basis: 'opted_in_text_messages',
+        participants: participants.map((participant) => ({
+          id: participant.id, name: participant.name, messages: participant.message_count,
+          share: totalMessages ? Number((participant.message_count / totalMessages).toFixed(4)) : 0,
+        })),
+        totalMessages,
+      }
+    },
+
+    listPlayerMessages(campaignId, playerId, limit = 20) {
+      return recentPlayerMessages.all(campaignId, playerId, limit).reverse().map((row) => ({ text: row.text, sentAt: row.sent_at }))
     },
 
     close() {

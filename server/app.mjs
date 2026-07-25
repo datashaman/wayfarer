@@ -7,6 +7,7 @@ import { defaultIceServers } from './config.mjs'
 import { createStore } from './store.mjs'
 import { analyzeSessionInChunks, chunkSessionMessages } from './session-analysis.mjs'
 import { createEvaluationDashboard } from './feedback-evaluation.mjs'
+import { createCampaignIntelligenceRoutes } from './campaign-intelligence-routes.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const dist = join(root, 'dist')
@@ -79,8 +80,9 @@ function cleanCanonText(value, maximum) {
   return text && text.length <= maximum ? text : null
 }
 
-export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers, allowedOrigins, trustProxy = false, rateLimits = {}, canonExtractor = null, continuityGenerator = null, contradictionRadar = null, recapGenerator = null } = {}) {
+export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers, allowedOrigins, trustProxy = false, rateLimits = {}, canonExtractor = null, continuityGenerator = null, contradictionRadar = null, recapGenerator = null, campaignIntelligence = null } = {}) {
   const store = createStore(databasePath)
+  const intelligenceRoutes = createCampaignIntelligenceRoutes({ store, intelligence: campaignIntelligence, canonExtractor, continuityGenerator, recapGenerator })
   const clients = new Map()
   const originAllowlist = new Set(allowedOrigins ?? (dev ? developmentOrigins : []))
   const limits = { ...defaultRateLimits, ...rateLimits }
@@ -142,6 +144,8 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
       const token = request.headers.authorization?.replace(/^Bearer\s+/i, '') ?? ''
       const requestSession = token ? store.getSession(token) : null
       const hasGmKnowledge = requestSession?.player.knowledgeRole === 'gm'
+
+      if (await intelligenceRoutes.handle(request, response, requestSession)) return
 
       if (request.method === 'GET' && request.url === '/api/config') {
         sendJson(response, requestSession ? 200 : 401, requestSession ? { iceServers } : { error: 'Session not found.' })
@@ -271,6 +275,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 400, { error: 'The current session has no transcript messages.' })
           return
         }
+        intelligenceRoutes.sessionClosed(requestSession.campaign.id, requestSession.player.id, result.sessions[0].id)
         sendJson(response, 201, { sessions: result.sessions })
         return
       }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { calculateAutomationReadiness, createFeedbackEvaluationExport, feedbackEvaluationSchemaVersion } from '../server/feedback-evaluation.mjs'
+import { calculateAutomationReadiness, createEvaluationDashboard, createFeedbackEvaluationExport, feedbackEvaluationSchemaVersion } from '../server/feedback-evaluation.mjs'
 
 test('feedback evaluation reports outcomes overall and by generator version', () => {
   const evaluation = createFeedbackEvaluationExport({
@@ -51,4 +51,25 @@ test('automation readiness requires strong samples and fails on any secret leak'
     canon: Array.from({ length: 20 }, () => ({ decision: { action: 'accept' }, generatorVersion: 'v1' })),
     continuity: [...Array.from({ length: 10 }, () => ({ feedback: { rating: 'useful' }, generatorVersion: 'v1' })), { feedback: { rating: 'secret_leak' }, generatorVersion: 'v1' }],
   }).eligible, false)
+})
+
+test('the evaluation dashboard compares generator versions and flags run regressions', () => {
+  const dashboard = createEvaluationDashboard({
+    canon: [
+      { generatorVersion: 'canon-v1', decision: { action: 'accept' } },
+      { generatorVersion: 'canon-v2', decision: { action: 'reject' } },
+    ],
+    continuity: [{ generatorVersion: 'continuity-v1', feedback: { rating: 'secret_leak' } }],
+  }, [
+    { id: 'new', suite: 'canon', model: 'test-model', generatorVersion: 'canon-v2', passed: 7, total: 10, createdAt: '2026-07-25T02:00:00Z' },
+    { id: 'old', suite: 'canon', model: 'test-model', generatorVersion: 'canon-v1', passed: 9, total: 10, createdAt: '2026-07-25T01:00:00Z' },
+  ])
+  assert.deepEqual(dashboard.versions.map(({ surface, version, sampleSize }) => ({ surface, version, sampleSize })), [
+    { surface: 'canon', version: 'canon-v1', sampleSize: 1 },
+    { surface: 'canon', version: 'canon-v2', sampleSize: 1 },
+    { surface: 'continuity', version: 'continuity-v1', sampleSize: 1 },
+  ])
+  assert.equal(dashboard.runs[0].delta, -0.2)
+  assert.equal(dashboard.alerts[0].severity, 'critical')
+  assert.match(dashboard.alerts[1].message, /dropped 20 points/)
 })

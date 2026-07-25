@@ -98,3 +98,33 @@ export function calculateAutomationReadiness(feedback) {
   ]
   return { eligible: checks.every((check) => check.passed), mode: 'prepare_only', checks, metrics }
 }
+
+export function createEvaluationDashboard(feedback, evaluationRuns = []) {
+  const readiness = calculateAutomationReadiness(feedback)
+  const versions = [
+    ...Object.entries(readiness.metrics.byGeneratorVersion.canon).map(([version, metrics]) => ({
+      surface: 'canon', version, sampleSize: metrics.total, successRate: metrics.acceptanceRate,
+      errorRate: metrics.rejectionRate, secretLeakRate: null,
+    })),
+    ...Object.entries(readiness.metrics.byGeneratorVersion.continuity).map(([version, metrics]) => ({
+      surface: 'continuity', version, sampleSize: metrics.total, successRate: metrics.usefulRate,
+      errorRate: metrics.incorrectRate, secretLeakRate: metrics.secretLeakRate,
+    })),
+  ].sort((left, right) => left.surface.localeCompare(right.surface) || left.version.localeCompare(right.version))
+
+  const previousBySuiteAndModel = new Map()
+  const runs = [...evaluationRuns].reverse().map((run) => {
+    const key = `${run.suite}\u0000${run.model}`
+    const passRate = ratio(run.passed, run.total)
+    const previous = previousBySuiteAndModel.get(key)
+    const delta = previous == null ? null : Number((passRate - previous).toFixed(4))
+    previousBySuiteAndModel.set(key, passRate)
+    return { ...run, passRate, delta }
+  }).reverse()
+
+  const alerts = []
+  if (readiness.metrics.continuity.secretLeak > 0) alerts.push({ severity: 'critical', message: `${readiness.metrics.continuity.secretLeak} continuity ${readiness.metrics.continuity.secretLeak === 1 ? 'rating reports' : 'ratings report'} a secret leak.` })
+  for (const run of runs) if (run.delta != null && run.delta < 0) alerts.push({ severity: 'warning', message: `${run.suite} dropped ${Math.abs(Math.round(run.delta * 100))} points on ${run.model} in ${run.generatorVersion}.` })
+
+  return { readiness, versions, runs, alerts }
+}

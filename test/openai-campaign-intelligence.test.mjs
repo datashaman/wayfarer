@@ -7,7 +7,7 @@ test('OpenAI campaign intelligence is strict, non-stored, and scoped for each pr
   const outputs = [
     { answer: 'Ilyra keeps the light.', citations: ['canon-1'] },
     { drafts: ['I raise the lantern.'] },
-    { summary: 'The court advances.', assumptions: 'The gate remains open.', proposedProgress: 2 },
+    { summary: 'The court advances.', assumptions: 'The gate remains open.', proposedProgress: 2, citations: ['message-1'] },
     { title: 'Lantern test', sourceRule: 'Core test rule.', interpretation: 'Light reveals marks.', ruling: 'Gain advantage.', citations: ['message-1'] },
   ]
   const client = { responses: { create: async (request) => {
@@ -19,7 +19,7 @@ test('OpenAI campaign intelligence is strict, non-stored, and scoped for each pr
 
   assert.equal((await intelligence.answerKnowledge({ question: 'Who keeps the light?', canon, priorFeedback: [{ question: 'What is hidden?', rating: 'secret_leak', generatorVersion: 'v0' }] })).citations[0], 'canon-1')
   assert.equal((await intelligence.draftIntent({ intent: 'Signal the party.', messages: [{ text: 'The light is ours.' }], canon }))[0], 'I raise the lantern.')
-  assert.equal((await intelligence.proposeFaction({ clock: { name: 'Moth Court', goal: 'Open the gate', progress: 1, segments: 6 }, messages: [], canon })).proposedProgress, 2)
+  assert.equal((await intelligence.proposeFaction({ clock: { name: 'Moth Court', goal: 'Open the gate', progress: 1, segments: 6 }, messages: [{ id: 'message-1', text: 'The western gate remains open.' }], canon })).proposedProgress, 2)
   assert.equal((await intelligence.compileHouseRule({ messages: [{ id: 'message-1', roomName: 'rules-desk', senderName: 'Mara', text: 'We use advantage here.' }] })).citations[0], 'message-1')
 
   assert.equal(requests.length, 4)

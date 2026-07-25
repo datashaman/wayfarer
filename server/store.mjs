@@ -618,13 +618,21 @@ export function createStore(databasePath) {
       clock_id TEXT NOT NULL REFERENCES faction_clocks(id) ON DELETE CASCADE,
       summary TEXT NOT NULL,
       assumptions TEXT NOT NULL,
+      base_progress INTEGER NOT NULL,
       proposed_progress INTEGER NOT NULL,
+      session_id TEXT NOT NULL REFERENCES campaign_sessions(id) ON DELETE RESTRICT,
       status TEXT NOT NULL DEFAULT 'proposed' CHECK(status IN ('proposed', 'accepted', 'rejected')),
       generator_version TEXT NOT NULL,
       created_by_player_id TEXT NOT NULL REFERENCES players(id),
       decided_by_player_id TEXT REFERENCES players(id),
       created_at TEXT NOT NULL,
       decided_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS faction_clock_proposal_sources (
+      proposal_id TEXT NOT NULL REFERENCES faction_clock_proposals(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
+      excerpt TEXT,
+      PRIMARY KEY (proposal_id, message_id)
     );
     CREATE TABLE IF NOT EXISTS spotlight_consents (
       player_id TEXT PRIMARY KEY REFERENCES players(id) ON DELETE CASCADE,
@@ -683,6 +691,9 @@ export function createStore(databasePath) {
   if (!continuityColumns.some((column) => column.name === 'preparation_run_id')) database.exec('ALTER TABLE continuity_briefs ADD COLUMN preparation_run_id TEXT')
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS continuity_briefs_preparation_run ON continuity_briefs(preparation_run_id) WHERE preparation_run_id IS NOT NULL')
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS session_recaps_preparation_run ON session_recaps(preparation_run_id) WHERE preparation_run_id IS NOT NULL')
+  const factionProposalColumns = database.prepare('PRAGMA table_info(faction_clock_proposals)').all()
+  if (!factionProposalColumns.some((column) => column.name === 'base_progress')) database.exec('ALTER TABLE faction_clock_proposals ADD COLUMN base_progress INTEGER NOT NULL DEFAULT 0')
+  if (!factionProposalColumns.some((column) => column.name === 'session_id')) database.exec("ALTER TABLE faction_clock_proposals ADD COLUMN session_id TEXT NOT NULL DEFAULT ''")
   database.exec(`
     INSERT OR IGNORE INTO session_recap_revisions (id, recap_id, revision, public_summary, gm_notes, player_id, created_at)
     SELECT lower(hex(randomblob(16))), id, revision, public_summary, gm_notes, created_by_player_id, created_at FROM session_recaps
@@ -1279,8 +1290,17 @@ export function createStore(databasePath) {
   const insertFactionClock = database.prepare(`INSERT INTO faction_clocks (id, campaign_id, name, goal, progress, segments, created_by_player_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   const factionClocks = database.prepare('SELECT * FROM faction_clocks WHERE campaign_id = ? ORDER BY name COLLATE NOCASE')
   const factionClockForCampaign = database.prepare('SELECT * FROM faction_clocks WHERE id = ? AND campaign_id = ?')
-  const insertFactionProposal = database.prepare(`INSERT INTO faction_clock_proposals (id, clock_id, summary, assumptions, proposed_progress, generator_version, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-  const factionProposals = database.prepare(`SELECT faction_clock_proposals.* FROM faction_clock_proposals JOIN faction_clocks ON faction_clocks.id = faction_clock_proposals.clock_id WHERE faction_clocks.campaign_id = ? ORDER BY faction_clock_proposals.rowid DESC`)
+  const insertFactionProposal = database.prepare(`INSERT INTO faction_clock_proposals (id, clock_id, summary, assumptions, base_progress, proposed_progress, session_id, generator_version, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  const insertFactionProposalSource = database.prepare('INSERT INTO faction_clock_proposal_sources (proposal_id, message_id, excerpt) VALUES (?, ?, ?)')
+  const factionProposalSources = database.prepare(`
+    SELECT faction_clock_proposal_sources.message_id, faction_clock_proposal_sources.excerpt,
+           messages.text, messages.sent_at, messages.rowid AS sequence,
+           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+    FROM faction_clock_proposal_sources JOIN messages ON messages.id = faction_clock_proposal_sources.message_id
+    JOIN rooms ON rooms.id = messages.room_id JOIN players ON players.id = messages.player_id
+    WHERE faction_clock_proposal_sources.proposal_id = ? ORDER BY messages.rowid
+  `)
+  const factionProposals = database.prepare(`SELECT faction_clock_proposals.*, creators.name AS created_by_name, deciders.name AS decided_by_name FROM faction_clock_proposals JOIN faction_clocks ON faction_clocks.id = faction_clock_proposals.clock_id JOIN players AS creators ON creators.id = faction_clock_proposals.created_by_player_id LEFT JOIN players AS deciders ON deciders.id = faction_clock_proposals.decided_by_player_id WHERE faction_clocks.campaign_id = ? ORDER BY faction_clock_proposals.rowid DESC`)
   const factionProposalForCampaign = database.prepare(`SELECT faction_clock_proposals.*, faction_clocks.progress, faction_clocks.segments FROM faction_clock_proposals JOIN faction_clocks ON faction_clocks.id = faction_clock_proposals.clock_id WHERE faction_clock_proposals.id = ? AND faction_clocks.campaign_id = ?`)
   const decideFactionProposal = database.prepare(`UPDATE faction_clock_proposals SET status = ?, decided_by_player_id = ?, decided_at = ? WHERE id = ? AND status = 'proposed'`)
   const advanceFactionClock = database.prepare(`UPDATE faction_clocks SET progress = ?, revision = revision + 1, updated_at = ? WHERE id = ?`)
@@ -2294,8 +2314,15 @@ export function createStore(databasePath) {
         revision: row.revision, createdAt: row.created_at, updatedAt: row.updated_at,
         proposals: proposals.filter((proposal) => proposal.clock_id === row.id).map((proposal) => ({
           id: proposal.id, summary: proposal.summary, assumptions: proposal.assumptions,
-          proposedProgress: proposal.proposed_progress, status: proposal.status,
-          generatorVersion: proposal.generator_version, createdAt: proposal.created_at, decidedAt: proposal.decided_at,
+          baseProgress: proposal.base_progress, proposedProgress: proposal.proposed_progress, sessionId: proposal.session_id,
+          status: proposal.status, generatorVersion: proposal.generator_version,
+          createdByName: proposal.created_by_name, decidedByName: proposal.decided_by_name,
+          createdAt: proposal.created_at, decidedAt: proposal.decided_at,
+          sources: factionProposalSources.all(proposal.id).map((source) => ({
+            messageId: source.message_id, roomId: source.room_id, roomName: source.room_name,
+            senderName: source.sender_name, text: source.text, excerpt: source.excerpt,
+            sentAt: source.sent_at, sequence: source.sequence,
+          })),
         })),
       }))
     },
@@ -2307,10 +2334,21 @@ export function createStore(databasePath) {
       return this.listFactionClocks(campaignId).find((clock) => clock.id === id)
     },
 
-    createFactionProposal(campaignId, playerId, clockId, { summary, assumptions, proposedProgress, generatorVersion }) {
-      if (!factionClockForCampaign.get(clockId, campaignId)) return null
+    createFactionProposal(campaignId, playerId, clockId, { summary, assumptions, proposedProgress, generatorVersion, sessionId, sources }) {
+      const clock = factionClockForCampaign.get(clockId, campaignId)
+      if (!clock || !this.listCampaignSessions(campaignId).some((session) => session.id === sessionId)) return null
+      const resolved = sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) }))
+      if (resolved.some((source) => !source.row)) return null
       const id = randomUUID()
-      insertFactionProposal.run(id, clockId, summary, assumptions, proposedProgress, generatorVersion, playerId, new Date().toISOString())
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        insertFactionProposal.run(id, clockId, summary, assumptions, clock.progress, proposedProgress, sessionId, generatorVersion, playerId, new Date().toISOString())
+        for (const source of resolved) insertFactionProposalSource.run(id, source.messageId, source.excerpt ?? null)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
       return this.listFactionClocks(campaignId).find((clock) => clock.id === clockId)
     },
 
@@ -2318,6 +2356,7 @@ export function createStore(databasePath) {
       const proposal = factionProposalForCampaign.get(proposalId, campaignId)
       if (!proposal) return { outcome: 'not_found' }
       if (proposal.status !== 'proposed') return { outcome: 'decided', clocks: this.listFactionClocks(campaignId) }
+      if (action === 'accept' && proposal.progress !== proposal.base_progress) return { outcome: 'conflict', clocks: this.listFactionClocks(campaignId) }
       const now = new Date().toISOString()
       database.exec('BEGIN IMMEDIATE')
       try {

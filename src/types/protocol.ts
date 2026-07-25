@@ -373,11 +373,16 @@ export type FactionProposal = {
   id: Id
   summary: string
   assumptions: string
+  baseProgress: number
   proposedProgress: number
+  sessionId: Id
   status: 'proposed' | 'accepted' | 'rejected'
   generatorVersion: string
+  createdByName: string
+  decidedByName: string | null
   createdAt: string
   decidedAt: string | null
+  sources: CanonProposalSource[]
 }
 
 export type FactionClock = {

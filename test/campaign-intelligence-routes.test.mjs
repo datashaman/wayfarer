@@ -17,7 +17,7 @@ test('campaign intelligence keeps preparation, memory, rules, factions, spotligh
     version: 'fixture:intelligence-v1',
     async answerKnowledge({ canon, priorFeedback }) { latestKnowledgeFeedback = priorFeedback; return { answer: 'Ilyra keeps the western light.', citations: [canon[0].id] } },
     async draftIntent() { return ['I lift the brass lantern.', 'Let the old light answer us.'] },
-    async proposeFaction({ clock }) { return { summary: 'The Moth Court finds another route.', assumptions: 'The western gate remains open.', proposedProgress: Math.min(clock.segments, clock.progress + 1) } },
+    async proposeFaction({ clock, messages }) { return { summary: 'The Moth Court finds another route.', assumptions: 'The western gate remains open.', proposedProgress: Math.min(clock.segments, clock.progress + 1), citations: [messages[0].id] } },
     async compileHouseRule({ messages }) { return { title: 'Gate test', sourceRule: 'Core test rule.', interpretation: 'The open gate grants leverage.', ruling: 'Gate searches gain advantage.', citations: [messages[0].id] } },
   }
   const canonExtractor = { version: 'fixture:canon-v1', async extract({ messages }) { return [{ kind: 'fact', title: 'Prepared fact', claim: 'The western gate is open.', visibility: 'gm_only', confidence: 0.9, sources: [{ messageId: messages[0].id, excerpt: 'western gate' }] }] } }
@@ -97,8 +97,11 @@ test('campaign intelligence keeps preparation, memory, rules, factions, spotligh
   const faction = await json(`${origin}/api/campaign/intelligence/factions`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ name: 'Moth Court', goal: 'Open the archive', progress: 1, segments: 6 }) })
   const factionProposal = await json(`${origin}/api/campaign/intelligence/factions/${faction.body.clock.id}/proposals`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ sessionId: closed.id }) })
   assert.equal(factionProposal.status, 201)
+  assert.deepEqual({ from: factionProposal.body.clock.proposals[0].baseProgress, to: factionProposal.body.clock.proposals[0].proposedProgress }, { from: 1, to: 2 })
+  assert.equal(factionProposal.body.clock.proposals[0].sources[0].messageId, messages[0].id)
   const decision = await json(`${origin}/api/campaign/intelligence/faction-proposals/${factionProposal.body.clock.proposals[0].id}/decision`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ action: 'accept' }) })
   assert.equal(decision.body.clocks[0].progress, 2)
+  assert.equal(decision.body.clocks[0].proposals[0].status, 'accepted')
 
   await json(`${origin}/api/campaign/intelligence/spotlight/consent`, { method: 'PUT', headers: guestHeaders, body: JSON.stringify({ enabled: true }) })
   const spotlight = await json(`${origin}/api/campaign/intelligence/spotlight/report`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ sessionId: closed.id }) })

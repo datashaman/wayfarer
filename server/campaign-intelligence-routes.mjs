@@ -217,7 +217,8 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
         const context = typeof body.sessionId === 'string' ? store.getCampaignSessionMessages(campaignId, body.sessionId, 5_000) : null
         if (!clock || !context || context.truncated) { sendJson(response, 400, { error: 'Choose a faction clock and campaign session.' }); return true }
         const proposal = await intelligence.proposeFaction({ clock, messages: context.messages, canon: store.listCanonEntries(campaignId, { includeGmOnly: true }) })
-        sendJson(response, 201, { clock: store.createFactionProposal(campaignId, playerId, clock.id, { ...proposal, generatorVersion: intelligence.version }) }); return true
+        const sources = proposal.citations.map((messageId) => ({ messageId }))
+        sendJson(response, 201, { clock: store.createFactionProposal(campaignId, playerId, clock.id, { ...proposal, sources, sessionId: context.session.id, generatorVersion: intelligence.version }) }); return true
       }
       const factionDecision = request.url.match(/^\/api\/campaign\/intelligence\/faction-proposals\/([^/]+)\/decision$/)
       if (request.method === 'POST' && factionDecision) {
@@ -225,7 +226,7 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
         const body = await readJson(request)
         if (!['accept', 'reject'].includes(body.action)) { sendJson(response, 400, { error: 'Faction decision is invalid.' }); return true }
         const result = store.decideFactionProposal(campaignId, playerId, factionDecision[1], body.action)
-        sendJson(response, result.outcome === 'not_found' ? 404 : 200, result.outcome === 'not_found' ? { error: 'Faction proposal not found.' } : result); return true
+        sendJson(response, result.outcome === 'not_found' ? 404 : result.outcome === 'conflict' ? 409 : 200, result.outcome === 'not_found' ? { error: 'Faction proposal not found.' } : result.outcome === 'conflict' ? { error: 'The faction clock changed after this proposal. Generate a fresh motion.', ...result } : result); return true
       }
 
       sendJson(response, 404, { error: 'Campaign intelligence route not found.' })

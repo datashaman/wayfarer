@@ -38,10 +38,12 @@ export function createCampaignIntelligence({ version, generateKnowledgeAnswer, g
       const summary = text(output?.summary, 1_000)
       const assumptions = text(output?.assumptions, 1_000)
       const proposedProgress = output?.proposedProgress
-      if (!summary || !assumptions || !Number.isInteger(proposedProgress) || proposedProgress < 0 || proposedProgress > clock.segments) {
+      const allowed = new Set(messages.map((message) => message.id))
+      const citations = Array.isArray(output?.citations) ? [...new Set(output.citations)] : []
+      if (!summary || !assumptions || !Number.isInteger(proposedProgress) || proposedProgress < 0 || proposedProgress > clock.segments || !citations.length || citations.length > 12 || citations.some((id) => typeof id !== 'string' || !allowed.has(id))) {
         throw new CampaignIntelligenceError('invalid_faction_proposal', 'The faction proposal is outside the clock boundary.')
       }
-      return { summary, assumptions, proposedProgress }
+      return { summary, assumptions, proposedProgress, citations }
     },
     async compileHouseRule({ messages }) {
       const output = await generateHouseRule({ messages })

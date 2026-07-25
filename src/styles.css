@@ -3556,6 +3556,29 @@ textarea:focus-visible {
   background: var(--soot-875);
 }
 
+.faction-proposal--accepted {
+  border-left-color: var(--moss);
+}
+
+.faction-proposal--rejected {
+  border-left-color: var(--parchment-muted);
+  opacity: 0.78;
+}
+
+.faction-diff {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.faction-diff span {
+  color: var(--parchment-muted);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .faction-proposal strong {
   color: var(--parchment-soft);
   font-size: 10px;
@@ -3572,6 +3595,21 @@ textarea:focus-visible {
   display: block;
   margin-bottom: 10px;
   color: var(--parchment-muted);
+  line-height: 1.45;
+}
+
+.faction-evidence {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0;
+  padding-left: 10px;
+  border-left: 1px solid var(--wax);
+}
+
+.faction-evidence q {
+  color: var(--parchment-muted);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 10px;
   line-height: 1.45;
 }
 

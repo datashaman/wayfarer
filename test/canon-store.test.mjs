@@ -28,6 +28,8 @@ test('canon scan coverage advances through transcript messages without skipping 
 
   store.markCanonScanned(owner.campaign.id, owner.player.id, second.sequence)
   assert.equal(store.getCanonCoverage(owner.campaign.id).unscannedCount, 0)
+  store.markCanonScanned(owner.campaign.id, owner.player.id, first.sequence)
+  assert.equal(store.getCanonCoverage(owner.campaign.id).lastScannedSequence, second.sequence)
   store.close()
 })
 

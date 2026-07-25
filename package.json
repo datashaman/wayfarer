@@ -14,6 +14,7 @@
     "eval:continuity": "node --env-file-if-exists=.env.local scripts/eval-continuity.mjs",
     "eval:contradictions": "node --env-file-if-exists=.env.local scripts/eval-contradictions.mjs",
     "eval:recap": "node --env-file-if-exists=.env.local scripts/eval-recap.mjs",
+    "eval:all": "node --env-file-if-exists=.env.local scripts/eval-all.mjs",
     "eval:feedback": "node --env-file-if-exists=.env.local scripts/eval-feedback.mjs",
     "eval:record": "node --env-file-if-exists=.env.local scripts/record-evaluation.mjs",
     "lint": "eslint ."

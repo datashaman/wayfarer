@@ -101,6 +101,20 @@ Treat AI quality as a human-kept campaign ruling trail, never as model-confidenc
 
 Use the established borders-only depth, soot/parchment/wax/moss palette, serif narrative copy, sans structural labels, and 8px spacing system. Verdict strips may sit in two columns when space permits and must stack into a single uninterrupted reading order on narrow screens.
 
+### Campaign intelligence folio
+
+Personal and GM-assisted campaign tools share one right-side folio so the transcript remains dominant. The folio is a continuous ruling trail, not a tabbed AI dashboard: personal recollection, intent drafting, and consent lead; GM preparation, negotiated rules, faction clocks, and opted-in counts follow according to authority.
+
+- Every generated passage is visibly a proposal, answer, or editable phrasing. Human decisions and their consequences carry stronger hierarchy than model state.
+- Knowledge answers end in readable-canon citations. Intent drafts offer a direct `Use in composer` handoff but never send.
+- Consent is a standalone bordered section with plain scope language. An enabled state uses moss; disabled consent must never be implied by silence.
+- Preparation leads with its release-gate status and private-draft boundary before scheduling controls.
+- House rules read as source → interpretation → ruling, with revision and retirement actions kept beside the record.
+- Faction clocks use segmented wax tracks as their signature. Counterfactual proposals sit inset beneath the clock with assumptions and accept/reject actions.
+- Spotlight output is a quiet text-count ledger. Never use competitive charts, rankings, celebratory color, or language that implies participation quality.
+
+At narrow widths the folio fills the viewport, two-column forms stack, and the document reading order remains unchanged. Keep borders-only depth, inset controls, serif narrative records, sans mechanics, and the 8px spacing system.
+
 ### Session transcript
 
 Messages are avatar-and-copy rows, never speech bubbles. Sender, timestamp, delivery state, and literary body text form the hierarchy. System events sit between hairline rules. Keep transcript measure near 760px for readability.

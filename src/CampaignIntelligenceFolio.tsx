@@ -1,4 +1,4 @@
-import { Check, Plus, X } from 'lucide-react'
+import { Check, Plus, RefreshCw, X } from 'lucide-react'
 import { FormEvent, useEffect, useState } from 'react'
 import { api } from './lib/api'
 import type { CampaignIntelligenceOverview, CampaignSession, CanonEntry, FactionClock, HouseRule, HouseRuleRevision, SpotlightReport, TableSession } from './types/protocol'
@@ -93,6 +93,11 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft }: { se
     await refresh()
   })
 
+  const retryPreparation = (runId: string) => void run(`retry-${runId}`, async () => {
+    await api(`/api/campaign/intelligence/preparation/${runId}/retry`, { method: 'POST', headers: authorization })
+    await refresh()
+  })
+
   const saveRule = (event: FormEvent) => {
     event.preventDefault()
     void run('rule', async () => {
@@ -170,7 +175,7 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft }: { se
           <div className={overview.readiness.eligible ? 'eligibility-note eligibility-note--ready' : 'eligibility-note'}><strong>{overview.readiness.eligible ? 'Release gates passed' : 'Still gathering evidence'}</strong><span>{overview.readiness.checks.filter((check) => check.passed).length}/{overview.readiness.checks.length} gates passed · drafts remain private until a GM acts</span></div>
           <div className="preparation-controls"><label><input type="checkbox" checked={overview.settings.autoPrepare} onChange={(event) => setOverview({ ...overview, settings: { ...overview.settings, autoPrepare: event.target.checked } })} disabled={!overview.readiness.eligible} />Prepare after a session closes</label>{(['canon', 'continuity', 'recap'] as const).map((task) => <label key={task}><input type="checkbox" checked={overview.settings.tasks[task]} onChange={(event) => setOverview({ ...overview, settings: { ...overview.settings, tasks: { ...overview.settings.tasks, [task]: event.target.checked } } })} />{task === 'canon' ? 'Canon suggestions' : task === 'continuity' ? 'Continuity brief' : 'Recap draft'}</label>)}<button className="folio-button" onClick={savePreparation} disabled={pending === 'settings'}>Save preparation</button></div>
           <div className="intelligence-inline"><select aria-label="Preparation session" value={selectedSession} onChange={(event) => setSelectedSession(event.target.value)}>{sessions.filter((item) => item.status === 'closed').map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select><button className="folio-button" onClick={prepareSession} disabled={!selectedSession || !overview.readiness.eligible || pending === 'prepare'}>{pending === 'prepare' ? 'Queuing…' : 'Prepare now'}</button></div>
-          {overview.preparationRuns.length > 0 && <ol className="preparation-runs">{overview.preparationRuns.slice(0, 5).map((runItem) => <li key={runItem.id}><span>{sessions.find((item) => item.id === runItem.sessionId)?.title ?? 'Campaign session'}</span><strong>{runItem.status}</strong>{runItem.error && <small>{runItem.error}</small>}</li>)}</ol>}
+          {overview.preparationRuns.length > 0 && <ol className="preparation-runs">{overview.preparationRuns.slice(0, 5).map((runItem) => <li key={runItem.id}><span>{sessions.find((item) => item.id === runItem.sessionId)?.title ?? 'Campaign session'}</span><strong>{runItem.status}</strong><ol>{runItem.tasks.map((task) => <li key={task.name}><span>{task.name === 'canon' ? 'Canon suggestions' : task.name === 'continuity' ? 'Continuity brief' : 'Recap draft'}</span><em className={`preparation-task--${task.status}`}>{task.status}{task.attempts > 1 ? ` · attempt ${task.attempts}` : ''}</em>{task.error && <small>{task.error}</small>}</li>)}</ol>{runItem.tasks.some((task) => task.status === 'failed') && <button className="folio-small-action preparation-retry" onClick={() => retryPreparation(runItem.id)} disabled={pending === `retry-${runItem.id}`}><RefreshCw size={12} className={pending === `retry-${runItem.id}` ? 'spinning' : ''} />{pending === `retry-${runItem.id}` ? 'Retrying…' : 'Retry failed work'}</button>}</li>)}</ol>}
         </section>
 
         <section className="intelligence-section" aria-labelledby="house-rules-heading">

@@ -52,6 +52,7 @@ import {
   type CampaignSession,
   type CampaignRoom,
   type Participant,
+  type PreparationRun,
   type MessagePage,
   type RoomMessage,
   type RuntimeConfig,
@@ -491,7 +492,9 @@ function EvaluationLedger({ dashboard }: { dashboard: AiEvaluationDashboard }) {
   </section>
 }
 
-function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: { session: TableSession; ledger: CanonLedger | null; onLedger: (ledger: CanonLedger) => void; onClose: () => void; onOpenSource: (source: CanonProposalSource) => void }) {
+type CanonLedgerTarget = 'canon' | 'continuity' | 'recap'
+
+function CanonLedgerSheet({ session, ledger, initialTarget, onLedger, onClose, onOpenSource }: { session: TableSession; ledger: CanonLedger | null; initialTarget: CanonLedgerTarget | null; onLedger: (ledger: CanonLedger) => void; onClose: () => void; onOpenSource: (source: CanonProposalSource) => void }) {
   const [pending, setPending] = useState('')
   const [extracting, setExtracting] = useState(false)
   const [editing, setEditing] = useState<CanonProposal | null>(null)
@@ -608,6 +611,13 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [onClose])
+
+  useEffect(() => {
+    if (!initialTarget || !ledger) return
+    const headingId = initialTarget === 'canon' ? 'canon-proposals-heading' : initialTarget === 'continuity' ? 'continuity-heading' : 'session-recap-heading'
+    const frame = requestAnimationFrame(() => document.getElementById(headingId)?.scrollIntoView({ block: 'start' }))
+    return () => cancelAnimationFrame(frame)
+  }, [continuityLoaded, initialTarget, ledger, sessionRecap])
 
   const decide = async (proposal: CanonProposal, action: 'accept' | 'edit_accept' | 'dispute' | 'reject', reason?: 'incorrect' | 'secret_leak' | 'not_useful', visibility?: CanonAudience) => {
     setPending(proposal.id)
@@ -1475,7 +1485,10 @@ function App() {
   const [transcriptSearch, setTranscriptSearch] = useState(false)
   const [sharedNotes, setSharedNotes] = useState(false)
   const [canonLedger, setCanonLedger] = useState(false)
+  const [canonLedgerTarget, setCanonLedgerTarget] = useState<CanonLedgerTarget | null>(null)
   const [campaignIntelligence, setCampaignIntelligence] = useState(false)
+  const [preparationNotice, setPreparationNotice] = useState<PreparationRun | null>(null)
+  const [preparationRetrying, setPreparationRetrying] = useState(false)
   const [campaignCanon, setCampaignCanon] = useState<CanonLedger | null>(null)
   const [targetMessageId, setTargetMessageId] = useState('')
   const [campaignNote, setCampaignNote] = useState<CampaignNote | null>(null)
@@ -1709,6 +1722,10 @@ function App() {
       }
       if (event.type === 'campaign.canon_updated') {
         setCampaignCanon(event.payload)
+        return
+      }
+      if (event.type === 'campaign.preparation_updated') {
+        if (event.payload.run.status === 'complete' || event.payload.run.status === 'failed') setPreparationNotice(event.payload.run)
         return
       }
       if (event.roomId !== activeRoomRef.current) return
@@ -1972,6 +1989,23 @@ function App() {
     if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() }
   }
 
+  const openPreparedArtifact = (target: CanonLedgerTarget) => {
+    setCanonLedgerTarget(target)
+    setCanonLedger(true)
+    setPreparationNotice(null)
+  }
+
+  const retryPreparation = async () => {
+    if (!preparationNotice || !realtimePlayer) return
+    setPreparationRetrying(true)
+    try {
+      const result = await api<{ run: PreparationRun }>(`/api/campaign/intelligence/preparation/${preparationNotice.id}/retry`, { method: 'POST', headers: { authorization: `Bearer ${realtimePlayer.token}` } })
+      setPreparationNotice(result.run)
+    } finally {
+      setPreparationRetrying(false)
+    }
+  }
+
   if (restoringSession) return <main className="entry-gate"><span className="entry-wait">Returning to the table…</span></main>
   if (!session) return <EntryGate inviteCode={inviteCode} recoverySeed={recoverySeed} pendingEntry={pendingSeatEntry} savedSeats={savedSeats} switchingCampaign={switchingCampaign} notice={entryNotice} onEnter={enterTable} onSelectSaved={(seat) => void switchCampaign(seat)} />
   if (!activeRoomData) return null
@@ -2009,6 +2043,15 @@ function App() {
           <button className="icon-button mobile-only" onClick={() => setMobileTable(true)} aria-label="Open voice table"><Users size={19} /></button>
         </div>
       </header>
+
+      {preparationNotice && <aside className={`preparation-notice ${preparationNotice.status === 'failed' ? 'preparation-notice--failed' : ''}`} aria-live="polite">
+        <div><span>Post-session preparation</span><strong>{preparationNotice.status === 'complete' ? 'Drafts are ready for your ruling' : preparationNotice.status === 'failed' ? 'Some preparation needs attention' : 'Retrying failed work…'}</strong></div>
+        <button className="quiet-icon" onClick={() => setPreparationNotice(null)} aria-label="Dismiss preparation notice"><X size={15} /></button>
+        <div className="preparation-notice__actions">
+          {preparationNotice.tasks.filter((task) => task.status === 'complete').map((task) => <button key={task.name} onClick={() => openPreparedArtifact(task.name)}>{task.name === 'canon' ? 'Review canon' : task.name === 'continuity' ? 'Open continuity' : 'Open recap'}</button>)}
+          {preparationNotice.tasks.some((task) => task.status === 'failed') && <button onClick={() => void retryPreparation()} disabled={preparationRetrying}>{preparationRetrying ? 'Retrying…' : 'Retry failed work'}</button>}
+        </div>
+      </aside>}
 
       <CampaignLedger rooms={rooms} activeRoom={activeRoom} unreadRooms={unreadRooms} participants={participants} currentPlayer={currentPlayer} onRoomChange={changeRoom} />
 
@@ -2049,7 +2092,7 @@ function App() {
       {invitationSheet && <InvitationSheet campaign={session.campaign} onClose={() => setInvitationSheet(false)} />}
       {transcriptSearch && <TranscriptSearch session={session} onClose={() => setTranscriptSearch(false)} onOpenRoom={changeRoom} />}
       {sharedNotes && <SharedNotes session={session} note={campaignNote} onNote={setCampaignNote} onClose={() => setSharedNotes(false)} />}
-      {canonLedger && <CanonLedgerSheet session={session} ledger={campaignCanon} onLedger={setCampaignCanon} onClose={() => setCanonLedger(false)} onOpenSource={openCanonSource} />}
+      {canonLedger && <CanonLedgerSheet session={session} ledger={campaignCanon} initialTarget={canonLedgerTarget} onLedger={setCampaignCanon} onClose={() => { setCanonLedger(false); setCanonLedgerTarget(null) }} onOpenSource={openCanonSource} />}
       {campaignIntelligence && <CampaignIntelligenceFolio session={session} onClose={() => setCampaignIntelligence(false)} onUseDraft={setDraft} />}
 
       <div className="voice-dock mobile-only">

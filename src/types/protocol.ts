@@ -442,6 +442,7 @@ export type ServerEvent =
   | Envelope<'campaign.updated', { campaign: Campaign }>
   | Envelope<'campaign.note_updated', { note: CampaignNote }>
   | Envelope<'campaign.canon_updated', CanonLedger>
+  | Envelope<'campaign.preparation_updated', { run: PreparationRun }>
   | Envelope<'room.activity', { senderId: Id }>
   | Envelope<'room.snapshot', { participants: Participant[]; voiceParticipants: Participant[]; messages: RoomMessage[]; hasMore: boolean }>
   | Envelope<'presence.snapshot', { participants: Participant[] }>

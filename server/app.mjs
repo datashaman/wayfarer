@@ -82,7 +82,7 @@ function cleanCanonText(value, maximum) {
 
 export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers, allowedOrigins, trustProxy = false, rateLimits = {}, canonExtractor = null, continuityGenerator = null, contradictionRadar = null, recapGenerator = null, campaignIntelligence = null } = {}) {
   const store = createStore(databasePath)
-  const intelligenceRoutes = createCampaignIntelligenceRoutes({ store, intelligence: campaignIntelligence, canonExtractor, continuityGenerator, recapGenerator })
+  const intelligenceRoutes = createCampaignIntelligenceRoutes({ store, intelligence: campaignIntelligence, canonExtractor, continuityGenerator, recapGenerator, onPreparationUpdated: broadcastPreparation })
   const clients = new Map()
   const originAllowlist = new Set(allowedOrigins ?? (dev ? developmentOrigins : []))
   const limits = { ...defaultRateLimits, ...rateLimits }
@@ -1203,6 +1203,14 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
       if (client.campaign.id !== campaignId) continue
       const includeGmOnly = client.player.knowledgeRole === 'gm'
       send(socket, envelope('campaign.canon_updated', campaignId, canonLedger(campaignId, { includeGmOnly, viewerPlayerId: client.player.id })))
+    }
+  }
+
+  function broadcastPreparation(run) {
+    for (const [socket, client] of clients) {
+      if (client.campaign.id === run.campaignId && client.player.knowledgeRole === 'gm') {
+        send(socket, envelope('campaign.preparation_updated', run.campaignId, { run }))
+      }
     }
   }
 

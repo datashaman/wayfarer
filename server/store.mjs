@@ -84,9 +84,38 @@ function publicMessage(row) {
     clientMessageId: row.client_message_id,
     senderId: row.player_id,
     senderName: row.sender_name,
+    playerName: row.player_name ?? row.sender_name,
+    characterName: row.character_name ?? null,
     text: row.text,
     sentAt: row.sent_at,
     sequence: row.sequence,
+  }
+}
+
+function publicCharacter(row, { includeSecret = false } = {}) {
+  if (!row) return null
+  return {
+    id: row.id,
+    campaignId: row.campaign_id,
+    playerId: row.player_id,
+    playerName: row.player_name,
+    name: row.name,
+    concept: row.concept,
+    appearance: row.appearance,
+    drive: row.drive,
+    capability: row.capability,
+    complication: row.complication,
+    possession: row.possession,
+    belief: row.belief,
+    secret: includeSecret ? row.secret : null,
+    faction: row.faction_id ? { id: row.faction_id, name: row.faction_name, connection: row.faction_connection } : null,
+    location: row.location_id ? { id: row.location_id, name: row.location_name, connection: row.location_connection } : null,
+    npc: row.npc_id ? { id: row.npc_id, name: row.npc_name, connection: row.npc_connection } : null,
+    character: row.connected_character_id ? { id: row.connected_character_id, name: row.connected_character_name, connection: row.character_connection } : null,
+    generatorVersion: row.generator_version,
+    revision: row.revision,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   }
 }
 
@@ -295,6 +324,7 @@ export function createStore(databasePath) {
       player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
       client_message_id TEXT,
       text TEXT NOT NULL,
+      character_name TEXT,
       sent_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS campaign_notes (
@@ -361,6 +391,32 @@ export function createStore(databasePath) {
       title TEXT NOT NULL,
       situation TEXT NOT NULL,
       UNIQUE(campaign_id, position)
+    );
+    CREATE TABLE IF NOT EXISTS characters (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      player_id TEXT NOT NULL UNIQUE REFERENCES players(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      concept TEXT NOT NULL,
+      appearance TEXT NOT NULL,
+      drive TEXT NOT NULL,
+      capability TEXT NOT NULL,
+      complication TEXT NOT NULL,
+      possession TEXT NOT NULL,
+      belief TEXT NOT NULL,
+      secret TEXT NOT NULL,
+      faction_id TEXT REFERENCES campaign_world_factions(id) ON DELETE SET NULL,
+      faction_connection TEXT,
+      location_id TEXT REFERENCES campaign_world_locations(id) ON DELETE SET NULL,
+      location_connection TEXT,
+      npc_id TEXT REFERENCES campaign_world_npcs(id) ON DELETE SET NULL,
+      npc_connection TEXT,
+      connected_character_id TEXT REFERENCES characters(id) ON DELETE SET NULL,
+      character_connection TEXT,
+      generator_version TEXT,
+      revision INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS campaign_sessions (
       id TEXT PRIMARY KEY,
@@ -804,6 +860,8 @@ export function createStore(databasePath) {
     database.exec("ALTER TABLE players ADD COLUMN knowledge_role TEXT NOT NULL DEFAULT 'player' CHECK(knowledge_role IN ('gm', 'player'))")
     database.exec("UPDATE players SET knowledge_role = 'gm' WHERE role = 'owner'")
   }
+  const messageColumns = database.prepare('PRAGMA table_info(messages)').all()
+  if (!messageColumns.some((column) => column.name === 'character_name')) database.exec('ALTER TABLE messages ADD COLUMN character_name TEXT')
   const roomColumns = database.prepare('PRAGMA table_info(rooms)').all()
   if (!roomColumns.some((column) => column.name === 'position')) {
     database.exec('ALTER TABLE rooms ADD COLUMN position INTEGER NOT NULL DEFAULT 0')
@@ -916,11 +974,13 @@ export function createStore(databasePath) {
   const updateRoomPosition = database.prepare('UPDATE rooms SET position = ? WHERE id = ? AND campaign_id = ?')
   const archiveRoom = database.prepare('UPDATE rooms SET archived_at = ? WHERE id = ? AND campaign_id = ?')
   const insertMessage = database.prepare(`
-    INSERT OR IGNORE INTO messages (id, room_id, player_id, client_message_id, text, sent_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO messages (id, room_id, player_id, client_message_id, text, character_name, sent_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `)
   const messageByClientId = database.prepare(`
-    SELECT messages.id, messages.client_message_id, messages.player_id, players.name AS sender_name,
+    SELECT messages.id, messages.client_message_id, messages.player_id,
+           COALESCE(messages.character_name, players.name) AS sender_name,
+           players.name AS player_name, messages.character_name,
            messages.text, messages.sent_at, messages.rowid AS sequence
     FROM messages JOIN players ON players.id = messages.player_id
     WHERE messages.player_id = ? AND messages.client_message_id = ?
@@ -975,6 +1035,42 @@ export function createStore(databasePath) {
   const insertCampaignWorldLocation = database.prepare('INSERT INTO campaign_world_locations (id, campaign_id, position, name, description, danger) VALUES (?, ?, ?, ?, ?, ?)')
   const insertCampaignWorldNpc = database.prepare('INSERT INTO campaign_world_npcs (id, campaign_id, position, name, role, want, leverage) VALUES (?, ?, ?, ?, ?, ?, ?)')
   const insertCampaignWorldHook = database.prepare('INSERT INTO campaign_world_hooks (id, campaign_id, position, title, situation) VALUES (?, ?, ?, ?, ?)')
+  const characterSelect = `
+    SELECT characters.*, players.name AS player_name,
+           factions.name AS faction_name, locations.name AS location_name, npcs.name AS npc_name,
+           connected.name AS connected_character_name
+    FROM characters
+    JOIN players ON players.id = characters.player_id
+    LEFT JOIN campaign_world_factions AS factions ON factions.id = characters.faction_id
+    LEFT JOIN campaign_world_locations AS locations ON locations.id = characters.location_id
+    LEFT JOIN campaign_world_npcs AS npcs ON npcs.id = characters.npc_id
+    LEFT JOIN characters AS connected ON connected.id = characters.connected_character_id
+  `
+  const charactersByCampaign = database.prepare(`${characterSelect} WHERE characters.campaign_id = ? ORDER BY characters.rowid`)
+  const characterByPlayer = database.prepare(`${characterSelect} WHERE characters.player_id = ? AND characters.campaign_id = ?`)
+  const characterById = database.prepare(`${characterSelect} WHERE characters.id = ? AND characters.campaign_id = ?`)
+  const insertCharacter = database.prepare(`
+    INSERT INTO characters (
+      id, campaign_id, player_id, name, concept, appearance, drive, capability, complication,
+      possession, belief, secret, faction_id, faction_connection, location_id, location_connection,
+      npc_id, npc_connection, connected_character_id, character_connection, generator_version,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const updateCharacter = database.prepare(`
+    UPDATE characters SET name = ?, concept = ?, appearance = ?, drive = ?, capability = ?,
+      complication = ?, possession = ?, belief = ?, secret = ?, faction_id = ?, faction_connection = ?,
+      location_id = ?, location_connection = ?, npc_id = ?, npc_connection = ?,
+      connected_character_id = ?, character_connection = ?, generator_version = ?,
+      revision = revision + 1, updated_at = ?
+    WHERE id = ? AND campaign_id = ? AND player_id = ? AND revision = ?
+  `)
+  const messageCharacter = database.prepare(`
+    SELECT CASE WHEN rooms.slug = 'in-character' THEN characters.name ELSE NULL END AS character_name
+    FROM rooms
+    LEFT JOIN characters ON characters.player_id = ? AND characters.campaign_id = rooms.campaign_id
+    WHERE rooms.id = ?
+  `)
   const closedCampaignSessions = database.prepare(`
     SELECT campaign_sessions.*, players.name AS closed_by_name
     FROM campaign_sessions JOIN players ON players.id = campaign_sessions.closed_by_player_id
@@ -1029,7 +1125,9 @@ export function createStore(databasePath) {
   `)
   const latestMessagesForRoom = database.prepare(`
     SELECT * FROM (
-      SELECT messages.id, messages.client_message_id, messages.player_id, players.name AS sender_name,
+      SELECT messages.id, messages.client_message_id, messages.player_id,
+             COALESCE(messages.character_name, players.name) AS sender_name,
+             players.name AS player_name, messages.character_name,
              messages.text, messages.sent_at, messages.rowid AS sequence
       FROM messages JOIN players ON players.id = messages.player_id
       WHERE messages.room_id = ?
@@ -1038,7 +1136,9 @@ export function createStore(databasePath) {
   `)
   const olderMessagesForRoom = database.prepare(`
     SELECT * FROM (
-      SELECT messages.id, messages.client_message_id, messages.player_id, players.name AS sender_name,
+      SELECT messages.id, messages.client_message_id, messages.player_id,
+             COALESCE(messages.character_name, players.name) AS sender_name,
+             players.name AS player_name, messages.character_name,
              messages.text, messages.sent_at, messages.rowid AS sequence
       FROM messages JOIN players ON players.id = messages.player_id
       WHERE messages.room_id = ? AND messages.rowid < ?
@@ -1673,6 +1773,66 @@ export function createStore(databasePath) {
       return publicCampaignWorld(row, row ? campaignWorldCollections(campaignId) : {})
     },
 
+    getCharacterCreationContext(campaignId, playerId, { includeAllSecrets = false } = {}) {
+      const world = this.getCampaignWorld(campaignId)
+      const rows = charactersByCampaign.all(campaignId)
+      return {
+        world: world ? {
+          title: world.title,
+          premise: world.premise,
+          pitch: world.pitch,
+          truths: world.truths,
+          factions: world.factions.map(({ id, name, goal }) => ({ id, name, goal })),
+          locations: world.locations.map(({ id, name, description }) => ({ id, name, description })),
+          npcs: world.npcs.map(({ id, name, role }) => ({ id, name, role })),
+        } : null,
+        characters: rows.map((row) => publicCharacter(row, { includeSecret: includeAllSecrets || row.player_id === playerId })),
+      }
+    },
+
+    getCharacterForPlayer(campaignId, playerId, { includeSecret = false } = {}) {
+      return publicCharacter(characterByPlayer.get(playerId, campaignId), { includeSecret })
+    },
+
+    saveCharacter(campaignId, playerId, character) {
+      if (!playerForCampaign.get(playerId, campaignId)) return { outcome: 'not_found' }
+      const required = ['name', 'concept', 'appearance', 'drive', 'capability', 'complication', 'possession', 'belief', 'secret', 'factionId', 'factionConnection', 'locationId', 'locationConnection', 'npcId', 'npcConnection']
+      if (required.some((field) => typeof character[field] !== 'string' || !character[field].trim())) return { outcome: 'invalid' }
+      const collections = campaignWorldCollections(campaignId)
+      if (!collections.factions.some((item) => item.id === character.factionId)
+        || !collections.locations.some((item) => item.id === character.locationId)
+        || !collections.npcs.some((item) => item.id === character.npcId)) return { outcome: 'invalid_connection' }
+      if (character.connectedCharacterId) {
+        const connected = characterById.get(character.connectedCharacterId, campaignId)
+        if (!connected || connected.player_id === playerId || !character.characterConnection?.trim()) return { outcome: 'invalid_connection' }
+      }
+      const current = characterByPlayer.get(playerId, campaignId)
+      const now = new Date().toISOString()
+      if (!current) {
+        const id = randomUUID()
+        insertCharacter.run(
+          id, campaignId, playerId, character.name.trim(), character.concept.trim(), character.appearance.trim(),
+          character.drive.trim(), character.capability.trim(), character.complication.trim(), character.possession.trim(),
+          character.belief.trim(), character.secret.trim(), character.factionId, character.factionConnection.trim(),
+          character.locationId, character.locationConnection.trim(), character.npcId, character.npcConnection.trim(),
+          character.connectedCharacterId ?? null, character.characterConnection?.trim() || null,
+          character.generatorVersion ?? null, now, now,
+        )
+        return { outcome: 'created', character: publicCharacter(characterById.get(id, campaignId), { includeSecret: true }) }
+      }
+      if (character.expectedRevision !== current.revision) return { outcome: 'conflict', character: publicCharacter(current, { includeSecret: true }) }
+      const changed = updateCharacter.run(
+        character.name.trim(), character.concept.trim(), character.appearance.trim(), character.drive.trim(),
+        character.capability.trim(), character.complication.trim(), character.possession.trim(), character.belief.trim(),
+        character.secret.trim(), character.factionId, character.factionConnection.trim(), character.locationId,
+        character.locationConnection.trim(), character.npcId, character.npcConnection.trim(),
+        character.connectedCharacterId ?? null, character.characterConnection?.trim() || null,
+        character.generatorVersion ?? current.generator_version, now, current.id, campaignId, playerId, character.expectedRevision,
+      ).changes
+      if (changed !== 1) return { outcome: 'conflict', character: publicCharacter(characterByPlayer.get(playerId, campaignId), { includeSecret: true }) }
+      return { outcome: 'updated', character: publicCharacter(characterByPlayer.get(playerId, campaignId), { includeSecret: true }) }
+    },
+
     createCampaignWorld(campaignId, playerId, world) {
       if (!campaignById.get(campaignId) || campaignWorld.get(campaignId)) return { outcome: 'conflict', world: this.getCampaignWorld(campaignId) }
       const now = new Date().toISOString()
@@ -1787,7 +1947,8 @@ export function createStore(databasePath) {
         text,
         sentAt: new Date().toISOString(),
       }
-      const inserted = insertMessage.run(message.id, roomId, playerId, clientMessageId, text, message.sentAt).changes === 1
+      const characterName = messageCharacter.get(playerId, roomId)?.character_name ?? null
+      const inserted = insertMessage.run(message.id, roomId, playerId, clientMessageId, text, characterName, message.sentAt).changes === 1
       const stored = messageByClientId.get(playerId, clientMessageId)
       return { message: publicMessage(stored), inserted }
     },

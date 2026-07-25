@@ -10,7 +10,10 @@ export type Envelope<TType extends string, TPayload> = {
 
 export type Participant = {
   playerId: Id
+  playerName?: string
   name: string
+  characterId?: Id | null
+  characterName?: string | null
   muted: boolean
 }
 
@@ -75,9 +78,48 @@ export type RoomMessage = {
   clientMessageId?: Id
   senderId: Id
   senderName: string
+  playerName?: string
+  characterName?: string | null
   text: string
   sentAt: string
   sequence: number
+}
+
+export type Character = {
+  id: Id
+  campaignId: Id
+  playerId: Id
+  playerName: string
+  name: string
+  concept: string
+  appearance: string
+  drive: string
+  capability: string
+  complication: string
+  possession: string
+  belief: string
+  secret: string | null
+  faction: { id: Id; name: string; connection: string } | null
+  location: { id: Id; name: string; connection: string } | null
+  npc: { id: Id; name: string; connection: string } | null
+  character: { id: Id; name: string; connection: string } | null
+  generatorVersion: string | null
+  revision: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type CharacterCreationContext = {
+  world: null | {
+    title: string
+    premise: string
+    pitch: string
+    truths: Array<{ id: Id; text: string }>
+    factions: Array<{ id: Id; name: string; goal: string }>
+    locations: Array<{ id: Id; name: string; description: string }>
+    npcs: Array<{ id: Id; name: string; role: string }>
+  }
+  characters: Character[]
 }
 
 export type MessagePage = {
@@ -532,6 +574,7 @@ export type ServerEvent =
   | Envelope<'campaign.note_updated', { note: CampaignNote }>
   | Envelope<'campaign.canon_updated', CanonLedger>
   | Envelope<'campaign.preparation_updated', { run: PreparationRun }>
+  | Envelope<'campaign.characters_updated', CharacterCreationContext>
   | Envelope<'room.activity', { senderId: Id }>
   | Envelope<'room.snapshot', { participants: Participant[]; voiceParticipants: Participant[]; messages: RoomMessage[]; hasMore: boolean }>
   | Envelope<'presence.snapshot', { participants: Participant[] }>

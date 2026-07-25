@@ -175,6 +175,53 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         return
       }
 
+      if (request.method === 'GET' && request.url === '/api/campaign/characters') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        sendJson(response, 200, store.getCharacterCreationContext(
+          requestSession.campaign.id,
+          requestSession.player.id,
+          { includeAllSecrets: hasGmKnowledge },
+        ))
+        return
+      }
+
+      if ((request.method === 'POST' || request.method === 'PUT') && request.url === '/api/campaign/characters/mine') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        const body = await readJson(request)
+        const limits = {
+          name: 80, concept: 240, appearance: 500, drive: 500, capability: 500,
+          complication: 500, possession: 500, belief: 500, secret: 1_000,
+          factionConnection: 500, locationConnection: 500, npcConnection: 500, characterConnection: 500,
+        }
+        const character = { ...body }
+        for (const [field, maximum] of Object.entries(limits)) {
+          if (character[field] == null && field === 'characterConnection') continue
+          character[field] = cleanCanonText(character[field], maximum)
+        }
+        const result = store.saveCharacter(requestSession.campaign.id, requestSession.player.id, character)
+        if (result.outcome === 'invalid' || result.outcome === 'invalid_connection') {
+          sendJson(response, 400, { error: result.outcome === 'invalid_connection' ? 'Choose connections from this campaign.' : 'Complete every character field.' })
+          return
+        }
+        if (result.outcome === 'conflict') {
+          sendJson(response, 409, { error: 'This character changed elsewhere.', character: result.character })
+          return
+        }
+        if (result.outcome === 'not_found') {
+          sendJson(response, 404, { error: 'Player not found.' })
+          return
+        }
+        broadcastCharacters(requestSession.campaign.id)
+        sendJson(response, result.outcome === 'created' ? 201 : 200, { character: result.character })
+        return
+      }
+
       const characterKnowledge = request.url?.match(/^\/api\/campaign\/knowledge\/players\/([^/]+)$/)
       if (request.method === 'GET' && characterKnowledge) {
         if (!requestSession) {
@@ -1191,7 +1238,15 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
   }
 
   function participant(client) {
-    return { playerId: client.player.id, name: client.player.name, muted: client.muted }
+    const character = store.getCharacterForPlayer(client.campaign.id, client.player.id)
+    return {
+      playerId: client.player.id,
+      playerName: client.player.name,
+      name: character?.name ?? client.player.name,
+      characterId: character?.id ?? null,
+      characterName: character?.name ?? null,
+      muted: client.muted,
+    }
   }
 
   function broadcast(roomId, event, except) {
@@ -1205,6 +1260,17 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
       client.campaign = campaign
       send(socket, event)
     }
+  }
+
+  function broadcastCharacters(campaignId) {
+    for (const [socket, client] of clients) {
+      if (client.campaign.id !== campaignId) continue
+      const includeAllSecrets = client.player.knowledgeRole === 'gm'
+      send(socket, envelope('campaign.characters_updated', campaignId, store.getCharacterCreationContext(
+        campaignId, client.player.id, { includeAllSecrets },
+      )))
+    }
+    for (const roomId of new Set([...clients.values()].filter((client) => client.campaign.id === campaignId).map((client) => client.roomId).filter(Boolean))) presenceSnapshot(roomId)
   }
 
   function broadcastCampaignEvent(campaignId, event) {

@@ -145,6 +145,7 @@ export type CanonEntry = {
   visibility: CanonAudience
   audiencePlayerIds: Id[]
   audienceNames: string[]
+  evidenceBasis: 'full' | 'gm_review' | 'witnessed' | 'gm_confirmed'
   revision: number
   status: 'active' | 'superseded' | 'retracted'
   createdAt: string

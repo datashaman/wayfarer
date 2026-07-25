@@ -90,7 +90,7 @@ function publicCanonProposal(row, sources = []) {
   }
 }
 
-function publicCanonEntry(row, sources = [], audiences = []) {
+function publicCanonEntry(row, sources = [], audiences = [], evidenceBasis = 'full') {
   return {
     id: row.id,
     proposalId: row.proposal_id,
@@ -101,6 +101,7 @@ function publicCanonEntry(row, sources = [], audiences = []) {
     visibility: audiences.length ? 'characters' : row.visibility,
     audiencePlayerIds: audiences.map((audience) => audience.id),
     audienceNames: audiences.map((audience) => audience.name),
+    evidenceBasis,
     revision: row.revision,
     status: row.status === 'active' ? 'active' : row.retired_reason ?? 'superseded',
     createdAt: row.created_at,
@@ -1538,18 +1539,35 @@ export function createStore(databasePath) {
       }))
     },
 
-    listCanonEntries(campaignId, { includeGmOnly = false, viewerPlayerId = null } = {}) {
+    listCanonEntries(campaignId, { includeGmOnly = false, viewerPlayerId = null, redactForViewer = !includeGmOnly } = {}) {
+      const sessions = redactForViewer && viewerPlayerId ? this.listCampaignSessions(campaignId) : []
+      const witnessed = (sequence) => sessions.some((session) => sequence >= session.startSequence
+        && sequence <= session.endSequence
+        && session.participants.some((participant) => participant.id === viewerPlayerId))
       return canonEntriesForCampaign.all(campaignId)
         .map((row) => ({ row, audiences: canonAudiencesForEntry.all(row.id) }))
         .filter(({ row, audiences }) => includeGmOnly || row.visibility === 'campaign' || audiences.some((audience) => audience.id === viewerPlayerId))
-        .map(({ row, audiences }) => publicCanonEntry(row, canonSourcesForEntry.all(row.id), audiences))
+        .map(({ row, audiences }) => {
+          const sources = canonSourcesForEntry.all(row.id)
+          const targetedForViewer = redactForViewer && audiences.some((audience) => audience.id === viewerPlayerId)
+          if (!targetedForViewer) return publicCanonEntry(row, sources, audiences, includeGmOnly ? 'gm_review' : 'full')
+          const witnessedSources = sources.filter((source) => witnessed(source.sequence))
+          return publicCanonEntry(row, witnessedSources, audiences, witnessedSources.length ? 'witnessed' : 'gm_confirmed')
+        })
     },
 
-    getCanonEntry(campaignId, entryId, { includeGmOnly = false, viewerPlayerId = null } = {}) {
+    getCanonEntry(campaignId, entryId, { includeGmOnly = false, viewerPlayerId = null, redactForViewer = !includeGmOnly } = {}) {
       const row = canonEntryById.get(entryId, campaignId)
       const audiences = row ? canonAudiencesForEntry.all(entryId) : []
       if (!row || (!includeGmOnly && row.visibility !== 'campaign' && !audiences.some((audience) => audience.id === viewerPlayerId))) return null
-      return publicCanonEntry(row, canonSourcesForEntry.all(entryId), audiences)
+      const sources = canonSourcesForEntry.all(entryId)
+      const targetedForViewer = redactForViewer && audiences.some((audience) => audience.id === viewerPlayerId)
+      if (!targetedForViewer) return publicCanonEntry(row, sources, audiences, includeGmOnly ? 'gm_review' : 'full')
+      const sessions = this.listCampaignSessions(campaignId)
+      const witnessedSources = sources.filter((source) => sessions.some((session) => source.sequence >= session.startSequence
+        && source.sequence <= session.endSequence
+        && session.participants.some((participant) => participant.id === viewerPlayerId)))
+      return publicCanonEntry(row, witnessedSources, audiences, witnessedSources.length ? 'witnessed' : 'gm_confirmed')
     },
 
     reviseCanonEntry(campaignId, playerId, entryId, { action, title, claim, visibility, audiencePlayerIds = [], reason = null, expectedRevision }) {
@@ -1608,7 +1626,7 @@ export function createStore(databasePath) {
       if (!player) return null
       return {
         player: publicPlayer(player),
-        entries: this.listCanonEntries(campaignId, { viewerPlayerId: playerId }),
+        entries: this.listCanonEntries(campaignId, { viewerPlayerId: playerId, redactForViewer: true }),
         sessions: this.listCampaignSessions(campaignId).filter((session) => session.participants.some((participant) => participant.id === playerId)),
       }
     },

@@ -331,6 +331,8 @@ test('character audiences remain private, visible to their seats, and revisioned
   const visible = store.listCanonEntries(owner.campaign.id, { viewerPlayerId: theo.player.id })[0]
   assert.equal(visible.visibility, 'characters')
   assert.deepEqual(visible.audienceNames, ['Theo'])
+  assert.equal(visible.evidenceBasis, 'gm_confirmed')
+  assert.deepEqual(visible.sources, [])
   const revised = store.reviseCanonEntry(owner.campaign.id, owner.player.id, visible.id, {
     action: 'revised', title: visible.title, claim: 'Theo and Nina recognize the royal signet.',
     visibility: 'characters', audiencePlayerIds: [theo.player.id, nina.player.id], expectedRevision: 0,
@@ -338,7 +340,9 @@ test('character audiences remain private, visible to their seats, and revisioned
   assert.deepEqual(revised.entry.audienceNames, ['Nina', 'Theo'])
   const history = store.listCanonEntryHistory(owner.campaign.id, visible.id, { includeGmOnly: true })
   assert.deepEqual(history.revisions.map((revision) => revision.audienceNames), [['Nina', 'Theo'], ['Theo']])
-  assert.equal(store.getCharacterKnowledge(owner.campaign.id, nina.player.id).entries.length, 1)
+  const ninaKnowledge = store.getCharacterKnowledge(owner.campaign.id, nina.player.id)
+  assert.equal(ninaKnowledge.entries.length, 1)
+  assert.equal(ninaKnowledge.entries[0].evidenceBasis, 'gm_confirmed')
   store.close()
 })
 

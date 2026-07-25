@@ -6,7 +6,7 @@ Wayfarer is a human-kept campaign memory system, not an autonomous storyteller. 
 
 - AI never creates, revises, publishes, or retracts canon without an explicit GM action.
 - Creative generation may draft a campaign opening from a GM premise, but the draft establishes no world truth until a GM edits and saves the complete foundation.
-- Scene resolution may create GM-authored world consequences anchored to saved factions, locations, NPCs, or hooks. Consequences preserve immutable before/after snapshots and scene provenance; active pressure can be explicitly carried into the next scene, but is never applied automatically.
+- Scene resolution may change the typed current state of saved factions, locations, NPCs, or hooks: goals and relationships, ownership and danger, situation and open/resolved status, plus remaining pressure. Each GM-authored change updates the entity’s current truth while preserving immutable before/after snapshots and scene provenance; active pressure can be explicitly carried into the next scene, but is never applied automatically.
 - Scene resolution may also establish newly encountered factions, locations, NPCs, and hooks. Their first wording and source scene are immutable provenance; their current world entries remain editable and immediately available to later scenes and character connections.
 - Character concepts are private editable options grounded only in the saved campaign foundation; only the player creates or revises their character.
 - A scene becomes active only from a saved GM preparation containing its framing, stakes, first choice, present characters, involved locations and NPCs, possible discoveries and complications, and questions to play toward. Preparation never dictates an outcome; resolution records only what actually changed.
@@ -31,6 +31,7 @@ Wayfarer is a human-kept campaign memory system, not an autonomous storyteller. 
 - **Campaign scene**: one GM-established active moment with present characters, pressure, and a first choice; its opening and human-recorded resolution are immutable in-character transcript markers.
 - **Session preparation**: one revision-protected GM folio for the next scene, joining cast, stage, pressure, discoveries, complications, and open questions without scripting an outcome; beginning play snapshots and consumes it.
 - **In-play material**: one GM-kept improvisation leaf attached to its source scene, retaining its original type, wording, and generator edition; its World representation is a person, place, or actionable hook.
+- **World entity state**: the latest scene-resolved truth for one saved entity, kept separately from its editable campaign foundation and backed by an immutable consequence lineage.
 - **Character revision**: immutable snapshot of a player-authored character change with its reason, changed fields, and optional provenance from a resolved scene the character witnessed.
 - **Canon constitution**: versioned table-specific policy for what counts as canon.
 - **Canon proposal**: cited AI suggestion awaiting a GM ruling.

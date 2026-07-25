@@ -163,11 +163,13 @@ The revision trail is a vertical sequence of folio leaves marked by small wax ci
 
 ### World aftermath
 
-World aftermath closes the core play loop: a GM may attach up to three concrete consequences while resolving a scene, each anchored to one saved faction, location, NPC, or hook. The server snapshots the prior state; the GM writes what is true now and what pressure remains. Never infer or automatically apply narrative changes.
+World aftermath closes the core play loop: a GM may attach up to three concrete consequences while resolving a scene, each anchored to one saved faction, location, NPC, or hook. Resolution asks in domain language: goal and relationship for factions and NPCs, ownership and danger for locations, situation and open/resolved status for hooks, plus remaining pressure. The server snapshots the prior typed state and updates the entity’s current truth. Never infer narrative changes.
 
 An established World folio leads with **World in motion** before the original campaign invitation. Each consequence is an immutable before → now ledger leaf with its source scene. A later consequence for the same entity resolves the previous pressure while preserving both leaves. Active pressure appears at the next Scene threshold with a deliberate **Carry into the stakes** action; it never edits framing by itself. This qualitative state trail remains separate from numeric faction clocks.
 
 Use one wax left hairline for active leaves, moss only for continuing pressure or resolved meaning, inset soot fields, serif world state, sans provenance, and the existing borders-only 8px system. Avoid activity feeds, metrics, generic status cards, and automatic canon mutation.
+
+Each changed entity carries a compact **Current truth** strip above its editable foundation fields. The strip uses a wax provenance label, two type-specific truth cells, and a pressure blockquote; a resolved hook shifts its state accent to moss. This is the at-a-glance present tense, while **World in motion** remains the immutable before/after lineage. Never replace it with a generic status dropdown or activity feed.
 
 ### World discoveries
 

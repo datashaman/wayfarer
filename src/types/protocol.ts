@@ -37,10 +37,10 @@ export type CampaignWorld = {
   premise: string
   pitch: string
   truths: Array<{ id?: Id; text: string }>
-  factions: Array<{ id?: Id; name: string; goal: string; opposition: string }>
-  locations: Array<{ id?: Id; name: string; description: string; danger: string }>
-  npcs: Array<{ id?: Id; name: string; role: string; want: string; leverage: string }>
-  hooks: Array<{ id?: Id; title: string; situation: string }>
+  factions: Array<{ id?: Id; name: string; goal: string; opposition: string; state?: WorldEntityState | null }>
+  locations: Array<{ id?: Id; name: string; description: string; danger: string; state?: WorldEntityState | null }>
+  npcs: Array<{ id?: Id; name: string; role: string; want: string; leverage: string; state?: WorldEntityState | null }>
+  hooks: Array<{ id?: Id; title: string; situation: string; state?: WorldEntityState | null }>
   openingCrisis: { title: string; situation: string; stakes: string }
   generatorVersion: string
   revision?: number
@@ -49,6 +49,18 @@ export type CampaignWorld = {
   updatedByName?: string | null
   consequences: WorldConsequence[]
   discoveries: WorldDiscovery[]
+}
+
+export type WorldEntityState = {
+  goal?: string
+  relationship?: string
+  ownership?: string
+  danger?: string
+  situation?: string
+  status?: 'open' | 'resolved'
+  pressure: string
+  sourceSceneId?: Id
+  updatedAt?: string
 }
 
 export type WorldDiscovery = {
@@ -90,6 +102,8 @@ export type WorldConsequence = {
   entityName: string
   beforeState: string
   afterState: string
+  before: Omit<WorldEntityState, 'pressure'> | null
+  after: Omit<WorldEntityState, 'pressure'> | null
   pressure: string
   status: 'active' | 'resolved'
   resolvedSceneId: Id | null
@@ -190,7 +204,7 @@ export type ScenePreparation = {
 
 export type SceneContext = {
   openingCrisis: CampaignWorld['openingCrisis'] | null
-  worldEntities: Array<{ id: Id; name: string; type: WorldConsequence['entityType'] }>
+  worldEntities: Array<{ id: Id; name: string; type: WorldConsequence['entityType']; state: WorldEntityState }>
   characters: Array<{ id: Id; name: string; playerName: string; concept: string; locationId: Id | null; npcId: Id | null }>
   locations: CampaignWorld['locations']
   npcs: CampaignWorld['npcs']

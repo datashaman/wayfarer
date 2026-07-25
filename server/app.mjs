@@ -394,7 +394,9 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         const consequences = Array.isArray(body.consequences) && body.consequences.length <= 3 ? body.consequences.map((item) => ({
           entityType: ['faction', 'location', 'npc', 'hook'].includes(item?.entityType) ? item.entityType : '',
           entityId: typeof item?.entityId === 'string' ? item.entityId : '',
-          afterState: cleanCanonText(item?.afterState, 1_000),
+          state: item?.entityType === 'location' ? { ownership: cleanCanonText(item?.state?.ownership, 500), danger: cleanCanonText(item?.state?.danger, 500) }
+            : item?.entityType === 'hook' ? { situation: cleanCanonText(item?.state?.situation, 1_000), status: ['open', 'resolved'].includes(item?.state?.status) ? item.state.status : '' }
+              : { goal: cleanCanonText(item?.state?.goal, 500), relationship: cleanCanonText(item?.state?.relationship, 500) },
           pressure: cleanCanonText(item?.pressure, 1_000),
         })) : null
         const discoveries = Array.isArray(body.discoveries ?? []) && (body.discoveries ?? []).length <= 3 ? (body.discoveries ?? []).map((item) => ({
@@ -405,7 +407,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           leverage: item?.entityType === 'npc' ? cleanCanonText(item?.leverage, 500) : null,
         })) : null
         const consequenceTargets = consequences?.map((item) => `${item.entityType}:${item.entityId}`) ?? []
-        if (!outcome || !consequences || !discoveries || consequences.some((item) => !item.entityType || !item.entityId || !item.afterState || !item.pressure) || consequenceTargets.length !== new Set(consequenceTargets).size || discoveries.some((item) => !item.entityType || !item.name || !item.detail || (item.entityType !== 'hook' && !item.tension) || (item.entityType === 'npc' && !item.leverage))) {
+        if (!outcome || !consequences || !discoveries || consequences.some((item) => !item.entityType || !item.entityId || Object.values(item.state).some((value) => !value) || !item.pressure) || consequenceTargets.length !== new Set(consequenceTargets).size || discoveries.some((item) => !item.entityType || !item.name || !item.detail || (item.entityType !== 'hook' && !item.tension) || (item.entityType === 'npc' && !item.leverage))) {
           sendJson(response, 400, { error: 'Record what changed before resolving the scene.' })
           return
         }

@@ -1828,6 +1828,14 @@ textarea:focus-visible {
   margin: 0 0 8px;
 }
 
+.evaluation-subsection-copy {
+  margin: -2px 0 8px;
+  color: var(--parchment-muted);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 .evaluation-gates,
 .evaluation-runs {
   display: grid;
@@ -1886,6 +1894,75 @@ textarea:focus-visible {
 .evaluation-versions {
   display: grid;
   gap: 6px;
+}
+
+.evaluation-surfaces {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-medium);
+  background: var(--soot-900);
+}
+
+.evaluation-surface {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.7fr) minmax(72px, 0.55fr) minmax(118px, 0.9fr) 52px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.evaluation-surface:last-child {
+  border-bottom: 0;
+}
+
+.evaluation-surface > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.evaluation-surface > div > span {
+  color: var(--parchment-muted);
+  font-size: 8px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.evaluation-surface strong {
+  overflow-wrap: anywhere;
+  color: var(--parchment-soft);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.evaluation-surface small {
+  overflow-wrap: anywhere;
+  color: var(--parchment-muted);
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+.evaluation-surface__identity > strong {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.evaluation-surface__proof,
+.evaluation-surface__runtime {
+  padding-left: 10px;
+  border-left: 1px solid var(--border-soft);
+}
+
+.evaluation-surface__state--waiting {
+  color: var(--wax);
+}
+
+.evaluation-surface__state--absent {
+  color: var(--parchment-muted);
 }
 
 .evaluation-version {
@@ -1975,6 +2052,28 @@ textarea:focus-visible {
 
   .evaluation-runs time {
     grid-column: 1 / -1;
+  }
+
+  .evaluation-surface {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+  }
+
+  .evaluation-surface__proof,
+  .evaluation-surface__runtime {
+    padding-top: 8px;
+    padding-left: 0;
+    border-top: 1px solid var(--border-soft);
+    border-left: 0;
+  }
+
+  .evaluation-surface__runtime {
+    grid-column: 1 / -1;
+  }
+
+  .evaluation-surface > .evaluation-version__state {
+    grid-column: 2;
+    grid-row: 1;
   }
 }
 

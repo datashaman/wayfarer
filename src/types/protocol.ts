@@ -310,6 +310,25 @@ export type AiEvaluationDashboard = {
     errorRate: number | null
     secretLeakRate: number | null
   }>
+  surfaces: Array<{
+    id: 'canon' | 'continuity' | 'contradictions' | 'recap' | 'knowledge' | 'intent' | 'house_rules' | 'factions'
+    label: string
+    authority: 'advisory' | 'draft' | 'proposal'
+    version: string | null
+    evaluationCommand: string
+    liveCheck: null | { passed: number; total: number; passRate: number; createdAt: string }
+    runtime: {
+      total: number
+      succeeded: number
+      failed: number
+      successRate: number | null
+      averageDurationMs: number | null
+      averageInputUnits: number | null
+      averageOutputUnits: number | null
+      lastRunAt: string | null
+      latestErrorCategory: string | null
+    }
+  }>
   runs: Array<{
     id: Id
     suite: string

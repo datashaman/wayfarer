@@ -53,12 +53,13 @@ function refusalFrom(response) {
   return null
 }
 
-export function createOpenAICanonExtractor({ apiKey, model = 'gpt-5.6-luna', client } = {}) {
+export function createOpenAICanonExtractor({ apiKey, model = 'gpt-5.6-luna', client, onInference = null } = {}) {
   const openai = client ?? new OpenAI({ apiKey })
   const version = `openai:${model}:canon-v2`
   return createCanonExtractor({
     version,
-    async generate({ messages, existingCanon, priorDecisions, constitution }) {
+    onInference,
+    async generate({ messages, existingCanon, priorDecisions, constitution, recordUsage }) {
       const response = await openai.responses.create({
         model,
         reasoning: { effort: 'none' },
@@ -79,6 +80,7 @@ export function createOpenAICanonExtractor({ apiKey, model = 'gpt-5.6-luna', cli
           },
         },
       })
+      recordUsage(response.usage)
       if (!response.output_text) {
         const refusal = refusalFrom(response)
         throw new CanonExtractionError(refusal ? 'refused' : 'empty_output', refusal ?? 'The model returned no canon proposals.')

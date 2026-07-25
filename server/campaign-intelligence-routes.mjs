@@ -115,7 +115,7 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
         const knowledge = store.getCharacterKnowledge(campaignId, targetPlayerId)
         if (!knowledge) { sendJson(response, 404, { error: 'Player not found.' }); return true }
         if (!knowledge.entries.length) { sendJson(response, 400, { error: 'This character has no readable canon yet.' }); return true }
-        const answer = await intelligence.answerKnowledge({ question, canon: knowledge.entries, priorFeedback: store.listKnowledgeFeedbackExamples(campaignId, targetPlayerId, 10) })
+        const answer = await intelligence.answerKnowledge({ campaignId, question, canon: knowledge.entries, priorFeedback: store.listKnowledgeFeedbackExamples(campaignId, targetPlayerId, 10) })
         const record = store.recordKnowledgeAnswer({ campaignId, subjectPlayerId: targetPlayerId, requestedByPlayerId: playerId, question, answer: answer.answer, generatorVersion: intelligence.version, citationIds: answer.citations })
         sendJson(response, 200, { answerId: record.id, answer: answer.answer, generatorVersion: intelligence.version, citations: answer.citations.map((id) => knowledge.entries.find((entry) => entry.id === id)) })
         return true
@@ -135,7 +135,7 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
         if (!intent) { sendJson(response, 400, { error: 'Describe what your character intends.' }); return true }
         const canon = store.getCharacterKnowledge(campaignId, playerId)?.entries ?? []
         const messages = store.listPlayerMessages(campaignId, playerId, 20)
-        const drafts = await intelligence.draftIntent({ intent, messages, canon })
+        const drafts = await intelligence.draftIntent({ campaignId, intent, messages, canon })
         sendJson(response, 200, { drafts, generatorVersion: intelligence.version })
         return true
       }
@@ -168,7 +168,7 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
         const context = sessionId ? store.getCampaignSessionMessages(campaignId, sessionId, 5_000) : null
         const selected = context?.messages.filter((message) => messageIds.includes(message.id)) ?? []
         if (!context || context.truncated || messageIds.length < 1 || messageIds.length > 12 || selected.length !== messageIds.length) { sendJson(response, 400, { error: 'Select between 1 and 12 passages from one campaign session.' }); return true }
-        const proposal = await intelligence.compileHouseRule({ messages: selected })
+        const proposal = await intelligence.compileHouseRule({ campaignId, messages: selected })
         sendJson(response, 200, { proposal: { ...proposal, sources: proposal.citations.map((id) => { const { id: messageId, ...message } = selected.find((item) => item.id === id); return { ...message, messageId } }) }, generatorVersion: intelligence.version }); return true
       }
       if (request.method === 'GET' && request.url === '/api/campaign/intelligence/rules') {
@@ -215,7 +215,7 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
         const clock = store.listFactionClocks(campaignId).find((item) => item.id === factionProposal[1])
         const context = typeof body.sessionId === 'string' ? store.getCampaignSessionMessages(campaignId, body.sessionId, 5_000) : null
         if (!clock || !context || context.truncated) { sendJson(response, 400, { error: 'Choose a faction clock and campaign session.' }); return true }
-        const proposal = await intelligence.proposeFaction({ clock, messages: context.messages, canon: store.listCanonEntries(campaignId, { includeGmOnly: true }) })
+        const proposal = await intelligence.proposeFaction({ campaignId, clock, messages: context.messages, canon: store.listCanonEntries(campaignId, { includeGmOnly: true }) })
         const sources = proposal.citations.map((messageId) => ({ messageId }))
         sendJson(response, 201, { clock: store.createFactionProposal(campaignId, playerId, clock.id, { ...proposal, sources, sessionId: context.session.id, generatorVersion: intelligence.version }) }); return true
       }

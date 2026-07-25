@@ -6,6 +6,8 @@ import { createOpenAIContinuityBriefGenerator } from './server/openai-continuity
 import { createOpenAIContradictionRadar } from './server/openai-contradiction-radar.mjs'
 import { createOpenAISessionRecapGenerator } from './server/openai-session-recap.mjs'
 import { createOpenAICampaignIntelligence } from './server/openai-campaign-intelligence.mjs'
+import { createAiInferenceSink } from './server/ai-observability.mjs'
+import { modelForAiSurface } from './server/ai-surfaces.mjs'
 
 try {
   process.loadEnvFile?.('.env.local')
@@ -15,31 +17,39 @@ try {
 
 const port = Number(process.env.PORT ?? 8787)
 const dev = process.argv.includes('--dev')
+const aiInferenceSink = createAiInferenceSink()
+const onInference = (trace) => aiInferenceSink.record(trace)
 const app = createRoomServer({
   databasePath: process.env.DATABASE_PATH,
   dev,
   iceServers: parseIceServers(process.env.ICE_SERVERS),
   allowedOrigins: parseAllowedOrigins(process.env.ALLOWED_ORIGINS),
   trustProxy: process.env.TRUST_PROXY === '1',
+  aiInferenceSink,
   canonExtractor: process.env.OPENAI_API_KEY ? createOpenAICanonExtractor({
     apiKey: process.env.OPENAI_API_KEY,
-    model: process.env.OPENAI_CANON_MODEL || 'gpt-5.6-luna',
+    model: modelForAiSurface('canon'),
+    onInference,
   }) : null,
   continuityGenerator: process.env.OPENAI_API_KEY ? createOpenAIContinuityBriefGenerator({
     apiKey: process.env.OPENAI_API_KEY,
-    model: process.env.OPENAI_CONTINUITY_MODEL || process.env.OPENAI_CANON_MODEL || 'gpt-5.6-luna',
+    model: modelForAiSurface('continuity'),
+    onInference,
   }) : null,
   contradictionRadar: process.env.OPENAI_API_KEY ? createOpenAIContradictionRadar({
     apiKey: process.env.OPENAI_API_KEY,
-    model: process.env.OPENAI_CONTRADICTION_MODEL || process.env.OPENAI_CANON_MODEL || 'gpt-5.6-luna',
+    model: modelForAiSurface('contradictions'),
+    onInference,
   }) : null,
   recapGenerator: process.env.OPENAI_API_KEY ? createOpenAISessionRecapGenerator({
     apiKey: process.env.OPENAI_API_KEY,
-    model: process.env.OPENAI_RECAP_MODEL || process.env.OPENAI_CANON_MODEL || 'gpt-5.6-luna',
+    model: modelForAiSurface('recap'),
+    onInference,
   }) : null,
   campaignIntelligence: process.env.OPENAI_API_KEY ? createOpenAICampaignIntelligence({
     apiKey: process.env.OPENAI_API_KEY,
-    model: process.env.OPENAI_INTELLIGENCE_MODEL || process.env.OPENAI_CANON_MODEL || 'gpt-5.6-luna',
+    model: modelForAiSurface('knowledge'),
+    onInference,
   }) : null,
 })
 

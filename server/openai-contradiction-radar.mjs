@@ -43,11 +43,12 @@ function refusalFrom(response) {
   return null
 }
 
-export function createOpenAIContradictionRadar({ apiKey, model = 'gpt-5.6-luna', client } = {}) {
+export function createOpenAIContradictionRadar({ apiKey, model = 'gpt-5.6-luna', client, onInference = null } = {}) {
   const openai = client ?? new OpenAI({ apiKey })
   return createContradictionRadar({
     version: `openai:${model}:contradiction-v1`,
-    async generate({ messages, acceptedCanon }) {
+    onInference,
+    async generate({ messages, acceptedCanon, recordUsage }) {
       const response = await openai.responses.create({
         model,
         reasoning: { effort: 'none' },
@@ -59,6 +60,7 @@ export function createOpenAIContradictionRadar({ apiKey, model = 'gpt-5.6-luna',
         }),
         text: { format: { type: 'json_schema', name: 'contradiction_findings', strict: true, schema: findingSchema } },
       })
+      recordUsage(response.usage)
       if (!response.output_text) {
         const refusal = refusalFrom(response)
         throw new CanonExtractionError(refusal ? 'refused' : 'empty_output', refusal ?? 'The model returned no contradiction report.')

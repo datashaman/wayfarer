@@ -90,7 +90,11 @@ test('the evaluation dashboard compares generator versions and flags run regress
   }, [
     { id: 'new', suite: 'canon', model: 'test-model', generatorVersion: 'canon-v2', passed: 7, total: 10, createdAt: '2026-07-25T02:00:00Z' },
     { id: 'old', suite: 'canon', model: 'test-model', generatorVersion: 'canon-v1', passed: 9, total: 10, createdAt: '2026-07-25T01:00:00Z' },
-  ])
+  ], [
+    { surface: 'canon', generatorVersion: 'canon-v2', status: 'failed', durationMs: 300, inputUnits: 30, outputUnits: 10, errorCategory: 'invalid_output', createdAt: '2026-07-25T03:00:00Z' },
+    { surface: 'canon', generatorVersion: 'canon-v2', status: 'succeeded', durationMs: 100, inputUnits: 10, outputUnits: 4, errorCategory: null, createdAt: '2026-07-25T02:30:00Z' },
+    { surface: 'canon', generatorVersion: 'canon-v1', status: 'succeeded', durationMs: 50, inputUnits: 5, outputUnits: 2, errorCategory: null, createdAt: '2026-07-25T01:30:00Z' },
+  ], { canon: 'canon-v2', continuity: 'continuity-v1' })
   assert.deepEqual(dashboard.versions.map(({ surface, version, sampleSize }) => ({ surface, version, sampleSize })), [
     { surface: 'canon', version: 'canon-v1', sampleSize: 1 },
     { surface: 'canon', version: 'canon-v2', sampleSize: 1 },
@@ -99,4 +103,12 @@ test('the evaluation dashboard compares generator versions and flags run regress
   assert.equal(dashboard.runs[0].delta, -0.2)
   assert.equal(dashboard.alerts[0].severity, 'critical')
   assert.match(dashboard.alerts[1].message, /dropped 20 points/)
+  assert.equal(dashboard.surfaces.length, 8)
+  assert.deepEqual(dashboard.surfaces[0].runtime, {
+    total: 2, succeeded: 1, failed: 1, successRate: 0.5, averageDurationMs: 200,
+    averageInputUnits: 20, averageOutputUnits: 7, lastRunAt: '2026-07-25T03:00:00Z', latestErrorCategory: 'invalid_output',
+  })
+  assert.equal(dashboard.surfaces[0].liveCheck.passed, 7)
+  assert.equal(dashboard.surfaces[2].label, 'Contradiction watch')
+  assert.match(dashboard.alerts.at(-1).message, /failed runtime trace/)
 })

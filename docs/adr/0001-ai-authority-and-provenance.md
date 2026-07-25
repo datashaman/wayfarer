@@ -14,6 +14,8 @@ Scheduled post-session work is opt-in and readiness-gated. It may create private
 
 Feedback and human edits are versioned evaluation context, never executable instructions. Numeric model confidence is retained only as internal ranking metadata and is not shown as calibrated probability.
 
+Every production inference boundary has one registered surface ID and versioned adversarial suite. Campaign-private runtime traces are recorded only after application validation and contain operational metadata: surface, generator version, duration, provider usage, outcome, coarse error category, and time. They exclude prompts, campaign content, output, reasoning, identities, and error messages. Evaluation or runtime success never expands the surface's authority.
+
 ## Consequences
 
 The product favors precision, provenance, and reversible review over invisible automation. Long sessions are chunked with overlap and deduplicated. Scheduled workflows may prepare drafts only and must pass the thresholds in `docs/ai-evaluation.md`; publication remains human regardless of measured quality. The additional consent and knowledge checks reduce convenience but prevent retrospective surveillance and audience widening.

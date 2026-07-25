@@ -4322,6 +4322,37 @@ textarea:focus-visible {
 .scene-moving-world article > p { margin: 0; color: var(--parchment-soft); font-family: Georgia, "Times New Roman", serif; font-size: 12px; line-height: 1.5; }
 .scene-moving-world article > span { color: var(--parchment-dim); font-size: 10px; }
 .scene-moving-world article > .folio-button { justify-self: start; margin-top: 3px; }
+.scene-preparation-group { display: grid; gap: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border-soft); }
+.scene-preparation-heading { display: grid; gap: 4px; }
+.scene-preparation-heading p { margin: 0; color: var(--parchment-muted); font-size: 9px; }
+.scene-world-choices { min-width: 0; margin: 0; padding: 0; border: 0; }
+.scene-world-choices legend { margin-bottom: 8px; color: var(--parchment-dim); font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.scene-world-choices > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.scene-world-choices button { display: grid; min-width: 0; gap: 4px; padding: 11px 12px; border: 1px solid var(--border-soft); border-radius: var(--radius-small); background: transparent; color: var(--parchment-dim); text-align: left; }
+.scene-world-choices button:hover { border-color: var(--border-strong); background: var(--soot-925); }
+.scene-world-choices button.is-present { border-color: color-mix(in srgb, var(--wax) 65%, transparent); background: rgb(189 109 79 / .06); color: var(--parchment); }
+.scene-world-choices button strong { overflow: hidden; font-family: Georgia, "Times New Roman", serif; font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.scene-world-choices button span { color: var(--parchment-dim); font-family: Georgia, "Times New Roman", serif; font-size: 10px; line-height: 1.4; }
+.scene-world-choices button small { color: var(--parchment-muted); font-size: 8px; }
+.scene-preparation-list { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border-soft); background: var(--soot-925); }
+.scene-preparation-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.scene-preparation-list > div > strong { font-family: Georgia, "Times New Roman", serif; font-size: 14px; font-weight: 500; }
+.scene-preparation-list > label { display: grid; gap: 5px; }
+.scene-preparation-list__field { display: flex; align-items: flex-start; gap: 6px; }
+.scene-preparation-list__field textarea { min-height: 62px; }
+.scene-preparation-list__field .icon-button { flex: 0 0 auto; margin-top: 2px; }
+.scene-active__preparation { display: grid; gap: 16px; padding: 24px 40px; border-top: 1px solid var(--border-soft); background: var(--soot-925); }
+.scene-active__stage,
+.scene-active__possibilities { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.scene-active__possibilities { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.scene-active__stage > div,
+.scene-active__possibilities > div { padding: 12px; border: 1px solid var(--border-soft); }
+.scene-active__stage strong,
+.scene-active__possibilities strong { color: var(--wax); font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
+.scene-active__stage p,
+.scene-active__possibilities p { display: grid; gap: 3px; margin: 10px 0 0; color: var(--parchment-dim); font-family: Georgia, "Times New Roman", serif; font-size: 11px; line-height: 1.45; }
+.scene-active__stage b { color: var(--parchment-soft); font-size: 12px; font-weight: 500; }
+.scene-active__stage small { color: var(--parchment-muted); font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 8px; }
 .scene-past { padding: 28px 40px; border-top: 1px solid var(--border-soft); }
 .scene-past > span { color: var(--parchment-muted); font-size: 8px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
 .scene-past article { padding: 14px 0; border-bottom: 1px solid var(--border-soft); }
@@ -4341,6 +4372,10 @@ textarea:focus-visible {
   .scene-threshold__pressure { grid-template-columns: 1fr; }
   .scene-active__pressure,
   .scene-cast { padding-inline: 16px; }
+  .scene-world-choices > div,
+  .scene-active__stage,
+  .scene-active__possibilities { grid-template-columns: 1fr; }
+  .scene-active__preparation { padding-inline: 16px; }
   .scene-fallout__heading { align-items: stretch; flex-direction: column; }
   .scene-fallout__targets,
   .scene-discovery-types,

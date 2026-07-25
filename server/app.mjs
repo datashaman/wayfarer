@@ -268,6 +268,54 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         return
       }
 
+      if (request.method === 'PUT' && request.url === '/api/campaign/scene-preparation') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Only a GM can prepare a scene.' })
+          return
+        }
+        const body = await readJson(request)
+        const cleanList = (value, maximumItems, maximumLength) => Array.isArray(value) && value.length > 0 && value.length <= maximumItems
+          ? value.map((item) => cleanCanonText(item, maximumLength))
+          : null
+        const preparation = {
+          title: cleanCanonText(body.title, 120),
+          framing: cleanCanonText(body.framing, 2_000),
+          stakes: cleanCanonText(body.stakes, 1_000),
+          question: cleanCanonText(body.question, 500),
+          characterIds: Array.isArray(body.characterIds) && body.characterIds.length <= 20 && body.characterIds.every((id) => typeof id === 'string') ? [...new Set(body.characterIds)] : [],
+          locationIds: Array.isArray(body.locationIds) && body.locationIds.length <= 10 && body.locationIds.every((id) => typeof id === 'string') ? [...new Set(body.locationIds)] : [],
+          npcIds: Array.isArray(body.npcIds) && body.npcIds.length <= 20 && body.npcIds.every((id) => typeof id === 'string') ? [...new Set(body.npcIds)] : [],
+          clues: cleanList(body.clues, 8, 500),
+          complications: cleanList(body.complications, 8, 500),
+          sessionQuestions: cleanList(body.sessionQuestions, 8, 500),
+          expectedRevision: Number.isInteger(body.expectedRevision) ? body.expectedRevision : null,
+        }
+        if (!preparation.title || !preparation.framing || !preparation.stakes || !preparation.question || !preparation.characterIds.length || !preparation.locationIds.length || !preparation.npcIds.length || !preparation.clues?.every(Boolean) || !preparation.complications?.every(Boolean) || !preparation.sessionQuestions?.every(Boolean)) {
+          sendJson(response, 400, { error: 'Complete the cast, stage, pressures, discoveries, complications, and open questions.' })
+          return
+        }
+        const result = store.saveScenePreparation(requestSession.campaign.id, requestSession.player.id, preparation)
+        if (result.outcome === 'active') {
+          sendJson(response, 409, { error: 'Resolve the active scene before preparing another.', ...result })
+          return
+        }
+        if (result.outcome === 'conflict') {
+          sendJson(response, 409, { error: 'Another GM revised this preparation. Review their changes before saving again.', ...result })
+          return
+        }
+        if (result.outcome === 'invalid') {
+          sendJson(response, 400, { error: 'Choose characters and world material from this campaign.' })
+          return
+        }
+        broadcastSceneContext(requestSession.campaign.id, result.context)
+        sendJson(response, result.outcome === 'created' ? 201 : 200, result.context)
+        return
+      }
+
       if (request.method === 'POST' && request.url === '/api/campaign/scenes') {
         if (!requestSession) {
           sendJson(response, 401, { error: 'Session not found.' })
@@ -277,23 +325,17 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 403, { error: 'Only a GM can establish a scene.' })
           return
         }
-        const body = await readJson(request)
-        const title = cleanCanonText(body.title, 120)
-        const framing = cleanCanonText(body.framing, 2_000)
-        const stakes = cleanCanonText(body.stakes, 1_000)
-        const question = cleanCanonText(body.question, 500)
-        const characterIds = Array.isArray(body.characterIds) && body.characterIds.length <= 20 && body.characterIds.every((id) => typeof id === 'string') ? [...new Set(body.characterIds)] : []
-        if (!title || !framing || !stakes || !question || !characterIds.length) {
-          sendJson(response, 400, { error: 'Frame the scene and choose at least one present character.' })
-          return
-        }
-        const result = store.startScene(requestSession.campaign.id, requestSession.player.id, { title, framing, stakes, question, characterIds })
+        const result = store.startScene(requestSession.campaign.id, requestSession.player.id)
         if (result.outcome === 'active') {
           sendJson(response, 409, { error: 'Resolve the active scene before establishing another.', ...result })
           return
         }
         if (result.outcome === 'invalid') {
           sendJson(response, 400, { error: 'The scene must use this campaign’s opening and characters.' })
+          return
+        }
+        if (result.outcome === 'unprepared') {
+          sendJson(response, 400, { error: 'Save the session preparation before beginning play.' })
           return
         }
         broadcastScene(requestSession.campaign.id, result)
@@ -1408,6 +1450,12 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
       if (client.campaign.id === campaignId && client.player.knowledgeRole === 'gm') send(socket, envelope('campaign.scene_updated', campaignId, result.context))
     }
     broadcastCampaignEvent(campaignId, envelope('room.activity', result.roomId, { senderId: result.message.senderId }))
+  }
+
+  function broadcastSceneContext(campaignId, context) {
+    for (const [socket, client] of clients) {
+      if (client.campaign.id === campaignId && client.player.knowledgeRole === 'gm') send(socket, envelope('campaign.scene_updated', campaignId, context))
+    }
   }
 
   function broadcastCampaignEvent(campaignId, event) {

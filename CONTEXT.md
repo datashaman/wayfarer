@@ -9,7 +9,7 @@ Wayfarer is a human-kept campaign memory system, not an autonomous storyteller. 
 - Scene resolution may create GM-authored world consequences anchored to saved factions, locations, NPCs, or hooks. Consequences preserve immutable before/after snapshots and scene provenance; active pressure can be explicitly carried into the next scene, but is never applied automatically.
 - Scene resolution may also establish newly encountered factions, locations, NPCs, and hooks. Their first wording and source scene are immutable provenance; their current world entries remain editable and immediately available to later scenes and character connections.
 - Character concepts are private editable options grounded only in the saved campaign foundation; only the player creates or revises their character.
-- A scene becomes active only when a GM establishes its framing, stakes, first choice, and present characters; resolving it records what changed without inventing an outcome.
+- A scene becomes active only from a saved GM preparation containing its framing, stakes, first choice, present characters, involved locations and NPCs, possible discoveries and complications, and questions to play toward. Preparation never dictates an outcome; resolution records only what actually changed.
 - Character growth is a player-authored revision, never inferred advancement; scene links are permitted only when that character witnessed the resolved scene.
 - Campaign ownership governs administration. GM knowledge access governs private lore.
 - Every AI artifact identifies the exact session range that produced it and retains transcript citations.
@@ -28,6 +28,7 @@ Wayfarer is a human-kept campaign memory system, not an autonomous storyteller. 
 - **Campaign foundation**: GM-kept playable starting material—premise, pitch, truths, factions, locations, NPCs, hooks, and opening crisis—with durable typed identities and revision protection.
 - **Character folio**: one player-owned character per seat, split between table-readable identity and a secret readable only by that player and GMs, with durable world and party connections.
 - **Campaign scene**: one GM-established active moment with present characters, pressure, and a first choice; its opening and human-recorded resolution are immutable in-character transcript markers.
+- **Session preparation**: one revision-protected GM folio for the next scene, joining cast, stage, pressure, discoveries, complications, and open questions without scripting an outcome; beginning play snapshots and consumes it.
 - **Character revision**: immutable snapshot of a player-authored character change with its reason, changed fields, and optional provenance from a resolved scene the character witnessed.
 - **Canon constitution**: versioned table-specific policy for what counts as canon.
 - **Canon proposal**: cited AI suggestion awaiting a GM ruling.

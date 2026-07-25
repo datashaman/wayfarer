@@ -171,6 +171,11 @@ function publicScene(row, characters = []) {
     framing: row.framing,
     stakes: row.stakes,
     question: row.question,
+    locations: JSON.parse(row.locations ?? '[]'),
+    npcs: JSON.parse(row.npcs ?? '[]'),
+    clues: JSON.parse(row.clues ?? '[]'),
+    complications: JSON.parse(row.complications ?? '[]'),
+    sessionQuestions: JSON.parse(row.session_questions ?? '[]'),
     status: row.status,
     outcome: row.outcome ?? null,
     characters: characters.map((character) => ({ id: character.id, name: character.name, playerName: character.player_name })),
@@ -178,6 +183,25 @@ function publicScene(row, characters = []) {
     resolvedByName: row.resolved_by_name ?? null,
     createdAt: row.created_at,
     resolvedAt: row.resolved_at ?? null,
+  }
+}
+
+function publicScenePreparation(row) {
+  if (!row) return null
+  return {
+    title: row.title,
+    framing: row.framing,
+    stakes: row.stakes,
+    question: row.question,
+    characterIds: JSON.parse(row.character_ids),
+    locationIds: JSON.parse(row.location_ids),
+    npcIds: JSON.parse(row.npc_ids),
+    clues: JSON.parse(row.clues),
+    complications: JSON.parse(row.complications),
+    sessionQuestions: JSON.parse(row.session_questions),
+    revision: row.revision,
+    updatedAt: row.updated_at,
+    updatedByName: row.updated_by_name ?? null,
   }
 }
 
@@ -502,12 +526,33 @@ export function createStore(databasePath) {
       framing TEXT NOT NULL,
       stakes TEXT NOT NULL,
       question TEXT NOT NULL,
+      locations TEXT NOT NULL DEFAULT '[]',
+      npcs TEXT NOT NULL DEFAULT '[]',
+      clues TEXT NOT NULL DEFAULT '[]',
+      complications TEXT NOT NULL DEFAULT '[]',
+      session_questions TEXT NOT NULL DEFAULT '[]',
       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'resolved')),
       outcome TEXT,
       created_by_player_id TEXT NOT NULL REFERENCES players(id),
       resolved_by_player_id TEXT REFERENCES players(id),
       created_at TEXT NOT NULL,
       resolved_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS campaign_scene_preparations (
+      campaign_id TEXT PRIMARY KEY REFERENCES campaigns(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      framing TEXT NOT NULL,
+      stakes TEXT NOT NULL,
+      question TEXT NOT NULL,
+      character_ids TEXT NOT NULL,
+      location_ids TEXT NOT NULL,
+      npc_ids TEXT NOT NULL,
+      clues TEXT NOT NULL,
+      complications TEXT NOT NULL,
+      session_questions TEXT NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 0,
+      updated_by_player_id TEXT NOT NULL REFERENCES players(id),
+      updated_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS campaign_scene_characters (
       scene_id TEXT NOT NULL REFERENCES campaign_scenes(id) ON DELETE CASCADE,
@@ -1004,6 +1049,10 @@ export function createStore(databasePath) {
   if (!messageColumns.some((column) => column.name === 'character_name')) database.exec('ALTER TABLE messages ADD COLUMN character_name TEXT')
   if (!messageColumns.some((column) => column.name === 'kind')) database.exec("ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'chat' CHECK(kind IN ('chat', 'scene_start', 'scene_end'))")
   if (!messageColumns.some((column) => column.name === 'metadata')) database.exec('ALTER TABLE messages ADD COLUMN metadata TEXT')
+  const sceneColumns = database.prepare('PRAGMA table_info(campaign_scenes)').all()
+  for (const column of ['locations', 'npcs', 'clues', 'complications', 'session_questions']) {
+    if (!sceneColumns.some((item) => item.name === column)) database.exec(`ALTER TABLE campaign_scenes ADD COLUMN ${column} TEXT NOT NULL DEFAULT '[]'`)
+  }
   database.exec("CREATE UNIQUE INDEX IF NOT EXISTS campaign_scenes_one_active ON campaign_scenes(campaign_id) WHERE status = 'active'")
   const roomColumns = database.prepare('PRAGMA table_info(rooms)').all()
   if (!roomColumns.some((column) => column.name === 'position')) {
@@ -1269,10 +1318,14 @@ export function createStore(databasePath) {
     WHERE rooms.id = ?
   `)
   const inCharacterRoom = database.prepare("SELECT * FROM rooms WHERE campaign_id = ? AND slug = 'in-character' AND archived_at IS NULL")
+  const scenePreparation = database.prepare('SELECT campaign_scene_preparations.*, players.name AS updated_by_name FROM campaign_scene_preparations JOIN players ON players.id = campaign_scene_preparations.updated_by_player_id WHERE campaign_scene_preparations.campaign_id = ?')
+  const insertScenePreparation = database.prepare('INSERT INTO campaign_scene_preparations (campaign_id, title, framing, stakes, question, character_ids, location_ids, npc_ids, clues, complications, session_questions, updated_by_player_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+  const updateScenePreparation = database.prepare('UPDATE campaign_scene_preparations SET title = ?, framing = ?, stakes = ?, question = ?, character_ids = ?, location_ids = ?, npc_ids = ?, clues = ?, complications = ?, session_questions = ?, revision = revision + 1, updated_by_player_id = ?, updated_at = ? WHERE campaign_id = ? AND revision = ?')
+  const deleteScenePreparation = database.prepare('DELETE FROM campaign_scene_preparations WHERE campaign_id = ?')
   const activeScene = database.prepare("SELECT campaign_scenes.*, creators.name AS created_by_name FROM campaign_scenes JOIN players AS creators ON creators.id = campaign_scenes.created_by_player_id WHERE campaign_scenes.campaign_id = ? AND campaign_scenes.status = 'active'")
   const scenesByCampaign = database.prepare("SELECT campaign_scenes.*, creators.name AS created_by_name, resolvers.name AS resolved_by_name FROM campaign_scenes JOIN players AS creators ON creators.id = campaign_scenes.created_by_player_id LEFT JOIN players AS resolvers ON resolvers.id = campaign_scenes.resolved_by_player_id WHERE campaign_scenes.campaign_id = ? ORDER BY campaign_scenes.rowid DESC LIMIT 20")
   const sceneCharacters = database.prepare('SELECT characters.id, characters.name, players.name AS player_name FROM campaign_scene_characters JOIN characters ON characters.id = campaign_scene_characters.character_id JOIN players ON players.id = characters.player_id WHERE campaign_scene_characters.scene_id = ? ORDER BY campaign_scene_characters.rowid')
-  const insertScene = database.prepare('INSERT INTO campaign_scenes (id, campaign_id, title, framing, stakes, question, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+  const insertScene = database.prepare('INSERT INTO campaign_scenes (id, campaign_id, title, framing, stakes, question, locations, npcs, clues, complications, session_questions, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
   const insertSceneCharacter = database.prepare('INSERT INTO campaign_scene_characters (scene_id, character_id) VALUES (?, ?)')
   const resolveScene = database.prepare("UPDATE campaign_scenes SET status = 'resolved', outcome = ?, resolved_by_player_id = ?, resolved_at = ? WHERE id = ? AND campaign_id = ? AND status = 'active'")
   const closedCampaignSessions = database.prepare(`
@@ -2094,29 +2147,53 @@ export function createStore(databasePath) {
           ...world.npcs.map((item) => ({ id: item.id, name: item.name, type: 'npc' })),
           ...world.hooks.map((item) => ({ id: item.id, name: item.title, type: 'hook' })),
         ] : [],
-        characters: charactersByCampaign.all(campaignId).map((row) => ({ id: row.id, name: row.name, playerName: row.player_name, concept: row.concept })),
+        characters: charactersByCampaign.all(campaignId).map((row) => ({ id: row.id, name: row.name, playerName: row.player_name, concept: row.concept, locationId: row.location_id, npcId: row.npc_id })),
+        locations: world?.locations ?? [],
+        npcs: world?.npcs ?? [],
+        preparation: publicScenePreparation(scenePreparation.get(campaignId)),
         activeScene: publicScene(current, current ? sceneCharacters.all(current.id) : []),
         scenes: scenesByCampaign.all(campaignId).map((row) => publicScene(row, sceneCharacters.all(row.id))),
         worldConsequences: activeWorldConsequences.all(campaignId).map(publicWorldConsequence),
       }
     },
 
-    startScene(campaignId, playerId, { title, framing, stakes, question, characterIds }) {
+    saveScenePreparation(campaignId, playerId, preparation) {
+      if (activeScene.get(campaignId)) return { outcome: 'active', context: this.getSceneContext(campaignId) }
+      const world = this.getCampaignWorld(campaignId)
+      const availableCharacters = charactersByCampaign.all(campaignId)
+      const validIds = (ids, available) => ids.length > 0 && ids.length === new Set(ids).size && ids.every((id) => available.some((item) => item.id === id))
+      if (!world || !validIds(preparation.characterIds, availableCharacters) || !validIds(preparation.locationIds, world.locations) || !validIds(preparation.npcIds, world.npcs)) return { outcome: 'invalid', context: this.getSceneContext(campaignId) }
+      const current = scenePreparation.get(campaignId)
+      const now = new Date().toISOString()
+      const values = [preparation.title, preparation.framing, preparation.stakes, preparation.question, JSON.stringify(preparation.characterIds), JSON.stringify(preparation.locationIds), JSON.stringify(preparation.npcIds), JSON.stringify(preparation.clues), JSON.stringify(preparation.complications), JSON.stringify(preparation.sessionQuestions)]
+      if (!current) insertScenePreparation.run(campaignId, ...values, playerId, now)
+      else if (preparation.expectedRevision !== current.revision || updateScenePreparation.run(...values, playerId, now, campaignId, current.revision).changes !== 1) return { outcome: 'conflict', context: this.getSceneContext(campaignId) }
+      return { outcome: current ? 'updated' : 'created', context: this.getSceneContext(campaignId) }
+    },
+
+    startScene(campaignId, playerId) {
       if (activeScene.get(campaignId)) return { outcome: 'active', context: this.getSceneContext(campaignId) }
       const room = inCharacterRoom.get(campaignId)
+      const preparation = publicScenePreparation(scenePreparation.get(campaignId))
+      if (!preparation) return { outcome: 'unprepared', context: this.getSceneContext(campaignId) }
+      const { title, framing, stakes, question, characterIds } = preparation
       const available = charactersByCampaign.all(campaignId)
       const chosen = available.filter((character) => characterIds.includes(character.id))
-      if (!room || !this.getCampaignWorld(campaignId) || !chosen.length || chosen.length !== new Set(characterIds).size) return { outcome: 'invalid' }
+      const world = this.getCampaignWorld(campaignId)
+      const locations = world?.locations.filter((item) => preparation.locationIds.includes(item.id)).map(({ id, name, description, danger }) => ({ id, name, description, danger })) ?? []
+      const npcs = world?.npcs.filter((item) => preparation.npcIds.includes(item.id)).map(({ id, name, role, want, leverage }) => ({ id, name, role, want, leverage })) ?? []
+      if (!room || !world || !chosen.length || chosen.length !== characterIds.length || !locations.length || locations.length !== preparation.locationIds.length || !npcs.length || npcs.length !== preparation.npcIds.length) return { outcome: 'invalid', context: this.getSceneContext(campaignId) }
       const id = randomUUID()
       const messageId = randomUUID()
       const clientMessageId = `scene:${id}:start`
       const now = new Date().toISOString()
-      const scene = { id, title, framing, stakes, question, characters: chosen.map((character) => ({ id: character.id, name: character.name, playerName: character.player_name })) }
+      const scene = { id, title, framing, stakes, question, characters: chosen.map((character) => ({ id: character.id, name: character.name, playerName: character.player_name })), locations, npcs, clues: preparation.clues, complications: preparation.complications, sessionQuestions: preparation.sessionQuestions }
       database.exec('BEGIN IMMEDIATE')
       try {
-        insertScene.run(id, campaignId, title, framing, stakes, question, playerId, now)
+        insertScene.run(id, campaignId, title, framing, stakes, question, JSON.stringify(locations), JSON.stringify(npcs), JSON.stringify(preparation.clues), JSON.stringify(preparation.complications), JSON.stringify(preparation.sessionQuestions), playerId, now)
         for (const character of chosen) insertSceneCharacter.run(id, character.id)
         insertMessage.run(messageId, room.id, playerId, clientMessageId, framing, null, 'scene_start', JSON.stringify(scene), now)
+        deleteScenePreparation.run(campaignId)
         database.exec('COMMIT')
       } catch (error) {
         database.exec('ROLLBACK')

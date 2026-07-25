@@ -22,15 +22,33 @@ test('a scene crosses from saved preparation into the in-character transcript an
     factionId: characterContext.world.factions[0].id, factionConnection: 'They paid for silence.', locationId: characterContext.world.locations[0].id, locationConnection: 'She drowned there.', npcId: characterContext.world.npcs[0].id, npcConnection: 'They know what she did.', connectedCharacterId: null, characterConnection: '', generatorVersion: 'manual:character-v1',
   }).character
 
-  const started = store.startScene(owner.campaign.id, owner.player.id, { title: 'The first toll', framing: 'The bell rings in Iria’s hand.', stakes: 'The town sinks.', question: 'Who cuts the rope?', characterIds: [saved.id] })
+  const bellSquare = characterContext.world.locations[0]
+  const witness = characterContext.world.npcs[0]
+  const preparation = {
+    title: 'The first toll', framing: 'The bell rings in Iria’s hand.', stakes: 'The town sinks.', question: 'Who cuts the rope?', characterIds: [saved.id], locationIds: [bellSquare.id], npcIds: [witness.id],
+    clues: ['The rope is wet with fresh seawater.'], complications: ['The Salvagers mistake hesitation for surrender.'], sessionQuestions: ['Who rang the bell before the town returned?'], expectedRevision: null,
+  }
+  const prepared = store.saveScenePreparation(owner.campaign.id, owner.player.id, preparation)
+  assert.equal(prepared.outcome, 'created')
+  assert.deepEqual(prepared.context.preparation.locationIds, [bellSquare.id])
+  assert.deepEqual(prepared.context.preparation.clues, preparation.clues)
+  assert.equal(store.saveScenePreparation(owner.campaign.id, owner.player.id, preparation).outcome, 'conflict')
+  const revised = store.saveScenePreparation(owner.campaign.id, owner.player.id, { ...preparation, framing: 'The bell rings in Iria’s open hand.', expectedRevision: 0 })
+  assert.equal(revised.outcome, 'updated')
+  assert.equal(revised.context.preparation.revision, 1)
+
+  const started = store.startScene(owner.campaign.id, owner.player.id)
   assert.equal(started.outcome, 'started')
   assert.equal(started.message.kind, 'scene_start')
   assert.equal(started.message.scene.characters[0].name, 'Iria Voss')
-  assert.equal(store.startScene(owner.campaign.id, owner.player.id, { title: 'Another', framing: 'Too soon.', stakes: 'None.', question: 'Why?', characterIds: [saved.id] }).outcome, 'active')
+  assert.equal(started.context.activeScene.locations[0].name, 'Bell Square')
+  assert.equal(started.context.activeScene.npcs[0].name, 'Witness 1')
+  assert.deepEqual(started.context.activeScene.clues, preparation.clues)
+  assert.equal(started.context.preparation, null)
+  assert.equal(store.startScene(owner.campaign.id, owner.player.id).outcome, 'active')
   const inCharacter = owner.campaign.rooms.find((room) => room.slug === 'in-character')
   assert.equal(store.listMessages(inCharacter.id).messages[0].scene.title, 'The first toll')
 
-  const bellSquare = characterContext.world.locations[0]
   const resolved = store.resolveScene(owner.campaign.id, owner.player.id, started.context.activeScene.id, 'Iria cuts the rope and the bell cracks.', [{ entityType: 'location', entityId: bellSquare.id, afterState: 'Bell Square lies open to the drowned archive below.', pressure: 'The Salvagers will arrive before dawn.' }], [{ entityType: 'npc', name: 'Sister Corda', detail: 'Keeper of the submerged archive.', tension: 'Recover the name the sea took from her.', leverage: 'A dry road through the drowned streets.' }])
   assert.equal(resolved.outcome, 'resolved')
   assert.equal(resolved.message.kind, 'scene_end')
@@ -56,7 +74,9 @@ test('a scene crosses from saved preparation into the in-character transcript an
   assert.equal(changed.character.revisions[0].scene.title, 'The first toll')
   assert.deepEqual(changed.character.revisions[0].changedFields, ['belief'])
 
-  const next = store.startScene(owner.campaign.id, owner.player.id, { title: 'Before dawn', framing: 'Hooks scrape across the square.', stakes: 'The archive will be stripped bare.', question: 'Who claims it first?', characterIds: [saved.id] })
+  const nextPreparation = { ...preparation, title: 'Before dawn', framing: 'Hooks scrape across the square.', stakes: 'The archive will be stripped bare.', question: 'Who claims it first?', npcIds: [sisterCorda.id], expectedRevision: null }
+  assert.equal(store.saveScenePreparation(owner.campaign.id, owner.player.id, nextPreparation).outcome, 'created')
+  const next = store.startScene(owner.campaign.id, owner.player.id)
   assert.equal(next.context.worldEntities.some((entity) => entity.id === sisterCorda.id), true)
   const changedAgain = store.resolveScene(owner.campaign.id, owner.player.id, next.context.activeScene.id, 'Iria seals the archive behind the flood.', [{ entityType: 'location', entityId: bellSquare.id, afterState: 'Bell Square is flooded and the archive is sealed.', pressure: 'Something below keeps knocking.' }, { entityType: 'npc', entityId: sisterCorda.id, afterState: 'Sister Corda is bound to the reopened archive.', pressure: 'She needs the party to recover her stolen name.' }])
   assert.equal(changedAgain.context.worldConsequences.length, 2)

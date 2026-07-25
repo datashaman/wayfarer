@@ -4384,6 +4384,33 @@ textarea:focus-visible {
 .character-concepts span { font-family: Georgia, "Times New Roman", serif; font-size: 12px; line-height: 1.45; }
 .character-concepts small { color: var(--parchment-muted); font-size: 9px; line-height: 1.4; }
 
+.character-aftermath {
+  display: grid;
+  gap: 8px;
+  padding: 28px 40px 32px;
+  border-bottom: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--moss) 3%, transparent);
+}
+.character-aftermath > p { max-width: 620px; margin: -2px 0 8px; color: var(--parchment-dim); font-family: Georgia, "Times New Roman", serif; font-size: 12px; line-height: 1.55; }
+.character-aftermath fieldset { min-width: 0; margin: 4px 0 8px; padding: 0; border: 0; }
+.character-aftermath legend { margin-bottom: 8px; color: var(--parchment-dim); font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.character-aftermath fieldset > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.character-aftermath fieldset button { display: grid; gap: 4px; padding: 11px; border: 1px solid var(--border); border-radius: var(--radius-small); background: transparent; color: var(--parchment-dim); text-align: left; }
+.character-aftermath fieldset button.is-chosen { border-color: color-mix(in srgb, var(--moss) 60%, transparent); background: color-mix(in srgb, var(--moss) 5%, transparent); color: var(--parchment); }
+.character-aftermath fieldset button strong { font-family: Georgia, "Times New Roman", serif; font-size: 13px; font-weight: 500; }
+.character-aftermath fieldset button span { overflow: hidden; color: var(--parchment-muted); font-size: 9px; line-height: 1.4; }
+
+.character-history { padding: 32px 40px; border-bottom: 1px solid var(--border-soft); }
+.character-history article { position: relative; margin-left: 7px; padding: 0 0 22px 22px; border-left: 1px solid var(--border); }
+.character-history article::before { position: absolute; top: 3px; left: -4px; width: 7px; height: 7px; border: 1px solid var(--wax); border-radius: 50%; background: var(--soot-925); content: ""; }
+.character-history article:last-child { padding-bottom: 0; }
+.character-history article > div { display: flex; align-items: center; gap: 8px; }
+.character-history article strong { color: var(--parchment-dim); font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
+.character-history article time { color: var(--parchment-muted); font-size: 8px; }
+.character-history article p { margin: 6px 0; color: var(--parchment-soft); font-family: Georgia, "Times New Roman", serif; font-size: 13px; line-height: 1.5; }
+.character-history article > span { display: block; margin-bottom: 5px; color: var(--moss); font-size: 8px; }
+.character-history article small { color: var(--parchment-muted); font-size: 8px; text-transform: capitalize; }
+
 .character-half {
   display: grid;
   gap: 8px;
@@ -4492,10 +4519,13 @@ textarea:focus-visible {
   .character-folio { width: 100vw; }
   .character-spread__lead,
   .character-half,
-  .character-sealed { padding: 24px 16px; }
+  .character-sealed,
+  .character-aftermath,
+  .character-history { padding: 24px 16px; }
   .character-pair,
   .character-choices > div,
-  .character-concepts > div:last-child { grid-template-columns: 1fr; }
+  .character-concepts > div:last-child,
+  .character-aftermath fieldset > div { grid-template-columns: 1fr; }
   .character-actions { align-items: stretch; flex-direction: column; }
   .character-actions .primary-action { width: 100%; }
 }

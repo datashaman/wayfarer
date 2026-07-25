@@ -223,6 +223,8 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           if (character[field] == null && field === 'characterConnection') continue
           character[field] = cleanCanonText(character[field], maximum)
         }
+        character.reason = request.method === 'PUT' ? cleanCanonText(body.reason, 1_000) : null
+        character.sceneId = typeof body.sceneId === 'string' && body.sceneId.length <= 100 ? body.sceneId : null
         const result = store.saveCharacter(requestSession.campaign.id, requestSession.player.id, character)
         if (result.outcome === 'invalid' || result.outcome === 'invalid_connection') {
           sendJson(response, 400, { error: result.outcome === 'invalid_connection' ? 'Choose connections from this campaign.' : 'Complete every character field.' })
@@ -230,6 +232,18 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         }
         if (result.outcome === 'conflict') {
           sendJson(response, 409, { error: 'This character changed elsewhere.', character: result.character })
+          return
+        }
+        if (result.outcome === 'reason_required') {
+          sendJson(response, 400, { error: 'Say why this character changed.' })
+          return
+        }
+        if (result.outcome === 'invalid_scene') {
+          sendJson(response, 400, { error: 'Choose a resolved scene this character was part of.' })
+          return
+        }
+        if (result.outcome === 'no_change') {
+          sendJson(response, 400, { error: 'Change at least one part of the character before keeping a revision.' })
           return
         }
         if (result.outcome === 'not_found') {

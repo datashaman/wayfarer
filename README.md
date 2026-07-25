@@ -28,6 +28,7 @@ npm run test:e2e
 - Campaign-wide unread activity, transcript search, and revision-safe shared notes
 - Player-owned, world-grounded character folios with sealed secrets and durable campaign connections
 - GM-framed active scenes with immutable opening and resolution markers in the in-character transcript
+- Scene-linked character aftermath with immutable, player-authored revision history
 - Durable per-player read state, reconnect catch-up, idempotent messages, and paginated transcript history
 - WebSocket text chat between connected players
 - WebRTC peer-to-peer voice with mute, leave, and push-to-talk controls
@@ -60,6 +61,8 @@ GMs create the campaign itself from the top-level **World** folio. A short premi
 Every seat has a top-level **Character** folio. A playable character records their public concept, appearance, immediate drive, capability, complication, possession, and challengeable belief; a sealed secret is readable only by that player and the campaign’s GMs. Characters must carry concrete connections to one saved faction, location, and NPC, with an optional connection to another character once the party exists. Players can write from scratch or request exactly three private, editable concepts grounded only in the saved campaign foundation. Choosing a concept fills the folio but saves nothing until **Take your seat**. Party presence uses the character identity while retaining the player name, and messages in the `in-character` room permanently snapshot the character name used when sent. Run `npm run eval:character-concepts` for the bounded concept fixture.
 
 Once the world and at least one character exist, a GM uses the top-level **Scene** folio to begin actual play. The saved opening crisis pre-fills the moment, framing, and stakes; the GM adds the first choice and selects who is present. **Begin play** creates the campaign’s single active scene and an immutable threshold marker in the `in-character` transcript, then takes the GM directly there. Ordinary character messages continue beneath that framing. Resolving the scene requires a concrete statement of what changed, adds a matching transcript marker, and frees the table to frame the next scene. Scene markers are human-authored campaign records, not AI narration.
+
+Resolved scenes return to each present character as optional aftermath. The player edits their current folio, states why the character changed, and may link that revision to the scene they witnessed. Every kept edit appends an immutable snapshot containing the exact changed fields, reason, scene provenance, and sealed state; it never overwrites earlier character history. Creation begins at revision 0, no-change revisions are rejected, and only the character’s player may author a revision. GMs can inspect private history under the same knowledge boundary as character secrets.
 
 Run `npm run eval:canon` with a configured key to check the live extractor against promises, banter, corrections, transcript prompt injection, strict and permissive constitution policies, citation integrity, and GM-only visibility. Deterministic safety checks remain part of `npm test`; the live evaluation is separate because it calls the configured model.
 

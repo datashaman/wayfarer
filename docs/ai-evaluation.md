@@ -1,6 +1,6 @@
 # AI evaluation and release gates
 
-Live model checks are intentionally separate from deterministic tests. Every production AI surface is registered in `server/ai-surfaces.mjs` with a stable ID, authority boundary, version tag, and evaluation command. Run all nine live suites before changing a generator version:
+Live model checks are intentionally separate from deterministic tests. Every production AI surface is registered in `server/ai-surfaces.mjs` with a stable ID, authority boundary, version tag, and evaluation command. Run all ten live suites before changing a generator version:
 
 - canon suggestions;
 - continuity briefs;
@@ -10,7 +10,8 @@ Live model checks are intentionally separate from deterministic tests. Every pro
 - intent phrasing;
 - house-rule compilation;
 - faction-clock proposals.
-- campaign-opening drafts.
+- campaign-opening drafts;
+- character-concept drafts.
 
 Record an individual comparable result with:
 

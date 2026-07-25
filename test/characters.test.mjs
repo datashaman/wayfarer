@@ -69,6 +69,7 @@ test('in-character messages keep the character identity present at send time', (
   assert.equal(spoken.senderName, 'Iria Voss')
   assert.equal(spoken.playerName, 'Mara')
   assert.equal(spoken.characterName, 'Iria Voss')
+  assert.equal(store.searchMessages(owner.campaign.id, 'bell is awake')[0].senderName, 'Iria Voss')
   const aside = store.listMessages(fireside.id).messages[0]
   assert.equal(aside.senderName, 'Mara')
   assert.equal(aside.playerName, 'Mara')

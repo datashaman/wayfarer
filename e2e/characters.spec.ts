@@ -1,0 +1,38 @@
+import { expect, test } from '@playwright/test'
+
+test('a player creates a world-grounded character and speaks as them', async ({ page }) => {
+  await page.goto('/')
+  await page.getByLabel('Campaign name').fill('The Salt Road')
+  await page.getByLabel('Your name').fill('Mara')
+  await page.getByRole('button', { name: 'Open the table' }).click()
+  await page.getByRole('button', { name: 'I saved my seat key' }).click()
+
+  await page.getByRole('button', { name: 'World' }).click()
+  const world = page.getByRole('dialog', { name: 'Campaign opening' })
+  await world.getByLabel('What is this campaign about?').fill('For seven nights, a drowned town returns beneath a moonless sky.')
+  await world.getByRole('button', { name: 'Draft a playable opening' }).click()
+  await world.getByRole('button', { name: 'Establish campaign foundation' }).click()
+  await expect(world.getByText('Campaign foundation established. The table now has somewhere to begin.')).toBeVisible()
+  await world.getByRole('button', { name: 'Close campaign opening' }).click()
+
+  await page.getByRole('button', { name: 'Character', exact: true }).click()
+  const character = page.getByRole('dialog', { name: 'Your character' })
+  await character.getByRole('button', { name: 'Offer three lives from this world' }).click()
+  await expect(character.getByRole('heading', { name: 'Three lives already in motion' })).toBeVisible()
+  await character.getByRole('button', { name: /Iria Voss/ }).click()
+  await expect(character.getByLabel('Name')).toHaveValue('Iria Voss')
+  await character.getByRole('button', { name: 'Take your seat' }).click()
+  await expect(character.getByText('Iria Voss has taken a seat at the table.')).toBeVisible()
+  await character.getByRole('button', { name: 'Close character folio' }).click()
+
+  const partySeat = page.locator('.party-list .player-row')
+  await expect(partySeat.getByText('Iria Voss')).toBeVisible()
+  await expect(partySeat.getByText('Mara')).toBeVisible()
+  await page.getByRole('button', { name: /in-character/ }).click()
+  await page.getByLabel('Message in-character').fill('The bell is awake.')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  const message = page.locator('.message').last()
+  await expect(message.getByText('Iria Voss')).toBeVisible()
+  await expect(message.getByText('Mara')).toBeVisible()
+  await expect(message.getByText('The bell is awake.')).toBeVisible()
+})

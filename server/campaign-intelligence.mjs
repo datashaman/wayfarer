@@ -19,8 +19,8 @@ function objectList(value, length, fields) {
   return items.some((item) => Object.values(item).some((value) => !value)) ? null : items
 }
 
-export function createCampaignIntelligence({ version, generateKnowledgeAnswer, generateIntentDrafts, generateFactionProposal, generateHouseRule, generateCampaignSeed, onInference = null }) {
-  if (!version || !generateKnowledgeAnswer || !generateIntentDrafts || !generateFactionProposal || !generateHouseRule || !generateCampaignSeed) throw new Error('Campaign intelligence requires every generator.')
+export function createCampaignIntelligence({ version, generateKnowledgeAnswer, generateIntentDrafts, generateFactionProposal, generateHouseRule, generateCampaignSeed, generateCharacterConcepts, onInference = null }) {
+  if (!version || !generateKnowledgeAnswer || !generateIntentDrafts || !generateFactionProposal || !generateHouseRule || !generateCampaignSeed || !generateCharacterConcepts) throw new Error('Campaign intelligence requires every generator.')
   return {
     version,
     async draftCampaignSeed({ campaignId = null, premise }) {
@@ -38,6 +38,24 @@ export function createCampaignIntelligence({ version, generateKnowledgeAnswer, g
           throw new CampaignIntelligenceError('invalid_campaign_seed', 'The campaign draft was not a complete playable opening.')
         }
         return { title, premise, pitch, truths, factions, locations, npcs, hooks, openingCrisis, generatorVersion: version }
+      })
+    },
+    async draftCharacterConcepts({ campaignId = null, world }) {
+      return observeAiInference({ campaignId, surface: 'character_concepts', generatorVersion: version, onInference }, async (recordUsage) => {
+        const output = await generateCharacterConcepts({ campaignId, world, recordUsage })
+        const concepts = objectList(output?.concepts, 3, {
+          name: 80, concept: 240, appearance: 500, drive: 500, capability: 500,
+          complication: 500, possession: 500, belief: 500, secret: 1_000,
+          factionId: 100, factionConnection: 500, locationId: 100, locationConnection: 500,
+          npcId: 100, npcConnection: 500,
+        })
+        const factionIds = new Set(world.factions.map((item) => item.id))
+        const locationIds = new Set(world.locations.map((item) => item.id))
+        const npcIds = new Set(world.npcs.map((item) => item.id))
+        if (!concepts || concepts.some((item) => !factionIds.has(item.factionId) || !locationIds.has(item.locationId) || !npcIds.has(item.npcId))) {
+          throw new CampaignIntelligenceError('invalid_character_concepts', 'The character concepts were not grounded in this campaign.')
+        }
+        return concepts.map((item) => ({ ...item, generatorVersion: version }))
       })
     },
     async answerKnowledge({ campaignId = null, question, canon, priorFeedback = [] }) {

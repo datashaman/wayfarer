@@ -1,5 +1,5 @@
 import { BookUser, LockKeyhole, X } from 'lucide-react'
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { api } from './lib/api'
 import type { Character, CharacterCreationContext, TableSession } from './types/protocol'
 
@@ -71,12 +71,13 @@ export function CharacterFolio({ session, context: suppliedContext, onContext, o
   onContext: (context: CharacterCreationContext) => void
   onClose: () => void
 }) {
-  const authorization = { authorization: `Bearer ${session.player.token}` }
+  const authorization = useMemo(() => ({ authorization: `Bearer ${session.player.token}` }), [session.player.token])
   const [context, setContext] = useState<CharacterCreationContext | null>(suppliedContext)
   const [draft, setDraft] = useState<Draft>(blankDraft)
   const [pending, setPending] = useState('load')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [concepts, setConcepts] = useState<Draft[]>([])
   const mine = context?.characters.find((character) => character.playerId === session.player.id) ?? null
   const companions = context?.characters.filter((character) => character.playerId !== session.player.id) ?? []
 
@@ -92,7 +93,7 @@ export function CharacterFolio({ session, context: suppliedContext, onContext, o
       .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : 'The character folio could not be read.') })
       .finally(() => { if (active) setPending('') })
     return () => { active = false }
-  }, [session.player.token])
+  }, [authorization, onContext, session.player.id])
 
   const save = (event: FormEvent) => {
     event.preventDefault()
@@ -109,6 +110,14 @@ export function CharacterFolio({ session, context: suppliedContext, onContext, o
       .finally(() => setPending(''))
   }
 
+  const offerConcepts = () => {
+    setPending('concepts'); setError(''); setNotice('')
+    void api<{ concepts: Draft[] }>('/api/campaign/characters/concepts', { method: 'POST', headers: authorization })
+      .then((result) => setConcepts(result.concepts.map((concept) => ({ ...blankDraft(), ...concept }))))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'No character concepts arrived. You can keep writing by hand.'))
+      .finally(() => setPending(''))
+  }
+
   if (pending === 'load') return <div className="drawer-layer drawer-layer--right" role="dialog" aria-modal="true"><button className="drawer-scrim" onClick={onClose} aria-label="Dismiss character folio" /><aside className="character-folio"><p className="folio-loading">Opening your character folio…</p></aside></div>
 
   return <div className="drawer-layer drawer-layer--right" role="dialog" aria-modal="true" aria-labelledby="character-heading">
@@ -119,7 +128,9 @@ export function CharacterFolio({ session, context: suppliedContext, onContext, o
         {error && <div className="folio-error" role="alert">{error}</div>}
         {notice && <div className="world-notice" role="status">{notice}</div>}
         {!context?.world ? <section className="character-no-world"><BookUser size={24} /><span className="eyebrow">No campaign foundation yet</span><h2>Your character needs a world to push against</h2><p>Ask a GM to establish the campaign opening first. It gives every character real people, places, and powers to be tangled with.</p></section> : <form className="character-spread" onSubmit={save}>
-          <header className="character-spread__lead"><span className="eyebrow">A person in {context.world.title}</span><h2>{mine ? draft.name || 'Unnamed character' : 'Who arrives at the opening crisis?'}</h2><p>{context.world.pitch}</p></header>
+          <header className="character-spread__lead"><span className="eyebrow">A person in {context.world.title}</span><h2>{mine ? draft.name || 'Unnamed character' : 'Who arrives at the opening crisis?'}</h2><p>{context.world.pitch}</p>{!mine && <button type="button" className="folio-button character-offer" onClick={offerConcepts} disabled={pending === 'concepts'}>{pending === 'concepts' ? 'Listening to the world…' : concepts.length ? 'Offer three different lives' : 'Offer three lives from this world'}</button>}</header>
+
+          {concepts.length > 0 && !mine && <section className="character-concepts" aria-labelledby="character-concepts-heading"><div className="character-section-heading"><span>Editable possibilities</span><h3 id="character-concepts-heading">Three lives already in motion</h3></div><p>Choose one to bring into the folio. Nothing is saved until you take your seat.</p><div>{concepts.map((concept) => <button type="button" key={`${concept.name}-${concept.concept}`} onClick={() => { setDraft(concept); setConcepts([]) }}><strong>{concept.name}</strong><span>{concept.concept}</span><small>{concept.drive}</small></button>)}</div></section>}
 
           <section className="character-half" aria-labelledby="character-public-heading"><div className="character-section-heading"><span>What the table knows</span><h3 id="character-public-heading">The face you show</h3></div>
             <label htmlFor="character-name">Name</label><input id="character-name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} maxLength={80} autoFocus />

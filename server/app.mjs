@@ -188,6 +188,25 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         return
       }
 
+      if (request.method === 'POST' && request.url === '/api/campaign/characters/concepts') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (!campaignIntelligence) {
+          sendJson(response, 503, { error: 'Character concept drafting is not configured.' })
+          return
+        }
+        const context = store.getCharacterCreationContext(requestSession.campaign.id, requestSession.player.id)
+        if (!context.world) {
+          sendJson(response, 400, { error: 'Establish the campaign foundation before drafting characters.' })
+          return
+        }
+        const concepts = await campaignIntelligence.draftCharacterConcepts({ campaignId: requestSession.campaign.id, world: context.world })
+        sendJson(response, 200, { concepts })
+        return
+      }
+
       if ((request.method === 'POST' || request.method === 'PUT') && request.url === '/api/campaign/characters/mine') {
         if (!requestSession) {
           sendJson(response, 401, { error: 'Session not found.' })
@@ -371,6 +390,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
             house_rules: campaignIntelligence?.version ?? null,
             factions: campaignIntelligence?.version ?? null,
             campaign_seed: campaignIntelligence?.version ?? null,
+            character_concepts: campaignIntelligence?.version ?? null,
           },
         ) })
         return

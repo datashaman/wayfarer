@@ -1098,7 +1098,7 @@ export function createStore(databasePath) {
   `)
   const campaignSessionMessages = database.prepare(`
     SELECT messages.id, rooms.id AS room_id, rooms.name AS room_name,
-           players.name AS sender_name, messages.text, messages.sent_at,
+           COALESCE(messages.character_name, players.name) AS sender_name, messages.text, messages.sent_at,
            messages.rowid AS sequence
     FROM messages
     JOIN rooms ON rooms.id = messages.room_id
@@ -1164,7 +1164,7 @@ export function createStore(databasePath) {
   `)
   const searchMessagesForCampaign = database.prepare(`
     SELECT messages.id, messages.room_id, rooms.name AS room_name, messages.player_id,
-           players.name AS sender_name, messages.text, messages.sent_at, messages.rowid AS sequence
+           COALESCE(messages.character_name, players.name) AS sender_name, messages.text, messages.sent_at, messages.rowid AS sequence
     FROM messages
     JOIN rooms ON rooms.id = messages.room_id
     JOIN players ON players.id = messages.player_id
@@ -1175,7 +1175,7 @@ export function createStore(databasePath) {
   const recentMessagesForCampaign = database.prepare(`
     SELECT * FROM (
       SELECT messages.id, rooms.id AS room_id, rooms.name AS room_name,
-             players.name AS sender_name, messages.text, messages.sent_at,
+             COALESCE(messages.character_name, players.name) AS sender_name, messages.text, messages.sent_at,
              messages.rowid AS sequence
       FROM messages
       JOIN rooms ON rooms.id = messages.room_id
@@ -1186,7 +1186,7 @@ export function createStore(databasePath) {
   `)
   const messagesAfterSequenceForCampaign = database.prepare(`
     SELECT messages.id, rooms.id AS room_id, rooms.name AS room_name,
-           players.name AS sender_name, messages.text, messages.sent_at,
+           COALESCE(messages.character_name, players.name) AS sender_name, messages.text, messages.sent_at,
            messages.rowid AS sequence
     FROM messages
     JOIN rooms ON rooms.id = messages.room_id
@@ -1214,7 +1214,7 @@ export function createStore(databasePath) {
   `)
   const messageForCampaign = database.prepare(`
     SELECT messages.id, messages.text, messages.sent_at, messages.rowid AS sequence,
-           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+           rooms.id AS room_id, rooms.name AS room_name, COALESCE(messages.character_name, players.name) AS sender_name
     FROM messages
     JOIN rooms ON rooms.id = messages.room_id
     JOIN players ON players.id = messages.player_id
@@ -1282,7 +1282,7 @@ export function createStore(databasePath) {
   const canonSourcesForProposal = database.prepare(`
     SELECT canon_proposal_sources.message_id, canon_proposal_sources.excerpt,
            messages.text, messages.sent_at, messages.rowid AS sequence,
-           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+           rooms.id AS room_id, rooms.name AS room_name, COALESCE(messages.character_name, players.name) AS sender_name
     FROM canon_proposal_sources
     JOIN messages ON messages.id = canon_proposal_sources.message_id
     JOIN rooms ON rooms.id = messages.room_id
@@ -1345,7 +1345,7 @@ export function createStore(databasePath) {
   const canonSourcesForEntry = database.prepare(`
     SELECT canon_proposal_sources.message_id, canon_proposal_sources.excerpt,
            messages.text, messages.sent_at, messages.rowid AS sequence,
-           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+           rooms.id AS room_id, rooms.name AS room_name, COALESCE(messages.character_name, players.name) AS sender_name
     FROM canon_entries
     JOIN canon_proposal_sources ON canon_proposal_sources.proposal_id = canon_entries.proposal_id
     JOIN messages ON messages.id = canon_proposal_sources.message_id
@@ -1422,7 +1422,7 @@ export function createStore(databasePath) {
   const contradictionSourcesForFinding = database.prepare(`
     SELECT contradiction_sources.message_id, contradiction_sources.excerpt,
            messages.text, messages.sent_at, messages.rowid AS sequence,
-           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+           rooms.id AS room_id, rooms.name AS room_name, COALESCE(messages.character_name, players.name) AS sender_name
     FROM contradiction_sources
     JOIN messages ON messages.id = contradiction_sources.message_id
     JOIN rooms ON rooms.id = messages.room_id
@@ -1450,7 +1450,7 @@ export function createStore(databasePath) {
   const continuitySourcesForThread = database.prepare(`
     SELECT continuity_thread_sources.message_id, continuity_thread_sources.excerpt,
            messages.text, messages.sent_at, messages.rowid AS sequence,
-           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+           rooms.id AS room_id, rooms.name AS room_name, COALESCE(messages.character_name, players.name) AS sender_name
     FROM continuity_thread_sources
     JOIN messages ON messages.id = continuity_thread_sources.message_id
     JOIN rooms ON rooms.id = messages.room_id
@@ -1513,7 +1513,7 @@ export function createStore(databasePath) {
   const publishSessionRecap = database.prepare("UPDATE session_recaps SET status = 'published', published_by_player_id = ?, published_at = ? WHERE id = ? AND campaign_id = ? AND status = 'draft'")
   const sessionRecapSources = database.prepare(`
     SELECT session_recap_sources.message_id, session_recap_sources.excerpt, messages.text, messages.sent_at, messages.rowid AS sequence,
-           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+           rooms.id AS room_id, rooms.name AS room_name, COALESCE(messages.character_name, players.name) AS sender_name
     FROM session_recap_sources JOIN messages ON messages.id = session_recap_sources.message_id
     JOIN rooms ON rooms.id = messages.room_id JOIN players ON players.id = messages.player_id
     WHERE session_recap_sources.recap_id = ? ORDER BY messages.rowid
@@ -1577,7 +1577,7 @@ export function createStore(databasePath) {
   const houseRuleProposalSources = database.prepare(`
     SELECT house_rule_proposal_sources.message_id, house_rule_proposal_sources.excerpt,
            messages.text, messages.sent_at, messages.rowid AS sequence,
-           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+           rooms.id AS room_id, rooms.name AS room_name, COALESCE(messages.character_name, players.name) AS sender_name
     FROM house_rule_proposal_sources JOIN messages ON messages.id = house_rule_proposal_sources.message_id
     JOIN rooms ON rooms.id = messages.room_id JOIN players ON players.id = messages.player_id
     WHERE house_rule_proposal_sources.proposal_id = ? ORDER BY messages.rowid
@@ -1588,7 +1588,7 @@ export function createStore(databasePath) {
   const houseRuleRevisionSources = database.prepare(`
     SELECT house_rule_revision_sources.message_id, house_rule_revision_sources.excerpt,
            messages.text, messages.sent_at, messages.rowid AS sequence,
-           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+           rooms.id AS room_id, rooms.name AS room_name, COALESCE(messages.character_name, players.name) AS sender_name
     FROM house_rule_revision_sources JOIN messages ON messages.id = house_rule_revision_sources.message_id
     JOIN rooms ON rooms.id = messages.room_id JOIN players ON players.id = messages.player_id
     WHERE house_rule_revision_sources.revision_id = ? ORDER BY messages.rowid
@@ -1603,7 +1603,7 @@ export function createStore(databasePath) {
   const factionProposalSources = database.prepare(`
     SELECT faction_clock_proposal_sources.message_id, faction_clock_proposal_sources.excerpt,
            messages.text, messages.sent_at, messages.rowid AS sequence,
-           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+           rooms.id AS room_id, rooms.name AS room_name, COALESCE(messages.character_name, players.name) AS sender_name
     FROM faction_clock_proposal_sources JOIN messages ON messages.id = faction_clock_proposal_sources.message_id
     JOIN rooms ON rooms.id = messages.room_id JOIN players ON players.id = messages.player_id
     WHERE faction_clock_proposal_sources.proposal_id = ? ORDER BY messages.rowid

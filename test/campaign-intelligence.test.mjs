@@ -20,6 +20,15 @@ const campaignSeed = {
   openingCrisis: { title: 'The first toll', situation: 'The bell rings before anyone touches it.', stakes: 'At the seventh toll, the town sinks.' },
 }
 
+const concept = (values = {}) => ({
+  name: 'Iria Voss', concept: 'A ferryman who hears the drowned.', appearance: 'A salt-white coat.',
+  drive: 'Find her brother.', capability: 'Knows the crossings.', complication: 'The bell knows her oath.',
+  possession: 'A wet iron key.', belief: 'No debt survives truth.', secret: 'She rang the bell before.',
+  factionId: 'faction-1', factionConnection: 'They paid for silence.', locationId: 'location-1',
+  locationConnection: 'She drowned there.', npcId: 'npc-1', npcConnection: 'They know what she did.', ...values,
+})
+const conceptWorld = { factions: [{ id: 'faction-1' }], locations: [{ id: 'location-1' }], npcs: [{ id: 'npc-1' }] }
+
 test('campaign intelligence validates citations, private voice drafts, and clock bounds', async () => {
   const intelligence = createCampaignIntelligence({
     version: 'fixture-v1',
@@ -28,12 +37,14 @@ test('campaign intelligence validates citations, private voice drafts, and clock
     generateFactionProposal: async () => ({ summary: 'The moth court advances.', assumptions: 'The archive remains sealed.', proposedProgress: 3, citations: ['message-1'] }),
     generateHouseRule: async () => ({ title: 'Lantern test', sourceRule: 'Core test rule.', interpretation: 'Bright light helps.', ruling: 'Gain advantage.', citations: ['message-1'] }),
     generateCampaignSeed: async () => campaignSeed,
+    generateCharacterConcepts: async () => ({ concepts: [concept(), concept({ name: 'Sera' }), concept({ name: 'Tovin' })] }),
   })
   assert.deepEqual(await intelligence.answerKnowledge({ question: 'Who keeps the light?', canon: [{ id: 'canon-1' }] }), { answer: 'Ilyra keeps the light.', citations: ['canon-1'] })
   assert.equal((await intelligence.draftIntent({ intent: 'signal', messages: [], canon: [] })).length, 2)
   assert.equal((await intelligence.proposeFaction({ clock: { segments: 6 }, messages: [{ id: 'message-1' }], canon: [] })).proposedProgress, 3)
   assert.equal((await intelligence.compileHouseRule({ messages: [{ id: 'message-1' }] })).citations[0], 'message-1')
   assert.equal((await intelligence.draftCampaignSeed({ premise: 'A drowned town returns.' })).npcs.length, 5)
+  assert.equal((await intelligence.draftCharacterConcepts({ world: conceptWorld })).length, 3)
 
   const leaking = createCampaignIntelligence({
     version: 'fixture-v1',
@@ -42,12 +53,14 @@ test('campaign intelligence validates citations, private voice drafts, and clock
     generateFactionProposal: async () => ({ summary: 'Too far.', assumptions: 'None.', proposedProgress: 9, citations: ['hidden'] }),
     generateHouseRule: async () => ({ title: 'Hidden', sourceRule: 'Rule', interpretation: 'Guess', ruling: 'Do it', citations: ['hidden'] }),
     generateCampaignSeed: async () => ({ ...campaignSeed, hooks: [] }),
+    generateCharacterConcepts: async () => ({ concepts: [concept({ factionId: 'invented' }), concept(), concept()] }),
   })
   await assert.rejects(() => leaking.answerKnowledge({ question: 'Secret?', canon: [{ id: 'visible' }] }), (error) => error instanceof CampaignIntelligenceError && error.code === 'invalid_knowledge_answer')
   await assert.rejects(() => leaking.draftIntent({ intent: 'speak', messages: [], canon: [] }), /invalid drafts/i)
   await assert.rejects(() => leaking.proposeFaction({ clock: { segments: 6 }, messages: [], canon: [] }), /clock boundary/i)
   await assert.rejects(() => leaking.compileHouseRule({ messages: [{ id: 'visible' }] }), /selected transcript/i)
   await assert.rejects(() => leaking.draftCampaignSeed({ premise: 'Anything.' }), /complete playable opening/i)
+  await assert.rejects(() => leaking.draftCharacterConcepts({ world: conceptWorld }), /not grounded/i)
 })
 
 test('campaign intelligence records reversible rulings, proposals, consent, and preparation', () => {

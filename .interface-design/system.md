@@ -127,6 +127,14 @@ The reusable opening spread reads top-to-bottom as invitation → truths → fac
 
 Keep the established borders-only soot surfaces, serif fiction fields, sans structural labels, and 8px spacing system. Inputs remain inset. Every repeated item has a real label, stable identity after saving, and visible focus boundary. World material is GM-private in this slice; never imply player publication.
 
+### Character folio
+
+Character creation is a top-level player surface, not administration and not a rules-heavy sheet. Use one continuous two-sided folio: the public face holds name, concept, appearance, immediate drive, useful capability, complication, possession, and belief; a visually sealed section holds the private truth. The secret boundary is server-enforced and stated plainly: the owning player and GMs only.
+
+World connections are concrete choice ledgers, not generic dropdowns. Each character chooses a saved faction, location, and NPC, then writes the debt, loyalty, suspicion, or need that binds them. Other-character ties appear only after another character exists and remain optional. The signature is immediate table presence: party rails show character identity with the player name underneath, and in-character transcript entries retain both identities.
+
+Optional concept assistance offers exactly three bordered, prose-led lives derived from the established campaign. It must remain visibly optional and editable; selecting a life only fills the folio, and **Take your seat** is the sole creation action. Keep manual entry fully available, avoid classes, stats, species, and rule-system assumptions, and never describe generated material as accepted or saved.
+
 ### Session transcript
 
 Messages are avatar-and-copy rows, never speech bubbles. Sender, timestamp, delivery state, and literary body text form the hierarchy. System events sit between hairline rules. Keep transcript measure near 760px for readability.

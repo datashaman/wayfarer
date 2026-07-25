@@ -6,6 +6,7 @@ Wayfarer is a human-kept campaign memory system, not an autonomous storyteller. 
 
 - AI never creates, revises, publishes, or retracts canon without an explicit GM action.
 - Creative generation may draft a campaign opening from a GM premise, but the draft establishes no world truth until a GM edits and saves the complete foundation.
+- Character concepts are private editable options grounded only in the saved campaign foundation; only the player creates or revises their character.
 - Campaign ownership governs administration. GM knowledge access governs private lore.
 - Every AI artifact identifies the exact session range that produced it and retains transcript citations.
 - Campaign, GM-only, and named-character audiences are authorization boundaries, not presentation hints.
@@ -21,6 +22,7 @@ Wayfarer is a human-kept campaign memory system, not an autonomous storyteller. 
 
 - **Campaign session**: an immutable named transcript range after a GM closes it; the current range is derived until closed.
 - **Campaign foundation**: GM-kept playable starting material—premise, pitch, truths, factions, locations, NPCs, hooks, and opening crisis—with durable typed identities and revision protection.
+- **Character folio**: one player-owned character per seat, split between table-readable identity and a secret readable only by that player and GMs, with durable world and party connections.
 - **Canon constitution**: versioned table-specific policy for what counts as canon.
 - **Canon proposal**: cited AI suggestion awaiting a GM ruling.
 - **Canon entry**: human-accepted truth with revision and audience history.

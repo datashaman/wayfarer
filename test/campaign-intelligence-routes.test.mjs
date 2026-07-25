@@ -18,6 +18,7 @@ test('campaign intelligence keeps preparation, memory, rules, factions, spotligh
     async answerKnowledge({ canon, priorFeedback }) { latestKnowledgeFeedback = priorFeedback; return { answer: 'Ilyra keeps the western light.', citations: [canon[0].id] } },
     async draftIntent() { return ['I lift the brass lantern.', 'Let the old light answer us.'] },
     async proposeFaction({ clock }) { return { summary: 'The Moth Court finds another route.', assumptions: 'The western gate remains open.', proposedProgress: Math.min(clock.segments, clock.progress + 1) } },
+    async compileHouseRule({ messages }) { return { title: 'Gate test', sourceRule: 'Core test rule.', interpretation: 'The open gate grants leverage.', ruling: 'Gate searches gain advantage.', citations: [messages[0].id] } },
   }
   const canonExtractor = { version: 'fixture:canon-v1', async extract({ messages }) { return [{ kind: 'fact', title: 'Prepared fact', claim: 'The western gate is open.', visibility: 'gm_only', confidence: 0.9, sources: [{ messageId: messages[0].id, excerpt: 'western gate' }] }] } }
   const continuityGenerator = { version: 'fixture:continuity-v1', async generate({ messages }) { return [{ title: 'Western gate', summary: 'The gate remains open.', whyItMatters: 'The Moth Court may pass.', confidence: 0.8, sources: [{ messageId: messages[0].id, excerpt: 'western gate' }] }] } }
@@ -84,8 +85,13 @@ test('campaign intelligence keeps preparation, memory, rules, factions, spotligh
   const intent = await json(`${origin}/api/campaign/intelligence/intent`, { method: 'POST', headers: guestHeaders, body: JSON.stringify({ intent: 'Signal the party.' }) })
   assert.equal(intent.body.drafts.length, 2)
 
-  const rule = await json(`${origin}/api/campaign/intelligence/rules`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ title: 'Lantern search', sourceRule: 'Core perception rule.', interpretation: 'Bright light reveals marks.', ruling: 'Careful searches gain advantage.', reason: 'Table agreement.' }) })
+  const ruleEvidence = await json(`${origin}/api/campaign/intelligence/rules/evidence?sessionId=${closed.id}`, { headers: ownerHeaders })
+  assert.equal(ruleEvidence.body.messages.length, 20)
+  const compiledRule = await json(`${origin}/api/campaign/intelligence/rules/compile`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ sessionId: closed.id, messageIds: [ruleEvidence.body.messages[0].messageId] }) })
+  assert.equal(compiledRule.body.proposal.sources[0].messageId, messages[0].id)
+  const rule = await json(`${origin}/api/campaign/intelligence/rules`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ ...compiledRule.body.proposal, reason: 'Table agreement.' }) })
   assert.equal(rule.status, 201)
+  assert.equal(rule.body.rule.sources[0].messageId, messages[0].id)
   assert.equal((await json(`${origin}/api/campaign/intelligence/rules`, { headers: guestHeaders })).body.rules.length, 1)
 
   const faction = await json(`${origin}/api/campaign/intelligence/factions`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ name: 'Moth Court', goal: 'Open the archive', progress: 1, segments: 6 }) })

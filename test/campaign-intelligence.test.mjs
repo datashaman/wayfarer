@@ -9,20 +9,24 @@ test('campaign intelligence validates citations, private voice drafts, and clock
     generateKnowledgeAnswer: async () => ({ answer: 'Ilyra keeps the light.', citations: ['canon-1'] }),
     generateIntentDrafts: async () => ({ drafts: ['I raise the lantern.', 'Let the lantern answer.'] }),
     generateFactionProposal: async () => ({ summary: 'The moth court advances.', assumptions: 'The archive remains sealed.', proposedProgress: 3 }),
+    generateHouseRule: async () => ({ title: 'Lantern test', sourceRule: 'Core test rule.', interpretation: 'Bright light helps.', ruling: 'Gain advantage.', citations: ['message-1'] }),
   })
   assert.deepEqual(await intelligence.answerKnowledge({ question: 'Who keeps the light?', canon: [{ id: 'canon-1' }] }), { answer: 'Ilyra keeps the light.', citations: ['canon-1'] })
   assert.equal((await intelligence.draftIntent({ intent: 'signal', messages: [], canon: [] })).length, 2)
   assert.equal((await intelligence.proposeFaction({ clock: { segments: 6 }, messages: [], canon: [] })).proposedProgress, 3)
+  assert.equal((await intelligence.compileHouseRule({ messages: [{ id: 'message-1' }] })).citations[0], 'message-1')
 
   const leaking = createCampaignIntelligence({
     version: 'fixture-v1',
     generateKnowledgeAnswer: async () => ({ answer: 'A secret.', citations: ['hidden'] }),
     generateIntentDrafts: async () => ({ drafts: [] }),
     generateFactionProposal: async () => ({ summary: 'Too far.', assumptions: 'None.', proposedProgress: 9 }),
+    generateHouseRule: async () => ({ title: 'Hidden', sourceRule: 'Rule', interpretation: 'Guess', ruling: 'Do it', citations: ['hidden'] }),
   })
   await assert.rejects(() => leaking.answerKnowledge({ question: 'Secret?', canon: [{ id: 'visible' }] }), (error) => error instanceof CampaignIntelligenceError && error.code === 'invalid_knowledge_answer')
   await assert.rejects(() => leaking.draftIntent({ intent: 'speak', messages: [], canon: [] }), /invalid drafts/i)
   await assert.rejects(() => leaking.proposeFaction({ clock: { segments: 6 }, messages: [], canon: [] }), /clock boundary/i)
+  await assert.rejects(() => leaking.compileHouseRule({ messages: [{ id: 'visible' }] }), /selected transcript/i)
 })
 
 test('campaign intelligence records reversible rulings, proposals, consent, and preparation', () => {

@@ -595,6 +595,12 @@ export function createStore(databasePath) {
       created_at TEXT NOT NULL,
       UNIQUE(rule_id, revision)
     );
+    CREATE TABLE IF NOT EXISTS house_rule_revision_sources (
+      revision_id TEXT NOT NULL REFERENCES house_rule_revisions(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
+      excerpt TEXT,
+      PRIMARY KEY (revision_id, message_id)
+    );
     CREATE TABLE IF NOT EXISTS faction_clocks (
       id TEXT PRIMARY KEY,
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
@@ -1259,6 +1265,16 @@ export function createStore(databasePath) {
   const houseRules = database.prepare('SELECT * FROM house_rules WHERE campaign_id = ? ORDER BY status, title COLLATE NOCASE')
   const houseRuleForCampaign = database.prepare('SELECT * FROM house_rules WHERE id = ? AND campaign_id = ?')
   const houseRuleRevisions = database.prepare(`SELECT house_rule_revisions.*, players.name AS player_name FROM house_rule_revisions JOIN players ON players.id = house_rule_revisions.player_id WHERE rule_id = ? ORDER BY revision DESC`)
+  const insertHouseRuleRevisionSource = database.prepare('INSERT INTO house_rule_revision_sources (revision_id, message_id, excerpt) VALUES (?, ?, ?)')
+  const houseRuleRevisionSources = database.prepare(`
+    SELECT house_rule_revision_sources.message_id, house_rule_revision_sources.excerpt,
+           messages.text, messages.sent_at, messages.rowid AS sequence,
+           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+    FROM house_rule_revision_sources JOIN messages ON messages.id = house_rule_revision_sources.message_id
+    JOIN rooms ON rooms.id = messages.room_id JOIN players ON players.id = messages.player_id
+    WHERE house_rule_revision_sources.revision_id = ? ORDER BY messages.rowid
+  `)
+  const latestHouseRuleRevision = database.prepare('SELECT id FROM house_rule_revisions WHERE rule_id = ? ORDER BY revision DESC LIMIT 1')
   const updateHouseRule = database.prepare(`UPDATE house_rules SET title = ?, source_rule = ?, interpretation = ?, ruling = ?, status = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND campaign_id = ? AND revision = ?`)
   const insertFactionClock = database.prepare(`INSERT INTO faction_clocks (id, campaign_id, name, goal, progress, segments, created_by_player_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   const factionClocks = database.prepare('SELECT * FROM faction_clocks WHERE campaign_id = ? ORDER BY name COLLATE NOCASE')
@@ -2209,16 +2225,25 @@ export function createStore(databasePath) {
         id: row.id, title: row.title, sourceRule: row.source_rule, interpretation: row.interpretation,
         ruling: row.ruling, status: row.status, revision: row.revision,
         createdAt: row.created_at, updatedAt: row.updated_at,
+        sources: houseRuleRevisionSources.all(latestHouseRuleRevision.get(row.id).id).map((source) => ({
+          messageId: source.message_id, roomId: source.room_id, roomName: source.room_name,
+          senderName: source.sender_name, text: source.text, excerpt: source.excerpt,
+          sentAt: source.sent_at, sequence: source.sequence,
+        })),
       }))
     },
 
-    createHouseRule(campaignId, playerId, { title, sourceRule, interpretation, ruling, reason }) {
+    createHouseRule(campaignId, playerId, { title, sourceRule, interpretation, ruling, reason, sources = [] }) {
+      const resolved = sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) }))
+      if (resolved.some((source) => !source.row)) return null
       const id = randomUUID()
+      const revisionId = randomUUID()
       const now = new Date().toISOString()
       database.exec('BEGIN IMMEDIATE')
       try {
         insertHouseRule.run(id, campaignId, title, sourceRule, interpretation, ruling, playerId, now, now)
-        insertHouseRuleRevision.run(randomUUID(), id, 0, title, sourceRule, interpretation, ruling, 'active', reason, playerId, now)
+        insertHouseRuleRevision.run(revisionId, id, 0, title, sourceRule, interpretation, ruling, 'active', reason, playerId, now)
+        for (const source of resolved) insertHouseRuleRevisionSource.run(revisionId, source.messageId, source.excerpt ?? null)
         database.exec('COMMIT')
       } catch (error) {
         database.exec('ROLLBACK')
@@ -2227,15 +2252,19 @@ export function createStore(databasePath) {
       return this.listHouseRules(campaignId).find((rule) => rule.id === id)
     },
 
-    reviseHouseRule(campaignId, playerId, ruleId, { title, sourceRule, interpretation, ruling, status, reason, expectedRevision }) {
+    reviseHouseRule(campaignId, playerId, ruleId, { title, sourceRule, interpretation, ruling, status, reason, expectedRevision, sources = [] }) {
       const current = houseRuleForCampaign.get(ruleId, campaignId)
       if (!current) return { outcome: 'not_found' }
       if (current.revision !== expectedRevision) return { outcome: 'conflict', rule: this.listHouseRules(campaignId).find((rule) => rule.id === ruleId) }
+      const resolved = sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) }))
+      if (resolved.some((source) => !source.row)) return { outcome: 'invalid_source' }
       const now = new Date().toISOString()
+      const revisionId = randomUUID()
       database.exec('BEGIN IMMEDIATE')
       try {
         if (updateHouseRule.run(title, sourceRule, interpretation, ruling, status, now, ruleId, campaignId, expectedRevision).changes !== 1) throw new Error('house_rule_conflict')
-        insertHouseRuleRevision.run(randomUUID(), ruleId, expectedRevision + 1, title, sourceRule, interpretation, ruling, status, reason, playerId, now)
+        insertHouseRuleRevision.run(revisionId, ruleId, expectedRevision + 1, title, sourceRule, interpretation, ruling, status, reason, playerId, now)
+        for (const source of resolved) insertHouseRuleRevisionSource.run(revisionId, source.messageId, source.excerpt ?? null)
         database.exec('COMMIT')
       } catch (error) {
         database.exec('ROLLBACK')
@@ -2250,6 +2279,11 @@ export function createStore(databasePath) {
         id: row.id, revision: row.revision, title: row.title, sourceRule: row.source_rule,
         interpretation: row.interpretation, ruling: row.ruling, status: row.status,
         reason: row.reason, playerName: row.player_name, createdAt: row.created_at,
+        sources: houseRuleRevisionSources.all(row.id).map((source) => ({
+          messageId: source.message_id, roomId: source.room_id, roomName: source.room_name,
+          senderName: source.sender_name, text: source.text, excerpt: source.excerpt,
+          sentAt: source.sent_at, sequence: source.sequence,
+        })),
       }))
     },
 

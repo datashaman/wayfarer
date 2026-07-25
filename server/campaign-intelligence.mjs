@@ -11,8 +11,8 @@ function text(value, maximum) {
   return cleaned && cleaned.length <= maximum ? cleaned : null
 }
 
-export function createCampaignIntelligence({ version, generateKnowledgeAnswer, generateIntentDrafts, generateFactionProposal }) {
-  if (!version || !generateKnowledgeAnswer || !generateIntentDrafts || !generateFactionProposal) throw new Error('Campaign intelligence requires every generator.')
+export function createCampaignIntelligence({ version, generateKnowledgeAnswer, generateIntentDrafts, generateFactionProposal, generateHouseRule }) {
+  if (!version || !generateKnowledgeAnswer || !generateIntentDrafts || !generateFactionProposal || !generateHouseRule) throw new Error('Campaign intelligence requires every generator.')
   return {
     version,
     async answerKnowledge({ question, canon, priorFeedback = [] }) {
@@ -42,6 +42,19 @@ export function createCampaignIntelligence({ version, generateKnowledgeAnswer, g
         throw new CampaignIntelligenceError('invalid_faction_proposal', 'The faction proposal is outside the clock boundary.')
       }
       return { summary, assumptions, proposedProgress }
+    },
+    async compileHouseRule({ messages }) {
+      const output = await generateHouseRule({ messages })
+      const title = text(output?.title, 120)
+      const sourceRule = text(output?.sourceRule, 1_000)
+      const interpretation = text(output?.interpretation, 2_000)
+      const ruling = text(output?.ruling, 2_000)
+      const allowed = new Set(messages.map((message) => message.id))
+      const citations = Array.isArray(output?.citations) ? [...new Set(output.citations)] : []
+      if (!title || !sourceRule || !interpretation || !ruling || !citations.length || citations.length > 12 || citations.some((id) => typeof id !== 'string' || !allowed.has(id))) {
+        throw new CampaignIntelligenceError('invalid_house_rule', 'The house-rule proposal must cite only selected transcript passages.')
+      }
+      return { title, sourceRule, interpretation, ruling, citations }
     },
   }
 }

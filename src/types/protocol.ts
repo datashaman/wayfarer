@@ -359,6 +359,7 @@ export type HouseRule = {
   revision: number
   createdAt: string
   updatedAt: string
+  sources: CanonProposalSource[]
 }
 
 export type HouseRuleRevision = Omit<HouseRule, 'id' | 'createdAt' | 'updatedAt'> & {

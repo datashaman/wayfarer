@@ -28,6 +28,24 @@ export type Campaign = {
   rooms: CampaignRoom[]
 }
 
+export type CampaignWorld = {
+  campaignId?: Id
+  title: string
+  premise: string
+  pitch: string
+  truths: Array<{ id?: Id; text: string }>
+  factions: Array<{ id?: Id; name: string; goal: string; opposition: string }>
+  locations: Array<{ id?: Id; name: string; description: string; danger: string }>
+  npcs: Array<{ id?: Id; name: string; role: string; want: string; leverage: string }>
+  hooks: Array<{ id?: Id; title: string; situation: string }>
+  openingCrisis: { title: string; situation: string; stakes: string }
+  generatorVersion: string
+  revision?: number
+  createdAt?: string
+  updatedAt?: string
+  updatedByName?: string | null
+}
+
 export type PlayerSession = {
   id: Id
   campaignId: Id

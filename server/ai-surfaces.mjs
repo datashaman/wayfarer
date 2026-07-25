@@ -7,6 +7,7 @@ const definitions = [
   { id: 'intent', label: 'Intent phrasing', modelEnvironmentKey: 'OPENAI_INTELLIGENCE_MODEL', versionTag: 'campaign-intelligence-v1', evaluationCommand: 'npm run eval:intent', authority: 'draft' },
   { id: 'house_rules', label: 'House-rule compiler', modelEnvironmentKey: 'OPENAI_INTELLIGENCE_MODEL', versionTag: 'campaign-intelligence-v1', evaluationCommand: 'npm run eval:house-rules', authority: 'proposal' },
   { id: 'factions', label: 'Faction clock', modelEnvironmentKey: 'OPENAI_INTELLIGENCE_MODEL', versionTag: 'campaign-intelligence-v1', evaluationCommand: 'npm run eval:factions', authority: 'proposal' },
+  { id: 'campaign_seed', label: 'Campaign opening', modelEnvironmentKey: 'OPENAI_INTELLIGENCE_MODEL', versionTag: 'campaign-intelligence-v1', evaluationCommand: 'npm run eval:campaign-seed', authority: 'draft' },
 ]
 
 export const AI_SURFACES = Object.freeze(definitions.map((surface) => Object.freeze(surface)))

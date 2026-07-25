@@ -1,6 +1,7 @@
 import {
   Archive,
   BookOpen,
+  BookOpenText,
   BookMarked,
   Check,
   ChevronDown,
@@ -33,6 +34,7 @@ import { RealtimeClient } from './lib/realtime'
 import { api } from './lib/api'
 import { readinessRequirement } from './lib/readiness'
 import { CampaignIntelligenceFolio } from './CampaignIntelligenceFolio'
+import { CampaignWorldFolio } from './CampaignWorldFolio'
 import {
   createEvent,
   type ConnectionState,
@@ -1494,6 +1496,7 @@ function App() {
   const [canonLedger, setCanonLedger] = useState(false)
   const [canonLedgerTarget, setCanonLedgerTarget] = useState<CanonLedgerTarget | null>(null)
   const [campaignIntelligence, setCampaignIntelligence] = useState(false)
+  const [campaignWorld, setCampaignWorld] = useState(false)
   const [preparationNotice, setPreparationNotice] = useState<PreparationRun | null>(null)
   const [preparationRetrying, setPreparationRetrying] = useState(false)
   const [campaignCanon, setCampaignCanon] = useState<CanonLedger | null>(null)
@@ -2044,6 +2047,7 @@ function App() {
           <button className="text-button" onClick={() => setTranscriptSearch(true)}><Search size={15} />Search</button>
           <button className="text-button" onClick={() => setSharedNotes(true)}><NotebookPen size={15} />Notes</button>
           <button className="text-button" onClick={() => setCanonLedger(true)}><BookMarked size={15} />Canon</button>
+          {session.player.knowledgeRole === 'gm' && <button className="text-button" onClick={() => setCampaignWorld(true)}><BookOpenText size={15} />World</button>}
           <button className="text-button" onClick={() => setCampaignIntelligence(true)}><Compass size={15} />Table tools</button>
           <button className="text-button invite-button" onClick={() => setInvitationSheet(true)}><QrCode size={15} />Invite players</button>
           {session.player.role === 'owner' && <button className="icon-button" onClick={() => setCampaignFolio(true)} aria-label="Open campaign folio"><Settings size={18} /></button>}
@@ -2101,6 +2105,7 @@ function App() {
       {sharedNotes && <SharedNotes session={session} note={campaignNote} onNote={setCampaignNote} onClose={() => setSharedNotes(false)} />}
       {canonLedger && <CanonLedgerSheet session={session} ledger={campaignCanon} initialTarget={canonLedgerTarget} onLedger={setCampaignCanon} onClose={() => { setCanonLedger(false); setCanonLedgerTarget(null) }} onOpenSource={openCanonSource} />}
       {campaignIntelligence && <CampaignIntelligenceFolio session={session} onClose={() => setCampaignIntelligence(false)} onUseDraft={setDraft} onOpenLedger={(target) => { setCampaignIntelligence(false); setCanonLedgerTarget(target); setCanonLedger(true) }} />}
+      {campaignWorld && <CampaignWorldFolio session={session} onClose={() => setCampaignWorld(false)} />}
 
       <div className="voice-dock mobile-only">
         {!joinedVoice ? <button className="primary-action" onClick={joinVoice} disabled={joiningVoice || connection !== 'live' || !voiceConfigReady}><Headphones size={17} />{joiningVoice ? 'Joining…' : voiceConfigReady ? 'Join voice' : 'Preparing voice…'}</button> : <><button className={`dock-mic ${muted ? 'dock-mic--muted' : ''}`} onClick={() => setMuted((current) => !current)} aria-label={muted ? 'Unmute' : 'Mute'}>{muted ? <MicOff size={18} /> : <Mic size={18} />}</button><span>{Object.values(peerConnectionStates).includes('failed') ? 'Voice issue' : Object.values(peerConnectionStates).includes('recovering') ? 'Reconnecting voice…' : muted ? 'Muted' : `${voiceParticipants.length} in voice`}</span><button className="quiet-icon" onClick={() => setMobileTable(true)} aria-label="Voice settings"><PanelRight size={17} /></button></>}

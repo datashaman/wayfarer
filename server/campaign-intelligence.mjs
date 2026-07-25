@@ -13,10 +13,33 @@ function text(value, maximum) {
   return cleaned && cleaned.length <= maximum ? cleaned : null
 }
 
-export function createCampaignIntelligence({ version, generateKnowledgeAnswer, generateIntentDrafts, generateFactionProposal, generateHouseRule, onInference = null }) {
-  if (!version || !generateKnowledgeAnswer || !generateIntentDrafts || !generateFactionProposal || !generateHouseRule) throw new Error('Campaign intelligence requires every generator.')
+function objectList(value, length, fields) {
+  if (!Array.isArray(value) || value.length !== length) return null
+  const items = value.map((item) => Object.fromEntries(Object.entries(fields).map(([field, maximum]) => [field, text(item?.[field], maximum)])))
+  return items.some((item) => Object.values(item).some((value) => !value)) ? null : items
+}
+
+export function createCampaignIntelligence({ version, generateKnowledgeAnswer, generateIntentDrafts, generateFactionProposal, generateHouseRule, generateCampaignSeed, onInference = null }) {
+  if (!version || !generateKnowledgeAnswer || !generateIntentDrafts || !generateFactionProposal || !generateHouseRule || !generateCampaignSeed) throw new Error('Campaign intelligence requires every generator.')
   return {
     version,
+    async draftCampaignSeed({ campaignId = null, premise }) {
+      return observeAiInference({ campaignId, surface: 'campaign_seed', generatorVersion: version, onInference }, async (recordUsage) => {
+        const output = await generateCampaignSeed({ campaignId, premise, recordUsage })
+        const title = text(output?.title, 120)
+        const pitch = text(output?.pitch, 1_000)
+        const truths = Array.isArray(output?.truths) && output.truths.length === 3 ? output.truths.map((item) => ({ text: text(item, 500) })) : null
+        const factions = objectList(output?.factions, 2, { name: 120, goal: 500, opposition: 500 })
+        const locations = objectList(output?.locations, 3, { name: 120, description: 1_000, danger: 500 })
+        const npcs = objectList(output?.npcs, 5, { name: 120, role: 200, want: 500, leverage: 500 })
+        const hooks = objectList(output?.hooks, 4, { title: 120, situation: 500 })
+        const openingCrisis = objectList([output?.openingCrisis], 1, { title: 120, situation: 1_200, stakes: 800 })?.[0]
+        if (!title || !pitch || !truths || truths.some((item) => !item.text) || !factions || !locations || !npcs || !hooks || !openingCrisis) {
+          throw new CampaignIntelligenceError('invalid_campaign_seed', 'The campaign draft was not a complete playable opening.')
+        }
+        return { title, premise, pitch, truths, factions, locations, npcs, hooks, openingCrisis, generatorVersion: version }
+      })
+    },
     async answerKnowledge({ campaignId = null, question, canon, priorFeedback = [] }) {
       return observeAiInference({ campaignId, surface: 'knowledge', generatorVersion: version, onInference }, async (recordUsage) => {
         const output = await generateKnowledgeAnswer({ campaignId, question, canon, priorFeedback, recordUsage })

@@ -323,6 +323,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
             intent: campaignIntelligence?.version ?? null,
             house_rules: campaignIntelligence?.version ?? null,
             factions: campaignIntelligence?.version ?? null,
+            campaign_seed: campaignIntelligence?.version ?? null,
           },
         ) })
         return

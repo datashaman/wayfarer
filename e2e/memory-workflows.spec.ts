@@ -65,6 +65,8 @@ test('a GM edits and publishes a recap and resolves continuity inline', async ({
   await intelligence.getByLabel('Reason for this revision').fill('Agreed after crossing the gate.')
   await intelligence.getByRole('button', { name: 'Record ruling' }).click()
   await expect(intelligence.getByRole('heading', { name: 'Lantern searches' })).toBeVisible()
+  await intelligence.getByRole('button', { name: 'History' }).click()
+  await expect(intelligence.getByText('Revision 0 · active', { exact: true })).toBeVisible()
   await intelligence.getByLabel('Faction').fill('Moth Court')
   await intelligence.getByLabel('Goal').fill('Open the western archive')
   await intelligence.getByRole('button', { name: 'Add clock' }).click()

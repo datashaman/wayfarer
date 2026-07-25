@@ -3153,6 +3153,42 @@ textarea:focus-visible {
   line-height: 1.45;
 }
 
+.rule-history {
+  margin: 12px 0 0;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--border-soft);
+  list-style: none;
+}
+
+.rule-history li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.rule-history li:last-child {
+  border-bottom: 0;
+}
+
+.rule-history li > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rule-history strong,
+.rule-history time,
+.rule-history small {
+  color: var(--parchment-muted);
+  font-size: 8px;
+}
+
+.rule-history p {
+  margin: 5px 0;
+  color: var(--parchment-dim);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 11px;
+}
+
 .clock-values {
   display: grid;
   grid-template-columns: 1fr 1fr;

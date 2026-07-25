@@ -96,8 +96,11 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
     const session = store.listCampaignSessions(campaignId).find((item) => item.id === sessionId && item.status === 'closed')
     if (!session) return { outcome: 'not_found' }
     const run = store.queuePreparationRun(campaignId, sessionId, playerId, tasks)
-    void executePreparation(campaignId, playerId, run)
-    return { outcome: 'queued', run }
+    if (run.status === 'queued') {
+      void executePreparation(campaignId, playerId, run)
+      return { outcome: 'queued', run }
+    }
+    return { outcome: 'existing', run }
   }
 
   return {
@@ -125,7 +128,7 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
         if (!isGm) { sendJson(response, 403, { error: 'Only a GM can schedule preparation.' }); return true }
         const body = await readJson(request)
         const tasks = body.tasks
-        if (typeof body.autoPrepare !== 'boolean' || !tasks || ['canon', 'continuity', 'recap'].some((task) => typeof tasks[task] !== 'boolean')) {
+        if (typeof body.autoPrepare !== 'boolean' || !tasks || ['canon', 'continuity', 'recap'].some((task) => typeof tasks[task] !== 'boolean') || (body.autoPrepare && !Object.values(tasks).some(Boolean))) {
           sendJson(response, 400, { error: 'Preparation settings are invalid.' }); return true
         }
         const readiness = calculateAutomationReadiness(store.exportAiFeedback(campaignId))
@@ -139,8 +142,8 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
         const sessionId = clean(body.sessionId, 100)
         if (!sessionId) { sendJson(response, 400, { error: 'Choose a closed session.' }); return true }
         const result = queuePreparation(campaignId, playerId, sessionId)
-        const status = result.outcome === 'queued' ? 202 : result.outcome === 'not_eligible' ? 409 : 400
-        sendJson(response, status, result.outcome === 'queued' ? { run: result.run } : { error: result.outcome === 'not_eligible' ? 'This campaign has not passed its preparation gates.' : 'The session cannot be prepared.', ...result })
+        const status = result.outcome === 'queued' ? 202 : result.outcome === 'existing' ? 200 : result.outcome === 'not_eligible' ? 409 : 400
+        sendJson(response, status, result.outcome === 'queued' || result.outcome === 'existing' ? { run: result.run } : { error: result.outcome === 'not_eligible' ? 'This campaign has not passed its preparation gates.' : 'The session cannot be prepared.', ...result })
         return true
       }
       if (request.method === 'POST' && request.url === '/api/campaign/intelligence/knowledge') {

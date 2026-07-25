@@ -1408,7 +1408,8 @@ export function createStore(databasePath) {
     },
 
     markCanonScanned(campaignId, playerId, throughSequence) {
-      upsertCanonScanState.run(campaignId, throughSequence, playerId, new Date().toISOString())
+      const current = canonScanState.get(campaignId)?.last_scanned_sequence ?? 0
+      upsertCanonScanState.run(campaignId, Math.max(current, throughSequence), playerId, new Date().toISOString())
       return this.getCanonCoverage(campaignId)
     },
 

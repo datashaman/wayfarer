@@ -354,6 +354,13 @@ export type HouseRule = {
   updatedAt: string
 }
 
+export type HouseRuleRevision = Omit<HouseRule, 'id' | 'createdAt' | 'updatedAt'> & {
+  id: Id
+  reason: string
+  playerName: string
+  createdAt: string
+}
+
 export type FactionProposal = {
   id: Id
   summary: string

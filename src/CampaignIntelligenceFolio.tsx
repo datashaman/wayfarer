@@ -1,7 +1,7 @@
 import { Check, Plus, X } from 'lucide-react'
 import { FormEvent, useEffect, useState } from 'react'
 import { api } from './lib/api'
-import type { CampaignIntelligenceOverview, CampaignSession, CanonEntry, FactionClock, HouseRule, SpotlightReport, TableSession } from './types/protocol'
+import type { CampaignIntelligenceOverview, CampaignSession, CanonEntry, FactionClock, HouseRule, HouseRuleRevision, SpotlightReport, TableSession } from './types/protocol'
 
 const blankRule = { title: '', sourceRule: '', interpretation: '', ruling: '', reason: '' }
 const blankClock = { name: '', goal: '', progress: 0, segments: 6 }
@@ -19,6 +19,7 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft }: { se
   const [drafts, setDrafts] = useState<string[]>([])
   const [ruleDraft, setRuleDraft] = useState(blankRule)
   const [editingRule, setEditingRule] = useState<HouseRule | null>(null)
+  const [ruleHistory, setRuleHistory] = useState<Record<string, HouseRuleRevision[]>>({})
   const [clockDraft, setClockDraft] = useState(blankClock)
   const [selectedSession, setSelectedSession] = useState('')
   const [spotlight, setSpotlight] = useState<SpotlightReport | null>(null)
@@ -114,6 +115,12 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft }: { se
     await refresh()
   })
 
+  const toggleRuleHistory = (rule: HouseRule) => void run(`history-${rule.id}`, async () => {
+    if (ruleHistory[rule.id]) { setRuleHistory((current) => { const next = { ...current }; delete next[rule.id]; return next }); return }
+    const result = await api<{ history: HouseRuleRevision[] }>(`/api/campaign/intelligence/rules/${rule.id}/history`, { headers: authorization })
+    setRuleHistory((current) => ({ ...current, [rule.id]: result.history }))
+  })
+
   const createClock = (event: FormEvent) => {
     event.preventDefault()
     void run('clock', async () => {
@@ -169,7 +176,7 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft }: { se
         <section className="intelligence-section" aria-labelledby="house-rules-heading">
           <div className="intelligence-section__heading"><span>Negotiated rules</span><h2 id="house-rules-heading">The table’s ruling, with its reasoning intact</h2></div>
           <form className="intelligence-form rule-form" onSubmit={saveRule}><label htmlFor="rule-title">Title</label><input id="rule-title" value={ruleDraft.title} onChange={(event) => setRuleDraft({ ...ruleDraft, title: event.target.value })} maxLength={120} /><label htmlFor="rule-source">Source rule</label><textarea id="rule-source" value={ruleDraft.sourceRule} onChange={(event) => setRuleDraft({ ...ruleDraft, sourceRule: event.target.value })} maxLength={1_000} /><label htmlFor="rule-interpretation">Interpretation</label><textarea id="rule-interpretation" value={ruleDraft.interpretation} onChange={(event) => setRuleDraft({ ...ruleDraft, interpretation: event.target.value })} maxLength={2_000} /><label htmlFor="rule-ruling">Table ruling</label><textarea id="rule-ruling" value={ruleDraft.ruling} onChange={(event) => setRuleDraft({ ...ruleDraft, ruling: event.target.value })} maxLength={2_000} /><label htmlFor="rule-reason">Reason for this revision</label><input id="rule-reason" value={ruleDraft.reason} onChange={(event) => setRuleDraft({ ...ruleDraft, reason: event.target.value })} maxLength={500} /><div className="intelligence-actions"><button className="primary-action" disabled={pending === 'rule' || Object.values(ruleDraft).some((value) => !String(value).trim())}>{editingRule ? 'Save revision' : 'Record ruling'}</button>{editingRule && <button type="button" className="folio-button" onClick={() => { setEditingRule(null); setRuleDraft(blankRule) }}>Cancel</button>}</div></form>
-          <ol className="rule-ledger">{rules.map((rule) => <li key={rule.id}><div><span>{rule.status} · revision {rule.revision}</span><h3>{rule.title}</h3></div><dl><dt>Source</dt><dd>{rule.sourceRule}</dd><dt>Interpretation</dt><dd>{rule.interpretation}</dd><dt>Ruling</dt><dd>{rule.ruling}</dd></dl><div className="intelligence-actions"><button className="folio-small-action" onClick={() => editRule(rule)}>Revise</button>{rule.status === 'active' && <button className="folio-small-action" onClick={() => retireRule(rule)}>Retire</button>}</div></li>)}</ol>
+          <ol className="rule-ledger">{rules.map((rule) => <li key={rule.id}><div><span>{rule.status} · revision {rule.revision}</span><h3>{rule.title}</h3></div><dl><dt>Source</dt><dd>{rule.sourceRule}</dd><dt>Interpretation</dt><dd>{rule.interpretation}</dd><dt>Ruling</dt><dd>{rule.ruling}</dd></dl><div className="intelligence-actions"><button className="folio-small-action" onClick={() => editRule(rule)}>Revise</button><button className="folio-small-action" onClick={() => toggleRuleHistory(rule)}>{ruleHistory[rule.id] ? 'Hide history' : 'History'}</button>{rule.status === 'active' && <button className="folio-small-action" onClick={() => retireRule(rule)}>Retire</button>}</div>{ruleHistory[rule.id] && <ol className="rule-history">{ruleHistory[rule.id].map((revision) => <li key={revision.id}><div><strong>Revision {revision.revision} · {revision.status}</strong><time dateTime={revision.createdAt}>{new Date(revision.createdAt).toLocaleDateString()}</time></div><p>{revision.ruling}</p><small>{revision.reason} · {revision.playerName}</small></li>)}</ol>}</li>)}</ol>
         </section>
 
         <section className="intelligence-section" aria-labelledby="faction-heading">

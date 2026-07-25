@@ -56,6 +56,9 @@ test('campaign intelligence keeps preparation, memory, rules, factions, spotligh
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
   assert.equal((await json(`${origin}/api/campaign/intelligence`, { headers: ownerHeaders })).body.preparationRuns[0].status, 'complete')
+  const duplicatePreparation = await json(`${origin}/api/campaign/intelligence/preparation`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ sessionId: closed.id }) })
+  assert.equal(duplicatePreparation.status, 200)
+  assert.equal((await json(`${origin}/api/campaign/intelligence`, { headers: ownerHeaders })).body.preparationRuns.filter((run) => run.sessionId === closed.id).length, 1)
 
   app.store.addMessage({ roomId, playerId: created.body.player.id, clientMessageId: 'scheduled-session-message', text: 'The western gate opens again.' })
   const scheduledSession = await json(`${origin}/api/campaign/sessions/close`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ title: 'The gate opens again' }) })

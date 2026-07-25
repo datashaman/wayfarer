@@ -241,6 +241,74 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         return
       }
 
+      if (request.method === 'GET' && request.url === '/api/campaign/scenes') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        sendJson(response, 200, store.getSceneContext(requestSession.campaign.id))
+        return
+      }
+
+      if (request.method === 'POST' && request.url === '/api/campaign/scenes') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Only a GM can establish a scene.' })
+          return
+        }
+        const body = await readJson(request)
+        const title = cleanCanonText(body.title, 120)
+        const framing = cleanCanonText(body.framing, 2_000)
+        const stakes = cleanCanonText(body.stakes, 1_000)
+        const question = cleanCanonText(body.question, 500)
+        const characterIds = Array.isArray(body.characterIds) && body.characterIds.length <= 20 && body.characterIds.every((id) => typeof id === 'string') ? [...new Set(body.characterIds)] : []
+        if (!title || !framing || !stakes || !question || !characterIds.length) {
+          sendJson(response, 400, { error: 'Frame the scene and choose at least one present character.' })
+          return
+        }
+        const result = store.startScene(requestSession.campaign.id, requestSession.player.id, { title, framing, stakes, question, characterIds })
+        if (result.outcome === 'active') {
+          sendJson(response, 409, { error: 'Resolve the active scene before establishing another.', ...result })
+          return
+        }
+        if (result.outcome === 'invalid') {
+          sendJson(response, 400, { error: 'The scene must use this campaign’s opening and characters.' })
+          return
+        }
+        broadcastScene(requestSession.campaign.id, result)
+        sendJson(response, 201, { context: result.context, roomId: result.roomId })
+        return
+      }
+
+      const sceneResolution = request.url?.match(/^\/api\/campaign\/scenes\/([^/]+)\/resolve$/)
+      if (request.method === 'POST' && sceneResolution) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Only a GM can resolve a scene.' })
+          return
+        }
+        const body = await readJson(request)
+        const outcome = cleanCanonText(body.outcome, 2_000)
+        if (!outcome) {
+          sendJson(response, 400, { error: 'Record what changed before resolving the scene.' })
+          return
+        }
+        const result = store.resolveScene(requestSession.campaign.id, requestSession.player.id, sceneResolution[1], outcome)
+        if (result.outcome === 'not_found') {
+          sendJson(response, 404, { error: 'Active scene not found.' })
+          return
+        }
+        broadcastScene(requestSession.campaign.id, result)
+        sendJson(response, 200, { context: result.context, roomId: result.roomId })
+        return
+      }
+
       const characterKnowledge = request.url?.match(/^\/api\/campaign\/knowledge\/players\/([^/]+)$/)
       if (request.method === 'GET' && characterKnowledge) {
         if (!requestSession) {
@@ -1291,6 +1359,12 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
       )))
     }
     for (const roomId of new Set([...clients.values()].filter((client) => client.campaign.id === campaignId).map((client) => client.roomId).filter(Boolean))) presenceSnapshot(roomId)
+  }
+
+  function broadcastScene(campaignId, result) {
+    broadcast(result.roomId, envelope('chat.message', result.roomId, result.message))
+    broadcastCampaignEvent(campaignId, envelope('campaign.scene_updated', campaignId, result.context))
+    broadcastCampaignEvent(campaignId, envelope('room.activity', result.roomId, { senderId: result.message.senderId }))
   }
 
   function broadcastCampaignEvent(campaignId, event) {

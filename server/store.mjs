@@ -79,6 +79,10 @@ function publicPlayer(row, token) {
 }
 
 function publicMessage(row) {
+  let scene = null
+  if (row.kind !== 'chat' && row.metadata) {
+    try { scene = JSON.parse(row.metadata) } catch { scene = null }
+  }
   return {
     id: row.id,
     clientMessageId: row.client_message_id,
@@ -89,6 +93,8 @@ function publicMessage(row) {
     text: row.text,
     sentAt: row.sent_at,
     sequence: row.sequence,
+    kind: row.kind ?? 'chat',
+    scene,
   }
 }
 
@@ -116,6 +122,25 @@ function publicCharacter(row, { includeSecret = false } = {}) {
     revision: row.revision,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+}
+
+function publicScene(row, characters = []) {
+  if (!row) return null
+  return {
+    id: row.id,
+    campaignId: row.campaign_id,
+    title: row.title,
+    framing: row.framing,
+    stakes: row.stakes,
+    question: row.question,
+    status: row.status,
+    outcome: row.outcome ?? null,
+    characters: characters.map((character) => ({ id: character.id, name: character.name, playerName: character.player_name })),
+    createdByName: row.created_by_name ?? null,
+    resolvedByName: row.resolved_by_name ?? null,
+    createdAt: row.created_at,
+    resolvedAt: row.resolved_at ?? null,
   }
 }
 
@@ -325,6 +350,8 @@ export function createStore(databasePath) {
       client_message_id TEXT,
       text TEXT NOT NULL,
       character_name TEXT,
+      kind TEXT NOT NULL DEFAULT 'chat' CHECK(kind IN ('chat', 'scene_start', 'scene_end')),
+      metadata TEXT,
       sent_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS campaign_notes (
@@ -417,6 +444,25 @@ export function createStore(databasePath) {
       revision INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS campaign_scenes (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      framing TEXT NOT NULL,
+      stakes TEXT NOT NULL,
+      question TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'resolved')),
+      outcome TEXT,
+      created_by_player_id TEXT NOT NULL REFERENCES players(id),
+      resolved_by_player_id TEXT REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      resolved_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS campaign_scene_characters (
+      scene_id TEXT NOT NULL REFERENCES campaign_scenes(id) ON DELETE CASCADE,
+      character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE RESTRICT,
+      PRIMARY KEY (scene_id, character_id)
     );
     CREATE TABLE IF NOT EXISTS campaign_sessions (
       id TEXT PRIMARY KEY,
@@ -862,6 +908,9 @@ export function createStore(databasePath) {
   }
   const messageColumns = database.prepare('PRAGMA table_info(messages)').all()
   if (!messageColumns.some((column) => column.name === 'character_name')) database.exec('ALTER TABLE messages ADD COLUMN character_name TEXT')
+  if (!messageColumns.some((column) => column.name === 'kind')) database.exec("ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'chat' CHECK(kind IN ('chat', 'scene_start', 'scene_end'))")
+  if (!messageColumns.some((column) => column.name === 'metadata')) database.exec('ALTER TABLE messages ADD COLUMN metadata TEXT')
+  database.exec("CREATE UNIQUE INDEX IF NOT EXISTS campaign_scenes_one_active ON campaign_scenes(campaign_id) WHERE status = 'active'")
   const roomColumns = database.prepare('PRAGMA table_info(rooms)').all()
   if (!roomColumns.some((column) => column.name === 'position')) {
     database.exec('ALTER TABLE rooms ADD COLUMN position INTEGER NOT NULL DEFAULT 0')
@@ -974,13 +1023,13 @@ export function createStore(databasePath) {
   const updateRoomPosition = database.prepare('UPDATE rooms SET position = ? WHERE id = ? AND campaign_id = ?')
   const archiveRoom = database.prepare('UPDATE rooms SET archived_at = ? WHERE id = ? AND campaign_id = ?')
   const insertMessage = database.prepare(`
-    INSERT OR IGNORE INTO messages (id, room_id, player_id, client_message_id, text, character_name, sent_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO messages (id, room_id, player_id, client_message_id, text, character_name, kind, metadata, sent_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const messageByClientId = database.prepare(`
     SELECT messages.id, messages.client_message_id, messages.player_id,
            COALESCE(messages.character_name, players.name) AS sender_name,
-           players.name AS player_name, messages.character_name,
+           players.name AS player_name, messages.character_name, messages.kind, messages.metadata,
            messages.text, messages.sent_at, messages.rowid AS sequence
     FROM messages JOIN players ON players.id = messages.player_id
     WHERE messages.player_id = ? AND messages.client_message_id = ?
@@ -1071,6 +1120,13 @@ export function createStore(databasePath) {
     LEFT JOIN characters ON characters.player_id = ? AND characters.campaign_id = rooms.campaign_id
     WHERE rooms.id = ?
   `)
+  const inCharacterRoom = database.prepare("SELECT * FROM rooms WHERE campaign_id = ? AND slug = 'in-character' AND archived_at IS NULL")
+  const activeScene = database.prepare("SELECT campaign_scenes.*, creators.name AS created_by_name FROM campaign_scenes JOIN players AS creators ON creators.id = campaign_scenes.created_by_player_id WHERE campaign_scenes.campaign_id = ? AND campaign_scenes.status = 'active'")
+  const scenesByCampaign = database.prepare("SELECT campaign_scenes.*, creators.name AS created_by_name, resolvers.name AS resolved_by_name FROM campaign_scenes JOIN players AS creators ON creators.id = campaign_scenes.created_by_player_id LEFT JOIN players AS resolvers ON resolvers.id = campaign_scenes.resolved_by_player_id WHERE campaign_scenes.campaign_id = ? ORDER BY campaign_scenes.rowid DESC LIMIT 20")
+  const sceneCharacters = database.prepare('SELECT characters.id, characters.name, players.name AS player_name FROM campaign_scene_characters JOIN characters ON characters.id = campaign_scene_characters.character_id JOIN players ON players.id = characters.player_id WHERE campaign_scene_characters.scene_id = ? ORDER BY campaign_scene_characters.rowid')
+  const insertScene = database.prepare('INSERT INTO campaign_scenes (id, campaign_id, title, framing, stakes, question, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+  const insertSceneCharacter = database.prepare('INSERT INTO campaign_scene_characters (scene_id, character_id) VALUES (?, ?)')
+  const resolveScene = database.prepare("UPDATE campaign_scenes SET status = 'resolved', outcome = ?, resolved_by_player_id = ?, resolved_at = ? WHERE id = ? AND campaign_id = ? AND status = 'active'")
   const closedCampaignSessions = database.prepare(`
     SELECT campaign_sessions.*, players.name AS closed_by_name
     FROM campaign_sessions JOIN players ON players.id = campaign_sessions.closed_by_player_id
@@ -1127,7 +1183,7 @@ export function createStore(databasePath) {
     SELECT * FROM (
       SELECT messages.id, messages.client_message_id, messages.player_id,
              COALESCE(messages.character_name, players.name) AS sender_name,
-             players.name AS player_name, messages.character_name,
+             players.name AS player_name, messages.character_name, messages.kind, messages.metadata,
              messages.text, messages.sent_at, messages.rowid AS sequence
       FROM messages JOIN players ON players.id = messages.player_id
       WHERE messages.room_id = ?
@@ -1138,7 +1194,7 @@ export function createStore(databasePath) {
     SELECT * FROM (
       SELECT messages.id, messages.client_message_id, messages.player_id,
              COALESCE(messages.character_name, players.name) AS sender_name,
-             players.name AS player_name, messages.character_name,
+             players.name AS player_name, messages.character_name, messages.kind, messages.metadata,
              messages.text, messages.sent_at, messages.rowid AS sequence
       FROM messages JOIN players ON players.id = messages.player_id
       WHERE messages.room_id = ? AND messages.rowid < ?
@@ -1833,6 +1889,61 @@ export function createStore(databasePath) {
       return { outcome: 'updated', character: publicCharacter(characterByPlayer.get(playerId, campaignId), { includeSecret: true }) }
     },
 
+    getSceneContext(campaignId) {
+      const world = this.getCampaignWorld(campaignId)
+      const current = activeScene.get(campaignId)
+      return {
+        openingCrisis: world?.openingCrisis ?? null,
+        characters: charactersByCampaign.all(campaignId).map((row) => ({ id: row.id, name: row.name, playerName: row.player_name, concept: row.concept })),
+        activeScene: publicScene(current, current ? sceneCharacters.all(current.id) : []),
+        scenes: scenesByCampaign.all(campaignId).map((row) => publicScene(row, sceneCharacters.all(row.id))),
+      }
+    },
+
+    startScene(campaignId, playerId, { title, framing, stakes, question, characterIds }) {
+      if (activeScene.get(campaignId)) return { outcome: 'active', context: this.getSceneContext(campaignId) }
+      const room = inCharacterRoom.get(campaignId)
+      const available = charactersByCampaign.all(campaignId)
+      const chosen = available.filter((character) => characterIds.includes(character.id))
+      if (!room || !this.getCampaignWorld(campaignId) || !chosen.length || chosen.length !== new Set(characterIds).size) return { outcome: 'invalid' }
+      const id = randomUUID()
+      const messageId = randomUUID()
+      const clientMessageId = `scene:${id}:start`
+      const now = new Date().toISOString()
+      const scene = { id, title, framing, stakes, question, characters: chosen.map((character) => ({ id: character.id, name: character.name, playerName: character.player_name })) }
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        insertScene.run(id, campaignId, title, framing, stakes, question, playerId, now)
+        for (const character of chosen) insertSceneCharacter.run(id, character.id)
+        insertMessage.run(messageId, room.id, playerId, clientMessageId, framing, null, 'scene_start', JSON.stringify(scene), now)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return { outcome: 'started', roomId: room.id, message: publicMessage(messageByClientId.get(playerId, clientMessageId)), context: this.getSceneContext(campaignId) }
+    },
+
+    resolveScene(campaignId, playerId, sceneId, outcome) {
+      const current = activeScene.get(campaignId)
+      if (!current || current.id !== sceneId) return { outcome: 'not_found' }
+      const room = inCharacterRoom.get(campaignId)
+      const messageId = randomUUID()
+      const clientMessageId = `scene:${sceneId}:end`
+      const now = new Date().toISOString()
+      const metadata = { id: sceneId, title: current.title, outcome }
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        if (resolveScene.run(outcome, playerId, now, sceneId, campaignId).changes !== 1) throw new Error('scene_conflict')
+        insertMessage.run(messageId, room.id, playerId, clientMessageId, outcome, null, 'scene_end', JSON.stringify(metadata), now)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return { outcome: 'resolved', roomId: room.id, message: publicMessage(messageByClientId.get(playerId, clientMessageId)), context: this.getSceneContext(campaignId) }
+    },
+
     createCampaignWorld(campaignId, playerId, world) {
       if (!campaignById.get(campaignId) || campaignWorld.get(campaignId)) return { outcome: 'conflict', world: this.getCampaignWorld(campaignId) }
       const now = new Date().toISOString()
@@ -1948,7 +2059,7 @@ export function createStore(databasePath) {
         sentAt: new Date().toISOString(),
       }
       const characterName = messageCharacter.get(playerId, roomId)?.character_name ?? null
-      const inserted = insertMessage.run(message.id, roomId, playerId, clientMessageId, text, characterName, message.sentAt).changes === 1
+      const inserted = insertMessage.run(message.id, roomId, playerId, clientMessageId, text, characterName, 'chat', null, message.sentAt).changes === 1
       const stored = messageByClientId.get(playerId, clientMessageId)
       return { message: publicMessage(stored), inserted }
     },

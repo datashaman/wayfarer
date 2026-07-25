@@ -414,11 +414,23 @@ test('session recaps remain drafts until a GM publishes them', () => {
     publicSummary: 'The party met Ilyra.', gmNotes: 'Ilyra remains suspicious.', sources: [{ messageId: first.id }],
   })
   assert.equal(created.recap.status, 'draft')
+  assert.equal(created.recap.revision, 0)
   assert.equal(store.getLatestSessionRecap(owner.campaign.id), null)
+  const revised = store.reviseSessionRecap(owner.campaign.id, owner.player.id, created.recap.id, {
+    publicSummary: 'The party met Ilyra at the lighthouse.', gmNotes: 'Ilyra remains suspicious of Mara.', expectedRevision: 0,
+  })
+  assert.equal(revised.recap.revision, 1)
+  assert.equal(store.reviseSessionRecap(owner.campaign.id, owner.player.id, created.recap.id, {
+    publicSummary: 'Stale', gmNotes: 'Stale', expectedRevision: 0,
+  }).outcome, 'conflict')
+  assert.deepEqual(store.listSessionRecapHistory(owner.campaign.id, created.recap.id).map((revision) => revision.revision), [1, 0])
   const published = store.publishSessionRecap(owner.campaign.id, owner.player.id, created.recap.id)
   assert.equal(published.recap.status, 'published')
+  assert.equal(store.reviseSessionRecap(owner.campaign.id, owner.player.id, created.recap.id, {
+    publicSummary: 'Changed after publication', gmNotes: 'No', expectedRevision: 1,
+  }).outcome, 'published')
   assert.equal(store.getLatestSessionRecap(owner.campaign.id).gmNotes, null)
-  assert.equal(store.getLatestSessionRecap(owner.campaign.id, { includeGmNotes: true }).gmNotes, 'Ilyra remains suspicious.')
+  assert.equal(store.getLatestSessionRecap(owner.campaign.id, { includeGmNotes: true }).gmNotes, 'Ilyra remains suspicious of Mara.')
   store.close()
 })
 

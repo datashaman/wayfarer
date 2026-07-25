@@ -240,12 +240,24 @@ export type SessionRecap = {
   campaignId: Id
   generatorVersion: string
   status: 'draft' | 'published'
+  revision: number
   publicSummary: string
   gmNotes: string | null
   contextSession: AiContextSession
   createdAt: string
+  updatedAt: string
+  updatedByName: string | null
   publishedAt: string | null
   sources: CanonProposalSource[]
+}
+
+export type SessionRecapRevision = {
+  id: Id
+  revision: number
+  publicSummary: string
+  gmNotes: string
+  createdAt: string
+  createdByName: string
 }
 
 export type AiReadiness = {

@@ -363,6 +363,47 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         return
       }
 
+      const recapHistory = request.url?.match(/^\/api\/campaign\/recaps\/([^/]+)\/history$/)
+      if (request.method === 'GET' && recapHistory) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Recap draft history is private to GMs.' })
+          return
+        }
+        const revisions = store.listSessionRecapHistory(requestSession.campaign.id, recapHistory[1])
+        sendJson(response, revisions ? 200 : 404, revisions ? { revisions } : { error: 'Session recap not found.' })
+        return
+      }
+
+      const recapMutation = request.url?.match(/^\/api\/campaign\/recaps\/([^/]+)$/)
+      if (request.method === 'PATCH' && recapMutation) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Only a GM can edit a recap draft.' })
+          return
+        }
+        const body = await readJson(request)
+        const publicSummary = cleanCanonText(body.publicSummary, 5_000)
+        const gmNotes = cleanCanonText(body.gmNotes, 5_000)
+        const expectedRevision = Number.isInteger(body.revision) && body.revision >= 0 ? body.revision : null
+        if (!publicSummary || !gmNotes || expectedRevision === null) {
+          sendJson(response, 400, { error: 'Recap draft fields are invalid.' })
+          return
+        }
+        const result = store.reviseSessionRecap(requestSession.campaign.id, requestSession.player.id, recapMutation[1], { publicSummary, gmNotes, expectedRevision })
+        if (result.outcome === 'not_found') sendJson(response, 404, { error: 'Session recap not found.' })
+        else if (result.outcome === 'published') sendJson(response, 409, { error: 'Published recaps are immutable.' })
+        else if (result.outcome === 'conflict') sendJson(response, 409, { error: 'The recap draft changed before your edit was saved.', recap: result.recap })
+        else sendJson(response, 200, { recap: result.recap })
+        return
+      }
+
       if (request.method === 'GET' && request.url === '/api/campaign/canon/constitution') {
         if (!requestSession) {
           sendJson(response, 401, { error: 'Session not found.' })

@@ -187,6 +187,24 @@ function publicContradictionReport(row, findings = []) {
   }
 }
 
+function publicSessionRecap(row, sources = [], { includeGmNotes = false } = {}) {
+  return {
+    id: row.id,
+    campaignId: row.campaign_id,
+    generatorVersion: row.generator_version,
+    status: row.status,
+    publicSummary: row.public_summary,
+    gmNotes: includeGmNotes ? row.gm_notes : null,
+    contextSession: {
+      id: row.session_id, title: row.session_title, status: row.session_status,
+      startSequence: row.session_start_sequence, endSequence: row.session_end_sequence,
+    },
+    createdAt: row.created_at,
+    publishedAt: row.published_at,
+    sources,
+  }
+}
+
 export function createStore(databasePath) {
   if (databasePath !== ':memory:') mkdirSync(dirname(databasePath), { recursive: true })
   const database = new DatabaseSync(databasePath)
@@ -419,6 +437,29 @@ export function createStore(databasePath) {
       reason TEXT NOT NULL,
       player_id TEXT NOT NULL REFERENCES players(id),
       created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS session_recaps (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      generator_version TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'published')),
+      public_summary TEXT NOT NULL,
+      gm_notes TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      session_title TEXT NOT NULL,
+      session_status TEXT NOT NULL CHECK(session_status IN ('open', 'closed')),
+      session_start_sequence INTEGER NOT NULL,
+      session_end_sequence INTEGER NOT NULL,
+      created_by_player_id TEXT NOT NULL REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      published_by_player_id TEXT REFERENCES players(id),
+      published_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS session_recap_sources (
+      recap_id TEXT NOT NULL REFERENCES session_recaps(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
+      excerpt TEXT,
+      PRIMARY KEY (recap_id, message_id)
     );
   `)
 
@@ -969,6 +1010,24 @@ export function createStore(databasePath) {
       WHERE latest.thread_id = continuity_feedback.thread_id
     ) AND (? IS NULL OR continuity_briefs.campaign_id = ?)
     ORDER BY continuity_briefs.campaign_id, continuity_feedback.rowid
+  `)
+  const insertSessionRecap = database.prepare(`
+    INSERT INTO session_recaps (
+      id, campaign_id, generator_version, public_summary, gm_notes, session_id, session_title,
+      session_status, session_start_sequence, session_end_sequence, created_by_player_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const insertSessionRecapSource = database.prepare('INSERT INTO session_recap_sources (recap_id, message_id, excerpt) VALUES (?, ?, ?)')
+  const latestSessionRecap = database.prepare(`SELECT * FROM session_recaps WHERE campaign_id = ? ORDER BY rowid DESC LIMIT 1`)
+  const latestPublishedSessionRecap = database.prepare(`SELECT * FROM session_recaps WHERE campaign_id = ? AND status = 'published' ORDER BY rowid DESC LIMIT 1`)
+  const sessionRecapById = database.prepare('SELECT * FROM session_recaps WHERE id = ? AND campaign_id = ?')
+  const publishSessionRecap = database.prepare("UPDATE session_recaps SET status = 'published', published_by_player_id = ?, published_at = ? WHERE id = ? AND campaign_id = ? AND status = 'draft'")
+  const sessionRecapSources = database.prepare(`
+    SELECT session_recap_sources.message_id, session_recap_sources.excerpt, messages.text, messages.sent_at, messages.rowid AS sequence,
+           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+    FROM session_recap_sources JOIN messages ON messages.id = session_recap_sources.message_id
+    JOIN rooms ON rooms.id = messages.room_id JOIN players ON players.id = messages.player_id
+    WHERE session_recap_sources.recap_id = ? ORDER BY messages.rowid
   `)
 
   function createPlayer(campaignId, name, role = 'member') {
@@ -1668,6 +1727,42 @@ export function createStore(databasePath) {
       if (!continuityThreadForCampaign.get(threadId, campaignId)) return null
       insertContinuityTransition.run(randomUUID(), threadId, status, reason, playerId, new Date().toISOString())
       return this.getLatestContinuityBrief(campaignId)
+    },
+
+    createSessionRecap({ campaignId, playerId, generatorVersion, session, publicSummary, gmNotes, sources }) {
+      const resolved = sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) }))
+      if (resolved.some((source) => !source.row)) return { outcome: 'invalid_source' }
+      const id = randomUUID()
+      const createdAt = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        insertSessionRecap.run(id, campaignId, generatorVersion, publicSummary, gmNotes, session.id, session.title, session.status, session.startSequence, session.endSequence, playerId, createdAt)
+        for (const source of resolved) insertSessionRecapSource.run(id, source.messageId, source.excerpt ?? null)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return { outcome: 'created', recap: this.getLatestSessionRecap(campaignId, { includeDrafts: true, includeGmNotes: true }) }
+    },
+
+    getLatestSessionRecap(campaignId, { includeDrafts = false, includeGmNotes = false } = {}) {
+      const row = (includeDrafts ? latestSessionRecap : latestPublishedSessionRecap).get(campaignId)
+      if (!row) return null
+      const sources = sessionRecapSources.all(row.id).map((source) => ({
+        messageId: source.message_id, roomId: source.room_id, roomName: source.room_name,
+        senderName: source.sender_name, text: source.text, excerpt: source.excerpt,
+        sentAt: source.sent_at, sequence: source.sequence,
+      }))
+      return publicSessionRecap(row, sources, { includeGmNotes })
+    },
+
+    publishSessionRecap(campaignId, playerId, recapId) {
+      const current = sessionRecapById.get(recapId, campaignId)
+      if (!current) return { outcome: 'not_found' }
+      if (current.status === 'published') return { outcome: 'already_published', recap: this.getLatestSessionRecap(campaignId, { includeDrafts: true, includeGmNotes: true }) }
+      publishSessionRecap.run(playerId, new Date().toISOString(), recapId, campaignId)
+      return { outcome: 'published', recap: this.getLatestSessionRecap(campaignId, { includeDrafts: true, includeGmNotes: true }) }
     },
 
     close() {

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { WebSocket, WebSocketServer } from 'ws'
 import { defaultIceServers } from './config.mjs'
 import { createStore } from './store.mjs'
-import { analyzeSessionInChunks } from './session-analysis.mjs'
+import { analyzeSessionInChunks, chunkSessionMessages } from './session-analysis.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const dist = join(root, 'dist')
@@ -78,7 +78,7 @@ function cleanCanonText(value, maximum) {
   return text && text.length <= maximum ? text : null
 }
 
-export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers, allowedOrigins, trustProxy = false, rateLimits = {}, canonExtractor = null, continuityGenerator = null, contradictionRadar = null } = {}) {
+export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers, allowedOrigins, trustProxy = false, rateLimits = {}, canonExtractor = null, continuityGenerator = null, contradictionRadar = null, recapGenerator = null } = {}) {
   const store = createStore(databasePath)
   const clients = new Map()
   const originAllowlist = new Set(allowedOrigins ?? (dev ? developmentOrigins : []))
@@ -281,6 +281,68 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         }
         const includeGmOnly = hasGmKnowledge
         sendJson(response, 200, canonLedger(requestSession.campaign.id, { includeGmOnly, viewerPlayerId: requestSession.player.id }))
+        return
+      }
+
+      if (request.method === 'GET' && request.url === '/api/campaign/recaps/latest') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        const recap = store.getLatestSessionRecap(requestSession.campaign.id, { includeDrafts: hasGmKnowledge, includeGmNotes: hasGmKnowledge })
+        sendJson(response, 200, { recap })
+        return
+      }
+
+      if (request.method === 'POST' && request.url === '/api/campaign/recaps/extract') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Only a GM can prepare a session recap.' })
+          return
+        }
+        if (!recapGenerator) {
+          sendJson(response, 503, { error: 'Session recaps are not configured.' })
+          return
+        }
+        const body = await readJson(request)
+        const sessionId = typeof body.sessionId === 'string' && body.sessionId.length <= 100 ? body.sessionId : null
+        const context = sessionId ? store.getCampaignSessionMessages(requestSession.campaign.id, sessionId, 5_000) : null
+        if (!context || context.truncated) {
+          sendJson(response, 400, { error: context?.truncated ? 'This session exceeds the 5,000-message processing limit.' : 'Choose a campaign session with transcript messages.' })
+          return
+        }
+        const acceptedCanon = store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true })
+        const drafts = []
+        for (const messages of chunkSessionMessages(context.messages)) {
+          drafts.push(await recapGenerator.generate({ campaignId: requestSession.campaign.id, messages, acceptedCanon }))
+        }
+        const sourceMap = new Map(drafts.flatMap((draft) => draft.sources).map((source) => [source.messageId, source]))
+        const result = store.createSessionRecap({
+          campaignId: requestSession.campaign.id, playerId: requestSession.player.id,
+          generatorVersion: recapGenerator.version, session: context.session,
+          publicSummary: drafts.map((draft) => draft.publicSummary).join('\n\n').slice(0, 5_000),
+          gmNotes: drafts.map((draft) => draft.gmNotes).join('\n\n').slice(0, 5_000),
+          sources: [...sourceMap.values()].slice(0, 20),
+        })
+        sendJson(response, result.outcome === 'created' ? 201 : 400, result.outcome === 'created' ? { recap: result.recap } : { error: 'Every recap citation must belong to this campaign.' })
+        return
+      }
+
+      const recapPublish = request.url?.match(/^\/api\/campaign\/recaps\/([^/]+)\/publish$/)
+      if (request.method === 'POST' && recapPublish) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Only a GM can publish a session recap.' })
+          return
+        }
+        const result = store.publishSessionRecap(requestSession.campaign.id, requestSession.player.id, recapPublish[1])
+        sendJson(response, result.outcome === 'not_found' ? 404 : 200, result.outcome === 'not_found' ? { error: 'Session recap not found.' } : { recap: result.recap })
         return
       }
 

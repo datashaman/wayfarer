@@ -53,6 +53,8 @@ GMs can publish accepted canon to the party, keep it private, or share it with n
 
 Campaign ownership and private lore access are separate roles. The owner manages invitations, rooms, seats, and GM assignments; GMs review canon suggestions and can read or change GM-only canon, continuity briefs, and contradiction reports. The campaign owner always retains GM access, while other seated players can be granted or revoked GM access from the campaign folio without transferring ownership.
 
+A GM can prepare a cited recap draft for the selected session. The draft separates a campaign-safe summary from private GM notes and preserves the session range that produced it. Players see nothing until a GM explicitly publishes the recap; preparation never publishes automatically. `OPENAI_RECAP_MODEL` defaults to the canon model.
+
 The GM-only contradiction watch compares accepted canon with the latest 100 transcript messages. It records only clear conflicts backed by both a canon entry and exact campaign transcript citations. Reports are read-only: they explain what conflicts but never choose a winner or change canon. Run `npm run eval:contradictions` to check direct conflicts, harmless elaboration, passage-of-time changes, and transcript prompt injection against the live model. `OPENAI_CONTRADICTION_MODEL` defaults to the canon model and can be configured independently.
 
 `npm run test:e2e` starts isolated in-memory room and web servers, then verifies invitation, offline unread catch-up, paginated history, search, shared-note, and two-browser WebRTC voice flows with Playwright. Voice tests use synthetic Web Audio microphone streams and exercise real media tracks and peer negotiation without recording host audio.

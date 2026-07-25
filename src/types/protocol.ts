@@ -234,6 +234,19 @@ export type ContinuityBrief = {
   threads: ContinuityThread[]
 }
 
+export type SessionRecap = {
+  id: Id
+  campaignId: Id
+  generatorVersion: string
+  status: 'draft' | 'published'
+  publicSummary: string
+  gmNotes: string | null
+  contextSession: AiContextSession
+  createdAt: string
+  publishedAt: string | null
+  sources: CanonProposalSource[]
+}
+
 export type ClientVoiceSignal = Envelope<
   'voice.offer' | 'voice.answer',
   { targetPlayerId: Id; sdp: RTCSessionDescriptionInit }

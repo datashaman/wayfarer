@@ -52,6 +52,7 @@ import {
   type RoomMessage,
   type RuntimeConfig,
   type SeatEntry,
+  type SessionRecap,
   type ServerEvent,
   type TableSession,
   type TranscriptSearchResult,
@@ -506,9 +507,17 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
   const [campaignSessions, setCampaignSessions] = useState<CampaignSession[]>([])
   const [selectedSessionId, setSelectedSessionId] = useState('')
   const [sessionTitle, setSessionTitle] = useState('')
+  const [sessionRecap, setSessionRecap] = useState<SessionRecap | null>(null)
+  const [recapPending, setRecapPending] = useState(false)
   const [error, setError] = useState('')
   const authorization = { authorization: `Bearer ${session.player.token}` }
   const isGm = session.player.knowledgeRole === 'gm'
+
+  useEffect(() => {
+    void api<{ recap: SessionRecap | null }>('/api/campaign/recaps/latest', { headers: { authorization: `Bearer ${session.player.token}` } })
+      .then(({ recap }) => setSessionRecap(recap))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'The session recap could not be opened.'))
+  }, [session.player.token])
 
   useEffect(() => {
     if (!isGm) return
@@ -726,6 +735,33 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     }
   }
 
+  const prepareSessionRecap = async () => {
+    setRecapPending(true)
+    setError('')
+    try {
+      const { recap } = await api<{ recap: SessionRecap }>('/api/campaign/recaps/extract', { method: 'POST', headers: authorization, body: JSON.stringify({ sessionId: selectedSessionId }) })
+      setSessionRecap(recap)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The session recap could not be prepared.')
+    } finally {
+      setRecapPending(false)
+    }
+  }
+
+  const publishSessionRecap = async () => {
+    if (!sessionRecap) return
+    setRecapPending(true)
+    setError('')
+    try {
+      const { recap } = await api<{ recap: SessionRecap }>(`/api/campaign/recaps/${sessionRecap.id}/publish`, { method: 'POST', headers: authorization })
+      setSessionRecap(recap)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The session recap could not be published.')
+    } finally {
+      setRecapPending(false)
+    }
+  }
+
   const checkContradictions = async () => {
     setContradictionsPending(true)
     setError('')
@@ -801,6 +837,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
                   <div className="canon-actions"><button className="primary-action" onClick={() => void saveConstitution()} disabled={pending === 'constitution'}>{pending === 'constitution' ? 'Saving…' : 'Save constitution'}</button><button className="folio-button" onClick={() => { setEditingConstitution(false); setConstitutionDraft(null) }}>Cancel</button></div>
                 </div> : <div className="canon-constitution-summary"><p>{constitution.canonThreshold === 'explicit_only' ? 'Explicit statements, commitments, and rulings can become canon.' : constitution.canonThreshold === 'table_consensus' ? 'Clear table consensus can become canon.' : 'Facts established through play can become canon.'}</p><span>World declarations: {constitution.playerDeclarations === 'require_confirmation' ? 'confirmation required' : 'stand unless challenged'} · OOC: {constitution.oocPolicy === 'exclude' ? 'excluded' : 'corrections only'} · Corrections: {constitution.correctionPolicy === 'latest_explicit' ? 'latest wins' : 'flag conflicts'}</span>{constitution.guidance && <q>{constitution.guidance}</q>}<small>Revision {constitution.revision}{constitution.updatedByName ? ` · ${constitution.updatedByName}` : ''}</small></div>}
               </section>}
+              <section className="canon-section" aria-labelledby="session-recap-heading"><div className="canon-section-title"><h3 id="session-recap-heading">Session recap</h3>{isGm && <button className="folio-small-action" onClick={() => void prepareSessionRecap()} disabled={recapPending || !selectedSessionId}>{recapPending ? 'Preparing…' : sessionRecap ? 'Prepare another' : 'Prepare draft'}</button>}</div>{!sessionRecap ? <div className="canon-empty"><BookOpen size={18} /><span>{isGm ? 'No recap draft has been prepared.' : 'No session recap has been published.'}</span></div> : <article className="canon-entry"><div className="canon-card-meta"><span>{sessionRecap.status}</span><span>{sessionRecap.contextSession.title}</span><span>Messages {sessionRecap.contextSession.startSequence}–{sessionRecap.contextSession.endSequence}</span></div><h4>For the table</h4><p>{sessionRecap.publicSummary}</p>{isGm && sessionRecap.gmNotes && <><strong>Private GM notes</strong><p>{sessionRecap.gmNotes}</p></>}<div className="canon-citations">{sessionRecap.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span></button>)}</div>{isGm && sessionRecap.status === 'draft' && <div className="canon-actions"><button className="primary-action" disabled={recapPending} onClick={() => void publishSessionRecap()}>{recapPending ? 'Publishing…' : 'Publish recap to campaign'}</button><span className="continuity-feedback">Drafts are never published automatically.</span></div>}</article>}</section>
               {isGm && <section className="canon-section" aria-labelledby="canon-proposals-heading">
                 <div className="canon-section-title"><h3 id="canon-proposals-heading">Awaiting review</h3><div><span>{pendingProposals.length}</span><button className="folio-small-action" onClick={() => void extractCanon()} disabled={extracting || !coverage?.unscannedCount}>{extracting ? 'Reading…' : coverage?.unscannedCount ? 'Find passages' : 'Up to date'}</button></div></div>
                 {coverage && <p className="canon-coverage">{coverage.unscannedCount > 0 ? `${coverage.unscannedCount} new transcript ${coverage.unscannedCount === 1 ? 'message' : 'messages'} ready to scan.` : coverage.latestSequence > 0 ? 'The transcript is scanned through its latest message.' : 'The transcript has no messages to scan yet.'}</p>}

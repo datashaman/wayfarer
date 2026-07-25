@@ -402,6 +402,22 @@ test('continuity briefs retain cited threads and append owner feedback', () => {
   store.close()
 })
 
+test('session recaps remain drafts until a GM publishes them', () => {
+  const { store, owner, first } = seededStore()
+  const session = store.listCampaignSessions(owner.campaign.id)[0]
+  const created = store.createSessionRecap({
+    campaignId: owner.campaign.id, playerId: owner.player.id, generatorVersion: 'recap-v1', session,
+    publicSummary: 'The party met Ilyra.', gmNotes: 'Ilyra remains suspicious.', sources: [{ messageId: first.id }],
+  })
+  assert.equal(created.recap.status, 'draft')
+  assert.equal(store.getLatestSessionRecap(owner.campaign.id), null)
+  const published = store.publishSessionRecap(owner.campaign.id, owner.player.id, created.recap.id)
+  assert.equal(published.recap.status, 'published')
+  assert.equal(store.getLatestSessionRecap(owner.campaign.id).gmNotes, null)
+  assert.equal(store.getLatestSessionRecap(owner.campaign.id, { includeGmNotes: true }).gmNotes, 'Ilyra remains suspicious.')
+  store.close()
+})
+
 test('AI feedback export retains judged model output without human names', () => {
   const { store, owner, first } = seededStore()
   const proposal = store.createCanonProposal({

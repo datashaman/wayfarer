@@ -215,6 +215,16 @@ export function createStore(databasePath) {
       updated_by_player_id TEXT REFERENCES players(id),
       updated_at TEXT
     );
+    CREATE TABLE IF NOT EXISTS campaign_sessions (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      start_sequence INTEGER NOT NULL,
+      end_sequence INTEGER NOT NULL,
+      closed_by_player_id TEXT NOT NULL REFERENCES players(id),
+      closed_at TEXT NOT NULL,
+      CHECK(start_sequence <= end_sequence)
+    );
     CREATE TABLE IF NOT EXISTS room_reads (
       player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
       room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -485,6 +495,45 @@ export function createStore(databasePath) {
   const updateCampaignNote = database.prepare(`
     UPDATE campaign_notes SET body = ?, revision = ?, updated_by_player_id = ?, updated_at = ?
     WHERE campaign_id = ?
+  `)
+  const closedCampaignSessions = database.prepare(`
+    SELECT campaign_sessions.*, players.name AS closed_by_name
+    FROM campaign_sessions JOIN players ON players.id = campaign_sessions.closed_by_player_id
+    WHERE campaign_sessions.campaign_id = ? ORDER BY campaign_sessions.end_sequence DESC
+  `)
+  const currentCampaignSessionBounds = database.prepare(`
+    SELECT MIN(messages.rowid) AS start_sequence, MAX(messages.rowid) AS end_sequence, COUNT(*) AS message_count
+    FROM messages JOIN rooms ON rooms.id = messages.room_id
+    WHERE rooms.campaign_id = ? AND messages.rowid > COALESCE((
+      SELECT MAX(end_sequence) FROM campaign_sessions WHERE campaign_id = ?
+    ), 0)
+  `)
+  const campaignSessionParticipants = database.prepare(`
+    SELECT DISTINCT players.id, players.name
+    FROM messages
+    JOIN rooms ON rooms.id = messages.room_id
+    JOIN players ON players.id = messages.player_id
+    WHERE rooms.campaign_id = ? AND messages.rowid BETWEEN ? AND ?
+    ORDER BY players.name COLLATE NOCASE
+  `)
+  const campaignSessionMessageCount = database.prepare(`
+    SELECT COUNT(*) AS message_count
+    FROM messages JOIN rooms ON rooms.id = messages.room_id
+    WHERE rooms.campaign_id = ? AND messages.rowid BETWEEN ? AND ?
+  `)
+  const campaignSessionMessages = database.prepare(`
+    SELECT messages.id, rooms.id AS room_id, rooms.name AS room_name,
+           players.name AS sender_name, messages.text, messages.sent_at,
+           messages.rowid AS sequence
+    FROM messages
+    JOIN rooms ON rooms.id = messages.room_id
+    JOIN players ON players.id = messages.player_id
+    WHERE rooms.campaign_id = ? AND messages.rowid BETWEEN ? AND ?
+    ORDER BY messages.rowid LIMIT ?
+  `)
+  const insertCampaignSession = database.prepare(`
+    INSERT INTO campaign_sessions (id, campaign_id, title, start_sequence, end_sequence, closed_by_player_id, closed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `)
   const latestCanonConstitution = database.prepare(`
     SELECT canon_constitution_revisions.*, players.name AS updated_by_name
@@ -1077,6 +1126,49 @@ export function createStore(databasePath) {
       if (!current || current.revision !== expectedRevision) return { conflict: true, note: this.getCampaignNote(campaignId) }
       updateCampaignNote.run(body, current.revision + 1, playerId, new Date().toISOString(), campaignId)
       return { conflict: false, note: this.getCampaignNote(campaignId) }
+    },
+
+    listCampaignSessions(campaignId) {
+      const coverage = this.getCanonCoverage(campaignId)
+      const present = (session) => ({
+        id: session.id,
+        title: session.title,
+        status: session.status,
+        startSequence: session.start_sequence,
+        endSequence: session.end_sequence,
+        messageCount: session.message_count ?? campaignSessionMessageCount.get(campaignId, session.start_sequence, session.end_sequence).message_count,
+        participants: campaignSessionParticipants.all(campaignId, session.start_sequence, session.end_sequence),
+        canonCoverage: coverage.lastScannedSequence >= session.end_sequence ? 'reviewed'
+          : coverage.lastScannedSequence >= session.start_sequence ? 'partial' : 'unreviewed',
+        closedAt: session.closed_at ?? null,
+        closedByName: session.closed_by_name ?? null,
+      })
+      const current = currentCampaignSessionBounds.get(campaignId, campaignId)
+      const sessions = closedCampaignSessions.all(campaignId).map((row) => present({ ...row, status: 'closed' }))
+      if (current.message_count) sessions.unshift(present({ id: 'current', title: 'Current session', status: 'open', ...current }))
+      return sessions
+    },
+
+    closeCampaignSession(campaignId, playerId, title) {
+      const bounds = currentCampaignSessionBounds.get(campaignId, campaignId)
+      if (!bounds.message_count) return { outcome: 'empty', sessions: this.listCampaignSessions(campaignId) }
+      insertCampaignSession.run(randomUUID(), campaignId, title, bounds.start_sequence, bounds.end_sequence, playerId, new Date().toISOString())
+      return { outcome: 'closed', sessions: this.listCampaignSessions(campaignId) }
+    },
+
+    getCampaignSessionMessages(campaignId, sessionId = null, limit = 250) {
+      const sessions = this.listCampaignSessions(campaignId)
+      const session = sessionId ? sessions.find((item) => item.id === sessionId) : sessions[0]
+      if (!session) return null
+      const rows = campaignSessionMessages.all(campaignId, session.startSequence, session.endSequence, limit + 1)
+      return {
+        session,
+        truncated: rows.length > limit,
+        messages: rows.slice(0, limit).map((row) => ({
+          id: row.id, roomId: row.room_id, roomName: row.room_name, senderName: row.sender_name,
+          text: row.text, sentAt: row.sent_at, sequence: row.sequence,
+        })),
+      }
     },
 
     getCanonConstitution(campaignId) {

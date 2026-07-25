@@ -44,6 +44,7 @@ import {
   type ContradictionReport,
   type CampaignManagement,
   type CampaignNote,
+  type CampaignSession,
   type CampaignRoom,
   type Participant,
   type MessagePage,
@@ -497,6 +498,9 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
   const [constitution, setConstitution] = useState<CanonConstitution | null>(null)
   const [constitutionDraft, setConstitutionDraft] = useState<CanonConstitution | null>(null)
   const [editingConstitution, setEditingConstitution] = useState(false)
+  const [campaignSessions, setCampaignSessions] = useState<CampaignSession[]>([])
+  const [selectedSessionId, setSelectedSessionId] = useState('')
+  const [sessionTitle, setSessionTitle] = useState('')
   const [error, setError] = useState('')
   const authorization = { authorization: `Bearer ${session.player.token}` }
   const isGm = session.player.knowledgeRole === 'gm'
@@ -506,6 +510,16 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     void api<{ constitution: CanonConstitution }>('/api/campaign/canon/constitution', { headers: { authorization: `Bearer ${session.player.token}` } })
       .then(({ constitution: loaded }) => setConstitution(loaded))
       .catch((reason) => setError(reason instanceof Error ? reason.message : 'The canon constitution could not be opened.'))
+  }, [isGm, session.player.token])
+
+  useEffect(() => {
+    if (!isGm) return
+    void api<{ sessions: CampaignSession[] }>('/api/campaign/sessions', { headers: { authorization: `Bearer ${session.player.token}` } })
+      .then(({ sessions }) => {
+        setCampaignSessions(sessions)
+        setSelectedSessionId((current) => sessions.some((item) => item.id === current) ? current : sessions[0]?.id ?? '')
+      })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'Campaign sessions could not be opened.'))
   }, [isGm, session.player.token])
 
   useEffect(() => {
@@ -595,10 +609,29 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     setError('')
     try {
       onLedger(await api<CanonLedger>('/api/campaign/canon/extract', { method: 'POST', headers: authorization }))
+      void api<{ sessions: CampaignSession[] }>('/api/campaign/sessions', { headers: authorization }).then(({ sessions }) => setCampaignSessions(sessions))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The transcript could not be read for canon.')
     } finally {
       setExtracting(false)
+    }
+  }
+
+  const closeCampaignSession = async () => {
+    if (!sessionTitle.trim()) return
+    setPending('close-session')
+    setError('')
+    try {
+      const result = await api<{ sessions: CampaignSession[] }>('/api/campaign/sessions/close', {
+        method: 'POST', headers: authorization, body: JSON.stringify({ title: sessionTitle }),
+      })
+      setCampaignSessions(result.sessions)
+      setSelectedSessionId(result.sessions[0]?.id ?? '')
+      setSessionTitle('')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The campaign session could not be closed.')
+    } finally {
+      setPending('')
     }
   }
 
@@ -659,7 +692,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     setContinuityPending(true)
     setError('')
     try {
-      const result = await api<{ brief: ContinuityBrief }>('/api/campaign/continuity/extract', { method: 'POST', headers: authorization })
+      const result = await api<{ brief: ContinuityBrief }>('/api/campaign/continuity/extract', { method: 'POST', headers: authorization, body: JSON.stringify({ sessionId: selectedSessionId }) })
       setContinuityBrief(result.brief)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The continuity brief could not be prepared.')
@@ -672,7 +705,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     setContradictionsPending(true)
     setError('')
     try {
-      const result = await api<{ report: ContradictionReport }>('/api/campaign/contradictions/extract', { method: 'POST', headers: authorization })
+      const result = await api<{ report: ContradictionReport }>('/api/campaign/contradictions/extract', { method: 'POST', headers: authorization, body: JSON.stringify({ sessionId: selectedSessionId }) })
       setContradictionReport(result.report)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The transcript could not be checked for contradictions.')
@@ -709,6 +742,11 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
           {error && <div className="entry-error" role="alert">{error}</div>}
           {!ledger ? <span className="folio-loading">Reading the canon ledger…</span> : (
             <>
+              {isGm && <section className="canon-section" aria-labelledby="campaign-sessions-heading">
+                <div className="canon-section-title"><h3 id="campaign-sessions-heading">Session chapters</h3></div>
+                {campaignSessions[0]?.status === 'open' ? <div className="session-chapter-current"><div><strong>Current session</strong><span>{campaignSessions[0].messageCount} transcript {campaignSessions[0].messageCount === 1 ? 'message' : 'messages'} · {campaignSessions[0].participants.map((participant) => participant.name).join(', ') || 'No speakers'}</span></div><div className="session-close-form"><input aria-label="Session title" value={sessionTitle} onChange={(event) => setSessionTitle(event.target.value)} maxLength={80} placeholder="Name this session…" /><button className="folio-button" onClick={() => void closeCampaignSession()} disabled={!sessionTitle.trim() || pending === 'close-session'}>{pending === 'close-session' ? 'Closing…' : 'Close session'}</button></div></div> : <div className="canon-empty"><BookOpen size={18} /><span>The next transcript message will open a new session.</span></div>}
+                {campaignSessions.length > 0 && <div className="session-context-picker"><label htmlFor="session-context">AI context session</label><select id="session-context" value={selectedSessionId} onChange={(event) => setSelectedSessionId(event.target.value)}>{campaignSessions.map((item) => <option value={item.id} key={item.id}>{item.title} · {item.messageCount} messages · {item.canonCoverage}</option>)}</select><small>Continuity and contradiction checks use this complete session, up to the 250-message safety limit.</small></div>}
+              </section>}
               {isGm && <section className="canon-section" aria-labelledby="canon-constitution-heading">
                 <div className="canon-section-title"><h3 id="canon-constitution-heading">Table constitution</h3>{!editingConstitution && <button className="folio-small-action" onClick={beginConstitutionEdit} disabled={!constitution}>Revise policy</button>}</div>
                 {!constitution ? <span className="folio-loading">Reading the table’s canon policy…</span> : editingConstitution && constitutionDraft ? <div className="canon-constitution canon-edit">
@@ -760,7 +798,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
                 </article>)}
               </section>
               {isGm && <section className="canon-section" aria-labelledby="contradictions-heading">
-                <div className="canon-section-title"><h3 id="contradictions-heading">Contradiction watch</h3><button className="folio-small-action" onClick={() => void checkContradictions()} disabled={contradictionsPending || !ledger.entries.length}>{contradictionsPending ? 'Checking…' : contradictionReport ? 'Check again' : 'Check transcript'}</button></div>
+                <div className="canon-section-title"><h3 id="contradictions-heading">Contradiction watch</h3><button className="folio-small-action" onClick={() => void checkContradictions()} disabled={contradictionsPending || !ledger.entries.length || !selectedSessionId}>{contradictionsPending ? 'Checking…' : contradictionReport ? 'Check again' : 'Check session'}</button></div>
                 {!ledger.entries.length ? <div className="canon-empty"><BookMarked size={18} /><span>Accept canon before checking it against the transcript.</span></div> : !contradictionReport && contradictionsLoaded ? <div className="canon-empty"><BookMarked size={18} /><span>No private contradiction check has been prepared.</span></div> : contradictionReport && <><p className="continuity-note">Private to GMs · checked {new Date(contradictionReport.createdAt).toLocaleString()}</p>{!contradictionReport.findings.length && <div className="canon-empty"><Check size={18} /><span>No well-supported contradictions were found.</span></div>}{contradictionReport.findings.map((finding) => <article className="contradiction-card" key={finding.id}>
                   <div className="canon-card-meta"><span>Private check</span><span>Read only</span></div><h4>{finding.title}</h4><p>{finding.explanation}</p>
                   <div className="contradiction-canon"><strong>Canon under question</strong><span>{finding.canonTitle}</span><q>{finding.canonClaim}</q></div>
@@ -768,7 +806,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
                 </article>)}</>}
               </section>}
               {isGm && <section className="canon-section" aria-labelledby="continuity-heading">
-                <div className="canon-section-title"><h3 id="continuity-heading">Session continuity</h3><button className="folio-small-action" onClick={() => void prepareContinuityBrief()} disabled={continuityPending}>{continuityPending ? 'Reading…' : continuityBrief ? 'Refresh brief' : 'Prepare brief'}</button></div>
+                <div className="canon-section-title"><h3 id="continuity-heading">Session continuity</h3><button className="folio-small-action" onClick={() => void prepareContinuityBrief()} disabled={continuityPending || !selectedSessionId}>{continuityPending ? 'Reading…' : continuityBrief ? 'Refresh brief' : 'Prepare brief'}</button></div>
                 {!continuityBrief && continuityLoaded && <div className="canon-empty"><BookMarked size={18} /><span>No private continuity brief has been prepared.</span></div>}
                 {continuityBrief && <><p className="continuity-note">Private to GMs · prepared {new Date(continuityBrief.createdAt).toLocaleString()}</p>{!continuityBrief.threads.length && <div className="canon-empty"><Check size={18} /><span>No well-supported loose threads were found.</span></div>}{continuityBrief.threads.map((thread) => <article className="continuity-card" key={thread.id}>
                   <div className="canon-card-meta"><span>GM only</span><span>{Math.round(thread.confidence * 100)}% confidence</span></div><h4>{thread.title}</h4><p>{thread.summary}</p><strong>Why it matters</strong><p>{thread.whyItMatters}</p>

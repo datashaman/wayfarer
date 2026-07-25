@@ -79,6 +79,19 @@ export type CampaignNote = {
   updatedByName: string | null
 }
 
+export type CampaignSession = {
+  id: string
+  title: string
+  status: 'open' | 'closed'
+  startSequence: number
+  endSequence: number
+  messageCount: number
+  participants: Array<{ id: string; name: string }>
+  canonCoverage: 'reviewed' | 'partial' | 'unreviewed'
+  closedAt: string | null
+  closedByName: string | null
+}
+
 export type CanonKind = 'fact' | 'character' | 'relationship' | 'promise' | 'event' | 'question' | 'contradiction' | 'rule'
 export type CanonVisibility = 'campaign' | 'gm_only'
 export type CanonProposalStatus = 'proposed' | 'accepted' | 'disputed' | 'rejected'

@@ -214,6 +214,39 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         return
       }
 
+      if (request.method === 'GET' && request.url === '/api/campaign/sessions') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        sendJson(response, 200, { sessions: store.listCampaignSessions(requestSession.campaign.id) })
+        return
+      }
+
+      if (request.method === 'POST' && request.url === '/api/campaign/sessions/close') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Only a GM can close a campaign session.' })
+          return
+        }
+        const body = await readJson(request)
+        const title = cleanName(body.title, 80)
+        if (!title) {
+          sendJson(response, 400, { error: 'A session title is required.' })
+          return
+        }
+        const result = store.closeCampaignSession(requestSession.campaign.id, requestSession.player.id, title)
+        if (result.outcome === 'empty') {
+          sendJson(response, 400, { error: 'The current session has no transcript messages.' })
+          return
+        }
+        sendJson(response, 201, { sessions: result.sessions })
+        return
+      }
+
       if (request.method === 'GET' && request.url === '/api/campaign/canon') {
         if (!requestSession) {
           sendJson(response, 401, { error: 'Session not found.' })
@@ -518,12 +551,27 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 503, { error: 'Contradiction checking is not configured.' })
           return
         }
+        const body = await readJson(request)
+        const sessionId = body.sessionId === undefined ? null : typeof body.sessionId === 'string' && body.sessionId.length <= 100 ? body.sessionId : undefined
+        if (sessionId === undefined) {
+          sendJson(response, 400, { error: 'Session selection is invalid.' })
+          return
+        }
+        const context = store.getCampaignSessionMessages(requestSession.campaign.id, sessionId)
+        if (!context) {
+          sendJson(response, 400, { error: 'Choose a campaign session with transcript messages.' })
+          return
+        }
+        if (context.truncated) {
+          sendJson(response, 400, { error: 'This session exceeds the 250-message AI context limit.' })
+          return
+        }
         const acceptedCanon = store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true })
         if (!acceptedCanon.length) {
           sendJson(response, 400, { error: 'Accept at least one canon passage before checking for contradictions.' })
           return
         }
-        const messages = store.listRecentCampaignMessages(requestSession.campaign.id, 100)
+        const messages = context.messages
         if (!messages.length) {
           sendJson(response, 400, { error: 'The transcript needs at least one message before contradictions can be checked.' })
           return
@@ -539,7 +587,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 400, { error: 'Every contradiction must cite canon and transcript from this campaign.' })
           return
         }
-        sendJson(response, 200, { report: result.report })
+        sendJson(response, 200, { report: result.report, session: context.session })
         return
       }
 
@@ -556,8 +604,23 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 503, { error: 'Continuity briefs are not configured.' })
           return
         }
+        const body = await readJson(request)
+        const sessionId = body.sessionId === undefined ? null : typeof body.sessionId === 'string' && body.sessionId.length <= 100 ? body.sessionId : undefined
+        if (sessionId === undefined) {
+          sendJson(response, 400, { error: 'Session selection is invalid.' })
+          return
+        }
+        const context = store.getCampaignSessionMessages(requestSession.campaign.id, sessionId)
+        if (!context) {
+          sendJson(response, 400, { error: 'Choose a campaign session with transcript messages.' })
+          return
+        }
+        if (context.truncated) {
+          sendJson(response, 400, { error: 'This session exceeds the 250-message AI context limit.' })
+          return
+        }
         const acceptedCanon = store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true })
-        const recentMessages = store.listRecentCampaignMessages(requestSession.campaign.id, 100)
+        const recentMessages = context.messages
         const messages = [...new Map([
           ...recentMessages,
           ...acceptedCanon.flatMap((entry) => entry.sources.map((source) => ({
@@ -580,7 +643,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 400, { error: 'Every continuity citation must belong to this campaign.' })
           return
         }
-        sendJson(response, 200, { brief: result.brief })
+        sendJson(response, 200, { brief: result.brief, session: context.session })
         return
       }
 

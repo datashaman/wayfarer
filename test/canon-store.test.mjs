@@ -31,6 +31,38 @@ test('canon scan coverage advances through transcript messages without skipping 
   store.close()
 })
 
+test('campaign sessions freeze transcript ranges, participants, and canon coverage', () => {
+  const { store, owner, first, second } = seededStore()
+  const other = store.createCampaign('The Glass Sea', 'Orin')
+  store.addMessage({ roomId: other.campaign.rooms[0].id, playerId: other.player.id, clientMessageId: 'other-session-message', text: 'An interleaved message.' })
+
+  let sessions = store.listCampaignSessions(owner.campaign.id)
+  assert.equal(sessions[0].id, 'current')
+  assert.equal(sessions[0].messageCount, 2)
+  assert.deepEqual(sessions[0].participants.map((player) => player.name), ['Mara'])
+  assert.equal(sessions[0].canonCoverage, 'unreviewed')
+  store.markCanonScanned(owner.campaign.id, owner.player.id, first.sequence)
+  assert.equal(store.listCampaignSessions(owner.campaign.id)[0].canonCoverage, 'partial')
+
+  const closed = store.closeCampaignSession(owner.campaign.id, owner.player.id, 'The lighthouse road')
+  assert.equal(closed.outcome, 'closed')
+  assert.equal(closed.sessions[0].status, 'closed')
+  assert.equal(closed.sessions[0].messageCount, 2)
+  assert.deepEqual(store.getCampaignSessionMessages(owner.campaign.id, closed.sessions[0].id).messages.map((message) => message.id), [first.id, second.id])
+  assert.equal(store.getCampaignSessionMessages(owner.campaign.id, closed.sessions[0].id, 1).truncated, true)
+
+  const third = store.addMessage({ roomId: owner.campaign.rooms[0].id, playerId: owner.player.id, clientMessageId: 'message-3', text: 'A new chapter begins.' }).message
+  sessions = store.listCampaignSessions(owner.campaign.id)
+  assert.equal(sessions[0].status, 'open')
+  assert.equal(sessions[0].messageCount, 1)
+  assert.equal(sessions[1].title, 'The lighthouse road')
+  store.markCanonScanned(owner.campaign.id, owner.player.id, second.sequence)
+  assert.equal(store.listCampaignSessions(owner.campaign.id)[1].canonCoverage, 'reviewed')
+  assert.equal(store.getCampaignSessionMessages(owner.campaign.id, 'missing'), null)
+  assert.equal(store.closeCampaignSession(owner.campaign.id, owner.player.id, 'New chapter').sessions[0].endSequence, third.sequence)
+  store.close()
+})
+
 test('canon constitutions keep immutable revision numbers and reject stale edits', () => {
   const { store, owner } = seededStore()
   const initial = store.getCanonConstitution(owner.campaign.id)

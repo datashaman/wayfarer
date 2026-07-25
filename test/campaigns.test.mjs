@@ -992,6 +992,36 @@ test('GMs share a private revision-safe canon constitution', async (t) => {
   assert.equal(stale.body.constitution.guidance, 'Promises spoken in character count.')
 })
 
+test('GMs close immutable campaign sessions while the next message opens another', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-sessions-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+  t.after(async () => {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, { method: 'POST', body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }) })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, { method: 'POST', body: JSON.stringify({ playerName: 'Theo' }) })
+  const ownerAuthorization = { authorization: `Bearer ${created.body.player.token}` }
+  const memberAuthorization = { authorization: `Bearer ${joined.body.player.token}` }
+  app.store.addMessage({ roomId: created.body.campaign.rooms[0].id, playerId: created.body.player.id, clientMessageId: 'session-message-1', text: 'The party reaches the salt gate.' })
+
+  assert.equal((await json(`${origin}/api/campaign/sessions/close`, { method: 'POST', headers: memberAuthorization, body: JSON.stringify({ title: 'Salt gate' }) })).status, 403)
+  const closed = await json(`${origin}/api/campaign/sessions/close`, { method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ title: 'Salt gate' }) })
+  assert.equal(closed.status, 201)
+  assert.equal(closed.body.sessions[0].title, 'Salt gate')
+  assert.equal(closed.body.sessions[0].messageCount, 1)
+  assert.deepEqual(closed.body.sessions[0].participants.map((player) => player.name), ['Mara'])
+
+  app.store.addMessage({ roomId: created.body.campaign.rooms[0].id, playerId: joined.body.player.id, clientMessageId: 'session-message-2', text: 'Theo opens the next chapter.' })
+  const listed = await json(`${origin}/api/campaign/sessions`, { headers: memberAuthorization })
+  assert.equal(listed.body.sessions[0].status, 'open')
+  assert.equal(listed.body.sessions[0].messageCount, 1)
+  assert.equal(listed.body.sessions[1].title, 'Salt gate')
+})
+
 test('canon proposals require cited campaign messages and owner review', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-canon-'))
   const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
@@ -1274,16 +1304,21 @@ test('contradiction reports are owner-private, read-only, and doubly cited', asy
     method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ action: 'accept', visibility: 'gm_only' }),
   })
   assert.equal(accepted.status, 200)
+  const closed = await json(`${origin}/api/campaign/sessions/close`, { method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ title: 'Ilyra’s denial' }) })
+  const laterEvent = nextEvent(ownerSocket, 'chat.message')
+  ownerSocket.send(JSON.stringify({ type: 'chat.send', id: crypto.randomUUID(), roomId, sentAt: new Date().toISOString(), payload: { clientMessageId: crypto.randomUUID(), text: 'This belongs to the next session.' } }))
+  await laterEvent
 
   const memberAttempt = await json(`${origin}/api/campaign/contradictions/extract`, {
     method: 'POST', headers: { authorization: `Bearer ${joined.body.player.token}` },
   })
   assert.equal(memberAttempt.status, 403)
-  const checked = await json(`${origin}/api/campaign/contradictions/extract`, { method: 'POST', headers: ownerAuthorization })
+  const checked = await json(`${origin}/api/campaign/contradictions/extract`, { method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ sessionId: closed.body.sessions[0].id }) })
   assert.equal(checked.status, 200)
   assert.equal(checked.body.report.findings[0].canonEntryId, accepted.body.entries[0].id)
   assert.equal(checked.body.report.findings[0].sources[0].messageId, message.id)
   assert.equal(radarInput.acceptedCanon.length, 1)
+  assert.deepEqual(radarInput.messages.map((item) => item.text), ['Ilyra has never tended a lighthouse.'])
   assert.equal((await json(`${origin}/api/campaign/contradictions`, { headers: { authorization: `Bearer ${joined.body.player.token}` } })).status, 403)
 })
 
@@ -1324,14 +1359,19 @@ test('continuity briefs are owner-private, canon-aware, cited, and rateable', as
     body: JSON.stringify({ kind: 'promise', title: 'Return before moonrise', claim: 'The party promised to return.', visibility: 'gm_only', confidence: 0.9, extractorVersion: 'fixture-v1', sources: [{ messageId: message.id }] }),
   })
   await json(`${origin}/api/campaign/canon/proposals/${proposal.body.proposal.id}/decisions`, { method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ action: 'accept', visibility: 'gm_only' }) })
+  const closed = await json(`${origin}/api/campaign/sessions/close`, { method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ title: 'Moonrise promise' }) })
+  const laterEvent = nextEvent(ownerSocket, 'chat.message')
+  ownerSocket.send(JSON.stringify({ type: 'chat.send', id: crypto.randomUUID(), roomId, sentAt: new Date().toISOString(), payload: { clientMessageId: crypto.randomUUID(), text: 'This belongs to the next session.' } }))
+  await laterEvent
 
   assert.equal((await json(`${origin}/api/campaign/continuity`, { headers: memberAuthorization })).status, 403)
   assert.equal((await json(`${origin}/api/campaign/continuity/extract`, { method: 'POST', headers: memberAuthorization })).status, 403)
-  const generated = await json(`${origin}/api/campaign/continuity/extract`, { method: 'POST', headers: ownerAuthorization })
+  const generated = await json(`${origin}/api/campaign/continuity/extract`, { method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ sessionId: closed.body.sessions[0].id }) })
   assert.equal(generated.status, 200)
   assert.equal(generated.body.brief.threads[0].sources[0].messageId, message.id)
   assert.equal(generatorInput.acceptedCanon.length, 1)
   assert.equal(generatorInput.acceptedCanon[0].visibility, 'gm_only')
+  assert.equal(generatorInput.messages.some((item) => item.text === 'This belongs to the next session.'), false)
 
   const feedback = await json(`${origin}/api/campaign/continuity/threads/${generated.body.brief.threads[0].id}/feedback`, { method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ rating: 'useful' }) })
   assert.equal(feedback.status, 200)

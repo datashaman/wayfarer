@@ -1529,6 +1529,66 @@ textarea:focus-visible {
   line-height: 1.5;
 }
 
+.session-chapter-current,
+.session-context-picker {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-medium);
+  background: var(--soot-900);
+}
+
+.session-chapter-current strong,
+.session-chapter-current span,
+.session-context-picker label,
+.session-context-picker small {
+  display: block;
+}
+
+.session-chapter-current strong {
+  color: var(--parchment-soft);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 13px;
+}
+
+.session-chapter-current span,
+.session-context-picker small {
+  margin-top: 3px;
+  color: var(--parchment-muted);
+  font-size: 9px;
+}
+
+.session-close-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+}
+
+.session-close-form input,
+.session-context-picker select {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  outline: 0;
+  background: var(--soot-950);
+  color: var(--parchment-soft);
+  font: inherit;
+  font-size: 11px;
+}
+
+.session-context-picker {
+  margin-top: 8px;
+}
+
+.session-context-picker label {
+  color: var(--parchment-dim);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
 .canon-card,
 .canon-entry,
 .contradiction-card,

@@ -45,5 +45,7 @@ test('a pre-revision recap database gains history without losing its draft', asy
   assert.equal(migrated.publicSummary, 'The party reached the old gate.')
   assert.deepEqual(store.listSessionRecapHistory(owner.campaign.id, migrated.id).map((revision) => revision.revision), [0])
   assert.equal(store.reviseSessionRecap(owner.campaign.id, owner.player.id, migrated.id, { publicSummary: 'The party reached and opened the old gate.', gmNotes: 'The road continues.', expectedRevision: 0 }).outcome, 'revised')
+  assert.deepEqual(store.getIntelligenceSettings(owner.campaign.id).tasks, { canon: true, continuity: true, recap: true })
+  assert.equal(store.createHouseRule(owner.campaign.id, owner.player.id, { title: 'Old gate', sourceRule: 'Legacy rule.', interpretation: 'The seal is a lock.', ruling: 'Opening checks apply.', reason: 'Migration check.' }).revision, 0)
   store.close()
 })

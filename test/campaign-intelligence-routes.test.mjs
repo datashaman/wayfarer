@@ -57,6 +57,16 @@ test('campaign intelligence keeps preparation, memory, rules, factions, spotligh
   }
   assert.equal((await json(`${origin}/api/campaign/intelligence`, { headers: ownerHeaders })).body.preparationRuns[0].status, 'complete')
 
+  app.store.addMessage({ roomId, playerId: created.body.player.id, clientMessageId: 'scheduled-session-message', text: 'The western gate opens again.' })
+  const scheduledSession = await json(`${origin}/api/campaign/sessions/close`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ title: 'The gate opens again' }) })
+  assert.equal(scheduledSession.status, 201)
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const state = await json(`${origin}/api/campaign/intelligence`, { headers: ownerHeaders })
+    if (state.body.preparationRuns.some((run) => run.sessionId === scheduledSession.body.sessions[0].id && run.status === 'complete')) break
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  assert.equal((await json(`${origin}/api/campaign/intelligence`, { headers: ownerHeaders })).body.preparationRuns.some((run) => run.sessionId === scheduledSession.body.sessions[0].id && run.status === 'complete'), true)
+
   const knowledge = await json(`${origin}/api/campaign/intelligence/knowledge`, { method: 'POST', headers: guestHeaders, body: JSON.stringify({ question: 'Who keeps the light?' }) })
   assert.equal(knowledge.status, 200)
   assert.equal(knowledge.body.citations[0].visibility, 'campaign')

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { WebSocket, WebSocketServer } from 'ws'
 import { defaultIceServers } from './config.mjs'
 import { createStore } from './store.mjs'
+import { analyzeSessionInChunks } from './session-analysis.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const dist = join(root, 'dist')
@@ -65,6 +66,7 @@ const canonKinds = new Set(['fact', 'character', 'relationship', 'promise', 'eve
 const canonVisibilities = new Set(['campaign', 'gm_only'])
 const canonDecisionActions = new Set(['accept', 'edit_accept', 'dispute', 'reject'])
 const continuityRatings = new Set(['useful', 'incorrect', 'secret_leak', 'not_useful'])
+const continuityStatuses = new Set(['open', 'dormant', 'resolved'])
 const canonThresholds = new Set(['explicit_only', 'table_consensus', 'played_as_true'])
 const playerDeclarationPolicies = new Set(['require_confirmation', 'stand_unless_challenged'])
 const canonOocPolicies = new Set(['exclude', 'explicit_corrections_only'])
@@ -557,13 +559,13 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 400, { error: 'Session selection is invalid.' })
           return
         }
-        const context = store.getCampaignSessionMessages(requestSession.campaign.id, sessionId)
+        const context = store.getCampaignSessionMessages(requestSession.campaign.id, sessionId, 5_000)
         if (!context) {
           sendJson(response, 400, { error: 'Choose a campaign session with transcript messages.' })
           return
         }
         if (context.truncated) {
-          sendJson(response, 400, { error: 'This session exceeds the 250-message AI context limit.' })
+          sendJson(response, 400, { error: 'This session exceeds the 5,000-message processing limit.' })
           return
         }
         const acceptedCanon = store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true })
@@ -576,7 +578,12 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 400, { error: 'The transcript needs at least one message before contradictions can be checked.' })
           return
         }
-        const findings = await contradictionRadar.inspect({ campaignId: requestSession.campaign.id, messages, acceptedCanon })
+        const findings = await analyzeSessionInChunks({
+          messages,
+          maximum: 5,
+          keyFields: ['canonEntryId', 'title', 'explanation'],
+          analyze: (chunk) => contradictionRadar.inspect({ campaignId: requestSession.campaign.id, messages: chunk, acceptedCanon }),
+        })
         const result = store.createContradictionReport({
           campaignId: requestSession.campaign.id,
           playerId: requestSession.player.id,
@@ -611,29 +618,27 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 400, { error: 'Session selection is invalid.' })
           return
         }
-        const context = store.getCampaignSessionMessages(requestSession.campaign.id, sessionId)
+        const context = store.getCampaignSessionMessages(requestSession.campaign.id, sessionId, 5_000)
         if (!context) {
           sendJson(response, 400, { error: 'Choose a campaign session with transcript messages.' })
           return
         }
         if (context.truncated) {
-          sendJson(response, 400, { error: 'This session exceeds the 250-message AI context limit.' })
+          sendJson(response, 400, { error: 'This session exceeds the 5,000-message processing limit.' })
           return
         }
         const acceptedCanon = store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true })
-        const recentMessages = context.messages
-        const messages = [...new Map([
-          ...recentMessages,
-          ...acceptedCanon.flatMap((entry) => entry.sources.map((source) => ({
-            id: source.messageId, roomId: source.roomId, roomName: source.roomName,
-            senderName: source.senderName, text: source.text, sentAt: source.sentAt, sequence: source.sequence,
-          }))),
-        ].map((message) => [message.id, message])).values()]
+        const messages = context.messages
         if (!messages.length) {
           sendJson(response, 400, { error: 'The transcript needs at least one message before a brief can be prepared.' })
           return
         }
-        const threads = await continuityGenerator.generate({ campaignId: requestSession.campaign.id, messages, acceptedCanon })
+        const threads = await analyzeSessionInChunks({
+          messages,
+          maximum: 3,
+          keyFields: ['title', 'summary'],
+          analyze: (chunk) => continuityGenerator.generate({ campaignId: requestSession.campaign.id, messages: chunk, acceptedCanon }),
+        })
         const result = store.createContinuityBrief({
           campaignId: requestSession.campaign.id,
           playerId: requestSession.player.id,
@@ -666,6 +671,28 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           return
         }
         const brief = store.recordContinuityFeedback(requestSession.campaign.id, requestSession.player.id, continuityFeedback[1], rating)
+        sendJson(response, brief ? 200 : 404, brief ? { brief } : { error: 'Continuity thread not found.' })
+        return
+      }
+
+      const continuityLifecycle = request.url?.match(/^\/api\/campaign\/continuity\/threads\/([^/]+)\/lifecycle$/)
+      if (request.method === 'POST' && continuityLifecycle) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'The continuity brief is private to GMs.' })
+          return
+        }
+        const body = await readJson(request)
+        const status = continuityStatuses.has(body.status) ? body.status : null
+        const reason = cleanCanonText(body.reason, 500)
+        if (!status || !reason) {
+          sendJson(response, 400, { error: 'A continuity status and reason are required.' })
+          return
+        }
+        const brief = store.transitionContinuityThread(requestSession.campaign.id, requestSession.player.id, continuityLifecycle[1], status, reason)
         sendJson(response, brief ? 200 : 404, brief ? { brief } : { error: 'Continuity thread not found.' })
         return
       }

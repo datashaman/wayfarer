@@ -206,7 +206,16 @@ export type ContinuityThread = {
   whyItMatters: string
   confidence: number
   feedback: { rating: ContinuityFeedbackRating; createdAt: string } | null
+  lifecycle: ContinuityLifecycleEvent
+  lifecycleHistory: ContinuityLifecycleEvent[]
   sources: CanonProposalSource[]
+}
+
+export type ContinuityLifecycleEvent = {
+  status: 'open' | 'dormant' | 'resolved'
+  reason: string | null
+  createdAt: string
+  createdByName: string
 }
 
 export type ContinuityBrief = {

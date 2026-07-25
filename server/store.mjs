@@ -397,6 +397,14 @@ export function createStore(databasePath) {
       rating TEXT NOT NULL CHECK(rating IN ('useful', 'incorrect', 'secret_leak', 'not_useful')),
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS continuity_thread_transitions (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES continuity_threads(id) ON DELETE CASCADE,
+      status TEXT NOT NULL CHECK(status IN ('open', 'dormant', 'resolved')),
+      reason TEXT NOT NULL,
+      player_id TEXT NOT NULL REFERENCES players(id),
+      created_at TEXT NOT NULL
+    );
   `)
 
   const playerColumns = database.prepare('PRAGMA table_info(players)').all()
@@ -897,6 +905,17 @@ export function createStore(databasePath) {
   `)
   const continuityFeedbackForThread = database.prepare(`
     SELECT rating, created_at FROM continuity_feedback WHERE thread_id = ? ORDER BY rowid DESC LIMIT 1
+  `)
+  const continuityTransitionsForThread = database.prepare(`
+    SELECT continuity_thread_transitions.*, players.name AS created_by_name
+    FROM continuity_thread_transitions
+    JOIN players ON players.id = continuity_thread_transitions.player_id
+    WHERE continuity_thread_transitions.thread_id = ?
+    ORDER BY continuity_thread_transitions.rowid DESC
+  `)
+  const insertContinuityTransition = database.prepare(`
+    INSERT INTO continuity_thread_transitions (id, thread_id, status, reason, player_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
   `)
   const continuityThreadForCampaign = database.prepare(`
     SELECT continuity_threads.* FROM continuity_threads
@@ -1537,6 +1556,12 @@ export function createStore(databasePath) {
       if (!row) return null
       const threads = continuityThreadsForBrief.all(row.id).map((thread) => {
         const feedback = continuityFeedbackForThread.get(thread.id)
+        const lifecycleHistory = continuityTransitionsForThread.all(thread.id).map((transition) => ({
+          status: transition.status,
+          reason: transition.reason,
+          createdAt: transition.created_at,
+          createdByName: transition.created_by_name,
+        }))
         return {
           id: thread.id,
           title: thread.title,
@@ -1544,6 +1569,8 @@ export function createStore(databasePath) {
           whyItMatters: thread.why_it_matters,
           confidence: thread.confidence,
           feedback: feedback ? { rating: feedback.rating, createdAt: feedback.created_at } : null,
+          lifecycle: lifecycleHistory[0] ?? { status: 'open', reason: null, createdAt: row.created_at, createdByName: row.created_by_name },
+          lifecycleHistory,
           sources: continuitySourcesForThread.all(thread.id).map((source) => ({
             messageId: source.message_id,
             roomId: source.room_id,
@@ -1562,6 +1589,12 @@ export function createStore(databasePath) {
     recordContinuityFeedback(campaignId, playerId, threadId, rating) {
       if (!continuityThreadForCampaign.get(threadId, campaignId)) return null
       insertContinuityFeedback.run(randomUUID(), threadId, playerId, rating, new Date().toISOString())
+      return this.getLatestContinuityBrief(campaignId)
+    },
+
+    transitionContinuityThread(campaignId, playerId, threadId, status, reason) {
+      if (!continuityThreadForCampaign.get(threadId, campaignId)) return null
+      insertContinuityTransition.run(randomUUID(), threadId, status, reason, playerId, new Date().toISOString())
       return this.getLatestContinuityBrief(campaignId)
     },
 

@@ -1380,6 +1380,10 @@ test('continuity briefs are owner-private, canon-aware, cited, and rateable', as
   const feedback = await json(`${origin}/api/campaign/continuity/threads/${generated.body.brief.threads[0].id}/feedback`, { method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ rating: 'useful' }) })
   assert.equal(feedback.status, 200)
   assert.equal(feedback.body.brief.threads[0].feedback.rating, 'useful')
+  const resolved = await json(`${origin}/api/campaign/continuity/threads/${generated.body.brief.threads[0].id}/lifecycle`, { method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ status: 'resolved', reason: 'The promise was fulfilled.' }) })
+  assert.equal(resolved.status, 200)
+  assert.equal(resolved.body.brief.threads[0].lifecycle.status, 'resolved')
+  assert.equal((await json(`${origin}/api/campaign/continuity/threads/${generated.body.brief.threads[0].id}/lifecycle`, { method: 'POST', headers: memberAuthorization, body: JSON.stringify({ status: 'open', reason: 'No.' }) })).status, 403)
 })
 
 test('room transcript survives a server restart', async (t) => {

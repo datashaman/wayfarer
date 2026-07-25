@@ -324,13 +324,19 @@ test('contradiction reports preserve canon snapshots and campaign transcript evi
   }).proposal
   store.decideCanonProposal(owner.campaign.id, owner.player.id, proposal.id, { action: 'accept', visibility: 'gm_only' })
   const entry = store.listCanonEntries(owner.campaign.id, { includeGmOnly: true })[0]
+  const session = store.listCampaignSessions(owner.campaign.id)[0]
   const created = store.createContradictionReport({
     campaignId: owner.campaign.id, playerId: owner.player.id, generatorVersion: 'radar-v1',
+    session,
     findings: [{ canonEntryId: entry.id, title: 'Promise conflicts', explanation: 'The newer statement denies the accepted account.', confidence: 0.88, sources: [{ messageId: second.id, excerpt: 'promised to return' }] }],
   })
   assert.equal(created.outcome, 'created')
   assert.equal(created.report.findings[0].canonClaim, 'Ilyra keeps the lighthouse.')
   assert.equal(created.report.findings[0].sources[0].messageId, second.id)
+  assert.deepEqual(created.report.contextSession, {
+    id: 'current', title: 'Current session', status: 'open',
+    startSequence: session.startSequence, endSequence: session.endSequence,
+  })
   assert.equal(store.createContradictionReport({
     campaignId: owner.campaign.id, playerId: owner.player.id, generatorVersion: 'radar-v1',
     findings: [{ canonEntryId: 'unknown', title: 'Invalid', explanation: 'Invalid source.', confidence: 0.5, sources: [{ messageId: second.id }] }],
@@ -340,15 +346,18 @@ test('contradiction reports preserve canon snapshots and campaign transcript evi
 
 test('continuity briefs retain cited threads and append owner feedback', () => {
   const { store, owner, second } = seededStore()
+  const session = store.listCampaignSessions(owner.campaign.id)[0]
   const created = store.createContinuityBrief({
     campaignId: owner.campaign.id,
     playerId: owner.player.id,
     generatorVersion: 'fixture-continuity-v1',
+    session,
     threads: [{ title: 'Return before moonrise', summary: 'The party promised to return.', whyItMatters: 'The promise remains unresolved.', confidence: 0.9, sources: [{ messageId: second.id, excerpt: 'promised to return' }] }],
   })
   assert.equal(created.outcome, 'created')
   assert.equal(created.brief.threads[0].sources[0].messageId, second.id)
   assert.equal(created.brief.threads[0].feedback, null)
+  assert.equal(created.brief.contextSession.endSequence, session.endSequence)
   const rated = store.recordContinuityFeedback(owner.campaign.id, owner.player.id, created.brief.threads[0].id, 'useful')
   assert.equal(rated.threads[0].feedback.rating, 'useful')
   store.recordContinuityFeedback(owner.campaign.id, owner.player.id, created.brief.threads[0].id, 'secret_leak')

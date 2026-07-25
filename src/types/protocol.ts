@@ -191,8 +191,11 @@ export type ContradictionReport = {
   generatorVersion: string
   createdAt: string
   createdByName: string
+  contextSession: AiContextSession | null
   findings: ContradictionFinding[]
 }
+
+export type AiContextSession = Pick<CampaignSession, 'id' | 'title' | 'status' | 'startSequence' | 'endSequence'>
 
 export type ContinuityFeedbackRating = 'useful' | 'incorrect' | 'secret_leak' | 'not_useful'
 
@@ -212,6 +215,7 @@ export type ContinuityBrief = {
   generatorVersion: string
   createdAt: string
   createdByName: string
+  contextSession: AiContextSession | null
   threads: ContinuityThread[]
 }
 

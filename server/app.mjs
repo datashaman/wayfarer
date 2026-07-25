@@ -581,6 +581,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           campaignId: requestSession.campaign.id,
           playerId: requestSession.player.id,
           generatorVersion: contradictionRadar.version,
+          session: context.session,
           findings,
         })
         if (result.outcome === 'invalid_source') {
@@ -637,6 +638,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           campaignId: requestSession.campaign.id,
           playerId: requestSession.player.id,
           generatorVersion: continuityGenerator.version,
+          session: context.session,
           threads,
         })
         if (result.outcome === 'invalid_source') {

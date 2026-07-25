@@ -153,6 +153,13 @@ function publicContinuityBrief(row, threads = []) {
     generatorVersion: row.generator_version,
     createdAt: row.created_at,
     createdByName: row.created_by_name,
+    contextSession: row.session_start_sequence == null ? null : {
+      id: row.session_id,
+      title: row.session_title,
+      status: row.session_status,
+      startSequence: row.session_start_sequence,
+      endSequence: row.session_end_sequence,
+    },
     threads,
   }
 }
@@ -164,6 +171,13 @@ function publicContradictionReport(row, findings = []) {
     generatorVersion: row.generator_version,
     createdAt: row.created_at,
     createdByName: row.created_by_name,
+    contextSession: row.session_start_sequence == null ? null : {
+      id: row.session_id,
+      title: row.session_title,
+      status: row.session_status,
+      startSequence: row.session_start_sequence,
+      endSequence: row.session_end_sequence,
+    },
     findings,
   }
 }
@@ -324,6 +338,11 @@ export function createStore(databasePath) {
       id TEXT PRIMARY KEY,
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
       generator_version TEXT NOT NULL,
+      session_id TEXT,
+      session_title TEXT,
+      session_status TEXT CHECK(session_status IS NULL OR session_status IN ('open', 'closed')),
+      session_start_sequence INTEGER,
+      session_end_sequence INTEGER,
       created_by_player_id TEXT NOT NULL REFERENCES players(id),
       created_at TEXT NOT NULL
     );
@@ -348,6 +367,11 @@ export function createStore(databasePath) {
       id TEXT PRIMARY KEY,
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
       generator_version TEXT NOT NULL,
+      session_id TEXT,
+      session_title TEXT,
+      session_status TEXT CHECK(session_status IS NULL OR session_status IN ('open', 'closed')),
+      session_start_sequence INTEGER,
+      session_end_sequence INTEGER,
       created_by_player_id TEXT NOT NULL REFERENCES players(id),
       created_at TEXT NOT NULL
     );
@@ -405,6 +429,14 @@ export function createStore(databasePath) {
   if (!canonDecisionColumns.some((column) => column.name === 'accepted_visibility')) database.exec("ALTER TABLE canon_decisions ADD COLUMN accepted_visibility TEXT CHECK(accepted_visibility IS NULL OR accepted_visibility IN ('campaign', 'gm_only'))")
   const canonEntryColumns = database.prepare('PRAGMA table_info(canon_entries)').all()
   if (!canonEntryColumns.some((column) => column.name === 'retired_reason')) database.exec("ALTER TABLE canon_entries ADD COLUMN retired_reason TEXT CHECK(retired_reason IS NULL OR retired_reason IN ('superseded', 'retracted'))")
+  for (const table of ['continuity_briefs', 'contradiction_reports']) {
+    const columns = database.prepare(`PRAGMA table_info(${table})`).all()
+    if (!columns.some((column) => column.name === 'session_id')) database.exec(`ALTER TABLE ${table} ADD COLUMN session_id TEXT`)
+    if (!columns.some((column) => column.name === 'session_title')) database.exec(`ALTER TABLE ${table} ADD COLUMN session_title TEXT`)
+    if (!columns.some((column) => column.name === 'session_status')) database.exec(`ALTER TABLE ${table} ADD COLUMN session_status TEXT CHECK(session_status IS NULL OR session_status IN ('open', 'closed'))`)
+    if (!columns.some((column) => column.name === 'session_start_sequence')) database.exec(`ALTER TABLE ${table} ADD COLUMN session_start_sequence INTEGER`)
+    if (!columns.some((column) => column.name === 'session_end_sequence')) database.exec(`ALTER TABLE ${table} ADD COLUMN session_end_sequence INTEGER`)
+  }
   database.exec(`
     INSERT OR IGNORE INTO canon_entry_revisions (
       id, entry_id, revision, action, title, claim, visibility, reason, player_id, created_at
@@ -796,12 +828,16 @@ export function createStore(databasePath) {
     ORDER BY canon_entry_revisions.revision DESC
   `)
   const insertContinuityBrief = database.prepare(`
-    INSERT INTO continuity_briefs (id, campaign_id, generator_version, created_by_player_id, created_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO continuity_briefs (
+      id, campaign_id, generator_version, session_id, session_title, session_status,
+      session_start_sequence, session_end_sequence, created_by_player_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertContradictionReport = database.prepare(`
-    INSERT INTO contradiction_reports (id, campaign_id, generator_version, created_by_player_id, created_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO contradiction_reports (
+      id, campaign_id, generator_version, session_id, session_title, session_status,
+      session_start_sequence, session_end_sequence, created_by_player_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertContradictionFinding = database.prepare(`
     INSERT INTO contradiction_findings (id, report_id, position, canon_entry_id, canon_title, canon_claim, title, explanation, confidence)
@@ -1414,7 +1450,7 @@ export function createStore(databasePath) {
       return { entry, revisions: canonRevisionsForEntry.all(entryId).map(publicCanonRevision) }
     },
 
-    createContradictionReport({ campaignId, playerId, generatorVersion, findings }) {
+    createContradictionReport({ campaignId, playerId, generatorVersion, session = null, findings }) {
       const resolved = findings.map((finding) => ({
         ...finding,
         canon: canonEntryById.get(finding.canonEntryId, campaignId),
@@ -1425,7 +1461,11 @@ export function createStore(databasePath) {
       const createdAt = new Date().toISOString()
       database.exec('BEGIN IMMEDIATE')
       try {
-        insertContradictionReport.run(reportId, campaignId, generatorVersion, playerId, createdAt)
+        insertContradictionReport.run(
+          reportId, campaignId, generatorVersion, session?.id ?? null, session?.title ?? null,
+          session?.status ?? null, session?.startSequence ?? null, session?.endSequence ?? null,
+          playerId, createdAt,
+        )
         resolved.forEach((finding, position) => {
           const findingId = randomUUID()
           insertContradictionFinding.run(findingId, reportId, position, finding.canonEntryId, finding.canon.title, finding.canon.claim, finding.title, finding.explanation, finding.confidence)
@@ -1464,7 +1504,7 @@ export function createStore(databasePath) {
       return publicContradictionReport(row, findings)
     },
 
-    createContinuityBrief({ campaignId, playerId, generatorVersion, threads }) {
+    createContinuityBrief({ campaignId, playerId, generatorVersion, session = null, threads }) {
       const resolved = threads.map((thread) => ({
         ...thread,
         sources: thread.sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) })),
@@ -1474,7 +1514,11 @@ export function createStore(databasePath) {
       const createdAt = new Date().toISOString()
       database.exec('BEGIN IMMEDIATE')
       try {
-        insertContinuityBrief.run(briefId, campaignId, generatorVersion, playerId, createdAt)
+        insertContinuityBrief.run(
+          briefId, campaignId, generatorVersion, session?.id ?? null, session?.title ?? null,
+          session?.status ?? null, session?.startSequence ?? null, session?.endSequence ?? null,
+          playerId, createdAt,
+        )
         resolved.forEach((thread, position) => {
           const threadId = randomUUID()
           insertContinuityThread.run(threadId, briefId, position, thread.title, thread.summary, thread.whyItMatters, thread.confidence)

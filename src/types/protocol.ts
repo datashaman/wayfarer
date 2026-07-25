@@ -148,6 +148,26 @@ export type CanonLedger = {
   }
 }
 
+export type ContradictionFinding = {
+  id: Id
+  canonEntryId: Id
+  canonTitle: string
+  canonClaim: string
+  title: string
+  explanation: string
+  confidence: number
+  sources: CanonProposalSource[]
+}
+
+export type ContradictionReport = {
+  id: Id
+  campaignId: Id
+  generatorVersion: string
+  createdAt: string
+  createdByName: string
+  findings: ContradictionFinding[]
+}
+
 export type ContinuityFeedbackRating = 'useful' | 'incorrect' | 'secret_leak' | 'not_useful'
 
 export type ContinuityThread = {

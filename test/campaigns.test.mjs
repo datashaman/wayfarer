@@ -1119,6 +1119,70 @@ test('the owner manually extracts idempotent GM-only canon suggestions', async (
   assert.equal(extractedInputs[1].priorDecisions[0].reason, 'not_useful')
 })
 
+test('contradiction reports are owner-private, read-only, and doubly cited', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-contradictions-'))
+  let radarInput
+  const contradictionRadar = {
+    version: 'fixture-contradiction-v1',
+    async inspect(input) {
+      radarInput = input
+      return [{
+        canonEntryId: input.acceptedCanon[0].id,
+        title: 'Ilyra’s role conflicts',
+        explanation: 'The transcript directly denies the accepted account.',
+        confidence: 0.92,
+        sources: [{ messageId: input.messages[0].id, excerpt: 'never tended a lighthouse' }],
+      }]
+    },
+  }
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite'), contradictionRadar })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+  let ownerSocket
+  t.after(async () => {
+    ownerSocket?.close()
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, { method: 'POST', body: JSON.stringify({ campaignName: 'The Moon Road', playerName: 'Mara' }) })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, { method: 'POST', body: JSON.stringify({ playerName: 'Theo' }) })
+  const ownerAuthorization = { authorization: `Bearer ${created.body.player.token}` }
+  const roomId = created.body.campaign.rooms[0].id
+  ownerSocket = await openSocket(`ws://127.0.0.1:${port}/ws?token=${created.body.player.token}`)
+  const snapshot = nextEvent(ownerSocket, 'room.snapshot')
+  ownerSocket.send(JSON.stringify({ type: 'room.subscribe', id: crypto.randomUUID(), roomId, sentAt: new Date().toISOString(), payload: {} }))
+  await snapshot
+  const messageEvent = nextEvent(ownerSocket, 'chat.message')
+  ownerSocket.send(JSON.stringify({
+    type: 'chat.send', id: crypto.randomUUID(), roomId, sentAt: new Date().toISOString(),
+    payload: { clientMessageId: crypto.randomUUID(), text: 'Ilyra has never tended a lighthouse.' },
+  }))
+  const message = (await messageEvent).payload
+  const proposal = await json(`${origin}/api/campaign/canon/proposals`, {
+    method: 'POST', headers: ownerAuthorization,
+    body: JSON.stringify({
+      kind: 'character', title: 'Ilyra', claim: 'Ilyra tends the western lighthouse.', visibility: 'gm_only', confidence: null,
+      extractorVersion: 'human-fixture-v1', sources: [{ messageId: message.id }],
+    }),
+  })
+  const accepted = await json(`${origin}/api/campaign/canon/proposals/${proposal.body.proposal.id}/decisions`, {
+    method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ action: 'accept', visibility: 'gm_only' }),
+  })
+  assert.equal(accepted.status, 200)
+
+  const memberAttempt = await json(`${origin}/api/campaign/contradictions/extract`, {
+    method: 'POST', headers: { authorization: `Bearer ${joined.body.player.token}` },
+  })
+  assert.equal(memberAttempt.status, 403)
+  const checked = await json(`${origin}/api/campaign/contradictions/extract`, { method: 'POST', headers: ownerAuthorization })
+  assert.equal(checked.status, 200)
+  assert.equal(checked.body.report.findings[0].canonEntryId, accepted.body.entries[0].id)
+  assert.equal(checked.body.report.findings[0].sources[0].messageId, message.id)
+  assert.equal(radarInput.acceptedCanon.length, 1)
+  assert.equal((await json(`${origin}/api/campaign/contradictions`, { headers: { authorization: `Bearer ${joined.body.player.token}` } })).status, 403)
+})
+
 test('continuity briefs are owner-private, canon-aware, cited, and rateable', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-continuity-'))
   let generatorInput

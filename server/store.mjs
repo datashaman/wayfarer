@@ -141,6 +141,17 @@ function publicContinuityBrief(row, threads = []) {
   }
 }
 
+function publicContradictionReport(row, findings = []) {
+  return {
+    id: row.id,
+    campaignId: row.campaign_id,
+    generatorVersion: row.generator_version,
+    createdAt: row.created_at,
+    createdByName: row.created_by_name,
+    findings,
+  }
+}
+
 export function createStore(databasePath) {
   if (databasePath !== ':memory:') mkdirSync(dirname(databasePath), { recursive: true })
   const database = new DatabaseSync(databasePath)
@@ -258,6 +269,30 @@ export function createStore(databasePath) {
       last_scanned_sequence INTEGER NOT NULL DEFAULT 0,
       updated_by_player_id TEXT NOT NULL REFERENCES players(id),
       updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS contradiction_reports (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      generator_version TEXT NOT NULL,
+      created_by_player_id TEXT NOT NULL REFERENCES players(id),
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS contradiction_findings (
+      id TEXT PRIMARY KEY,
+      report_id TEXT NOT NULL REFERENCES contradiction_reports(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      canon_entry_id TEXT NOT NULL REFERENCES canon_entries(id) ON DELETE RESTRICT,
+      canon_title TEXT NOT NULL,
+      canon_claim TEXT NOT NULL,
+      title TEXT NOT NULL,
+      explanation TEXT NOT NULL,
+      confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1)
+    );
+    CREATE TABLE IF NOT EXISTS contradiction_sources (
+      finding_id TEXT NOT NULL REFERENCES contradiction_findings(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
+      excerpt TEXT,
+      PRIMARY KEY (finding_id, message_id)
     );
     CREATE TABLE IF NOT EXISTS continuity_briefs (
       id TEXT PRIMARY KEY,
@@ -598,6 +633,38 @@ export function createStore(databasePath) {
   const insertContinuityBrief = database.prepare(`
     INSERT INTO continuity_briefs (id, campaign_id, generator_version, created_by_player_id, created_at)
     VALUES (?, ?, ?, ?, ?)
+  `)
+  const insertContradictionReport = database.prepare(`
+    INSERT INTO contradiction_reports (id, campaign_id, generator_version, created_by_player_id, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `)
+  const insertContradictionFinding = database.prepare(`
+    INSERT INTO contradiction_findings (id, report_id, position, canon_entry_id, canon_title, canon_claim, title, explanation, confidence)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const insertContradictionSource = database.prepare(`
+    INSERT INTO contradiction_sources (finding_id, message_id, excerpt) VALUES (?, ?, ?)
+  `)
+  const latestContradictionReport = database.prepare(`
+    SELECT contradiction_reports.*, players.name AS created_by_name
+    FROM contradiction_reports
+    JOIN players ON players.id = contradiction_reports.created_by_player_id
+    WHERE contradiction_reports.campaign_id = ?
+    ORDER BY contradiction_reports.rowid DESC LIMIT 1
+  `)
+  const contradictionFindingsForReport = database.prepare(`
+    SELECT * FROM contradiction_findings WHERE report_id = ? ORDER BY position
+  `)
+  const contradictionSourcesForFinding = database.prepare(`
+    SELECT contradiction_sources.message_id, contradiction_sources.excerpt,
+           messages.text, messages.sent_at, messages.rowid AS sequence,
+           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+    FROM contradiction_sources
+    JOIN messages ON messages.id = contradiction_sources.message_id
+    JOIN rooms ON rooms.id = messages.room_id
+    JOIN players ON players.id = messages.player_id
+    WHERE contradiction_sources.finding_id = ?
+    ORDER BY messages.rowid
   `)
   const insertContinuityThread = database.prepare(`
     INSERT INTO continuity_threads (id, brief_id, position, title, summary, why_it_matters, confidence)
@@ -1002,6 +1069,56 @@ export function createStore(databasePath) {
       const entry = this.getCanonEntry(campaignId, entryId, { includeGmOnly })
       if (!entry) return null
       return { entry, revisions: canonRevisionsForEntry.all(entryId).map(publicCanonRevision) }
+    },
+
+    createContradictionReport({ campaignId, playerId, generatorVersion, findings }) {
+      const resolved = findings.map((finding) => ({
+        ...finding,
+        canon: canonEntryById.get(finding.canonEntryId, campaignId),
+        sources: finding.sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) })),
+      }))
+      if (resolved.some((finding) => !finding.canon || finding.sources.some((source) => !source.row))) return { outcome: 'invalid_source' }
+      const reportId = randomUUID()
+      const createdAt = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        insertContradictionReport.run(reportId, campaignId, generatorVersion, playerId, createdAt)
+        resolved.forEach((finding, position) => {
+          const findingId = randomUUID()
+          insertContradictionFinding.run(findingId, reportId, position, finding.canonEntryId, finding.canon.title, finding.canon.claim, finding.title, finding.explanation, finding.confidence)
+          for (const source of finding.sources) insertContradictionSource.run(findingId, source.messageId, source.excerpt ?? null)
+        })
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return { outcome: 'created', report: this.getLatestContradictionReport(campaignId) }
+    },
+
+    getLatestContradictionReport(campaignId) {
+      const row = latestContradictionReport.get(campaignId)
+      if (!row) return null
+      const findings = contradictionFindingsForReport.all(row.id).map((finding) => ({
+        id: finding.id,
+        canonEntryId: finding.canon_entry_id,
+        canonTitle: finding.canon_title,
+        canonClaim: finding.canon_claim,
+        title: finding.title,
+        explanation: finding.explanation,
+        confidence: finding.confidence,
+        sources: contradictionSourcesForFinding.all(finding.id).map((source) => ({
+          messageId: source.message_id,
+          roomId: source.room_id,
+          roomName: source.room_name,
+          senderName: source.sender_name,
+          text: source.text,
+          excerpt: source.excerpt,
+          sentAt: source.sent_at,
+          sequence: source.sequence,
+        })),
+      }))
+      return publicContradictionReport(row, findings)
     },
 
     createContinuityBrief({ campaignId, playerId, generatorVersion, threads }) {

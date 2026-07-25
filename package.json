@@ -12,6 +12,7 @@
     "test:e2e": "playwright test",
     "eval:canon": "node --env-file-if-exists=.env.local scripts/eval-canon.mjs",
     "eval:continuity": "node --env-file-if-exists=.env.local scripts/eval-continuity.mjs",
+    "eval:contradictions": "node --env-file-if-exists=.env.local scripts/eval-contradictions.mjs",
     "lint": "eslint ."
   },
   "dependencies": {

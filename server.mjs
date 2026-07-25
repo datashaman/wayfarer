@@ -3,6 +3,7 @@ import { createRoomServer } from './server/app.mjs'
 import { parseAllowedOrigins, parseIceServers } from './server/config.mjs'
 import { createOpenAICanonExtractor } from './server/openai-canon-extractor.mjs'
 import { createOpenAIContinuityBriefGenerator } from './server/openai-continuity-brief.mjs'
+import { createOpenAIContradictionRadar } from './server/openai-contradiction-radar.mjs'
 
 try {
   process.loadEnvFile?.('.env.local')
@@ -25,6 +26,10 @@ const app = createRoomServer({
   continuityGenerator: process.env.OPENAI_API_KEY ? createOpenAIContinuityBriefGenerator({
     apiKey: process.env.OPENAI_API_KEY,
     model: process.env.OPENAI_CONTINUITY_MODEL || process.env.OPENAI_CANON_MODEL || 'gpt-5.6-luna',
+  }) : null,
+  contradictionRadar: process.env.OPENAI_API_KEY ? createOpenAIContradictionRadar({
+    apiKey: process.env.OPENAI_API_KEY,
+    model: process.env.OPENAI_CONTRADICTION_MODEL || process.env.OPENAI_CANON_MODEL || 'gpt-5.6-luna',
   }) : null,
 })
 

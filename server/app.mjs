@@ -71,7 +71,7 @@ function cleanCanonText(value, maximum) {
   return text && text.length <= maximum ? text : null
 }
 
-export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers, allowedOrigins, trustProxy = false, rateLimits = {}, canonExtractor = null, continuityGenerator = null } = {}) {
+export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers, allowedOrigins, trustProxy = false, rateLimits = {}, canonExtractor = null, continuityGenerator = null, contradictionRadar = null } = {}) {
   const store = createStore(databasePath)
   const clients = new Map()
   const originAllowlist = new Set(allowedOrigins ?? (dev ? developmentOrigins : []))
@@ -400,6 +400,57 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           return
         }
         sendJson(response, 200, { brief: store.getLatestContinuityBrief(requestSession.campaign.id) })
+        return
+      }
+
+      if (request.method === 'GET' && request.url === '/api/campaign/contradictions') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'Contradiction reports are private to the campaign owner.' })
+          return
+        }
+        sendJson(response, 200, { report: store.getLatestContradictionReport(requestSession.campaign.id) })
+        return
+      }
+
+      if (request.method === 'POST' && request.url === '/api/campaign/contradictions/extract') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'Only the campaign owner can check contradictions.' })
+          return
+        }
+        if (!contradictionRadar) {
+          sendJson(response, 503, { error: 'Contradiction checking is not configured.' })
+          return
+        }
+        const acceptedCanon = store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true })
+        if (!acceptedCanon.length) {
+          sendJson(response, 400, { error: 'Accept at least one canon passage before checking for contradictions.' })
+          return
+        }
+        const messages = store.listRecentCampaignMessages(requestSession.campaign.id, 100)
+        if (!messages.length) {
+          sendJson(response, 400, { error: 'The transcript needs at least one message before contradictions can be checked.' })
+          return
+        }
+        const findings = await contradictionRadar.inspect({ campaignId: requestSession.campaign.id, messages, acceptedCanon })
+        const result = store.createContradictionReport({
+          campaignId: requestSession.campaign.id,
+          playerId: requestSession.player.id,
+          generatorVersion: contradictionRadar.version,
+          findings,
+        })
+        if (result.outcome === 'invalid_source') {
+          sendJson(response, 400, { error: 'Every contradiction must cite canon and transcript from this campaign.' })
+          return
+        }
+        sendJson(response, 200, { report: result.report })
         return
       }
 

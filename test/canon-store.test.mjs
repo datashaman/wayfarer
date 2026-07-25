@@ -155,6 +155,29 @@ test('canon revisions preserve supersession and retraction history', () => {
   store.close()
 })
 
+test('contradiction reports preserve canon snapshots and campaign transcript evidence', () => {
+  const { store, owner, first, second } = seededStore()
+  const proposal = store.createCanonProposal({
+    campaignId: owner.campaign.id, playerId: owner.player.id, kind: 'character', title: 'Ilyra',
+    claim: 'Ilyra keeps the lighthouse.', visibility: 'gm_only', confidence: 0.9,
+    extractorVersion: 'fixture-v1', sources: [{ messageId: first.id }],
+  }).proposal
+  store.decideCanonProposal(owner.campaign.id, owner.player.id, proposal.id, { action: 'accept', visibility: 'gm_only' })
+  const entry = store.listCanonEntries(owner.campaign.id, { includeGmOnly: true })[0]
+  const created = store.createContradictionReport({
+    campaignId: owner.campaign.id, playerId: owner.player.id, generatorVersion: 'radar-v1',
+    findings: [{ canonEntryId: entry.id, title: 'Promise conflicts', explanation: 'The newer statement denies the accepted account.', confidence: 0.88, sources: [{ messageId: second.id, excerpt: 'promised to return' }] }],
+  })
+  assert.equal(created.outcome, 'created')
+  assert.equal(created.report.findings[0].canonClaim, 'Ilyra keeps the lighthouse.')
+  assert.equal(created.report.findings[0].sources[0].messageId, second.id)
+  assert.equal(store.createContradictionReport({
+    campaignId: owner.campaign.id, playerId: owner.player.id, generatorVersion: 'radar-v1',
+    findings: [{ canonEntryId: 'unknown', title: 'Invalid', explanation: 'Invalid source.', confidence: 0.5, sources: [{ messageId: second.id }] }],
+  }).outcome, 'invalid_source')
+  store.close()
+})
+
 test('continuity briefs retain cited threads and append owner feedback', () => {
   const { store, owner, second } = seededStore()
   const created = store.createContinuityBrief({

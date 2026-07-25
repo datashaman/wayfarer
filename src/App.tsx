@@ -40,6 +40,7 @@ import {
   type CanonProposalSource,
   type ContinuityBrief,
   type ContinuityFeedbackRating,
+  type ContradictionReport,
   type CampaignManagement,
   type CampaignNote,
   type CampaignRoom,
@@ -478,6 +479,9 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
   const [continuityBrief, setContinuityBrief] = useState<ContinuityBrief | null>(null)
   const [continuityLoaded, setContinuityLoaded] = useState(false)
   const [continuityPending, setContinuityPending] = useState(false)
+  const [contradictionReport, setContradictionReport] = useState<ContradictionReport | null>(null)
+  const [contradictionsLoaded, setContradictionsLoaded] = useState(false)
+  const [contradictionsPending, setContradictionsPending] = useState(false)
   const [error, setError] = useState('')
   const authorization = { authorization: `Bearer ${session.player.token}` }
 
@@ -494,6 +498,14 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
       .catch((reason) => setError(reason instanceof Error ? reason.message : 'The continuity brief could not be opened.'))
       .finally(() => setContinuityLoaded(true))
   }, [continuityLoaded, session.player.role, session.player.token])
+
+  useEffect(() => {
+    if (session.player.role !== 'owner' || contradictionsLoaded) return
+    void api<{ report: ContradictionReport | null }>('/api/campaign/contradictions', { headers: { authorization: `Bearer ${session.player.token}` } })
+      .then(({ report }) => setContradictionReport(report))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'The contradiction report could not be opened.'))
+      .finally(() => setContradictionsLoaded(true))
+  }, [contradictionsLoaded, session.player.role, session.player.token])
 
   useEffect(() => {
     const closeOnEscape = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') onClose() }
@@ -608,6 +620,19 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     }
   }
 
+  const checkContradictions = async () => {
+    setContradictionsPending(true)
+    setError('')
+    try {
+      const result = await api<{ report: ContradictionReport }>('/api/campaign/contradictions/extract', { method: 'POST', headers: authorization })
+      setContradictionReport(result.report)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The transcript could not be checked for contradictions.')
+    } finally {
+      setContradictionsPending(false)
+    }
+  }
+
   const rateContinuityThread = async (threadId: string, rating: ContinuityFeedbackRating) => {
     setPending(threadId)
     setError('')
@@ -674,6 +699,14 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
                   {entryHistory[entry.id] && <ol className="canon-history">{entryHistory[entry.id].map((revision) => <li key={revision.id}><span>Revision {revision.revision} · {revision.action}</span><strong>{revision.title}</strong><p>{revision.claim}</p><small>{revision.createdByName}{revision.reason ? ` · ${revision.reason}` : ''}</small></li>)}</ol>}
                 </article>)}
               </section>
+              {session.player.role === 'owner' && <section className="canon-section" aria-labelledby="contradictions-heading">
+                <div className="canon-section-title"><h3 id="contradictions-heading">Contradiction watch</h3><button className="folio-small-action" onClick={() => void checkContradictions()} disabled={contradictionsPending || !ledger.entries.length}>{contradictionsPending ? 'Checking…' : contradictionReport ? 'Check again' : 'Check transcript'}</button></div>
+                {!ledger.entries.length ? <div className="canon-empty"><BookMarked size={18} /><span>Accept canon before checking it against the transcript.</span></div> : !contradictionReport && contradictionsLoaded ? <div className="canon-empty"><BookMarked size={18} /><span>No private contradiction check has been prepared.</span></div> : contradictionReport && <><p className="continuity-note">Private to the campaign owner · checked {new Date(contradictionReport.createdAt).toLocaleString()}</p>{!contradictionReport.findings.length && <div className="canon-empty"><Check size={18} /><span>No well-supported contradictions were found.</span></div>}{contradictionReport.findings.map((finding) => <article className="contradiction-card" key={finding.id}>
+                  <div className="canon-card-meta"><span>Private check</span><span>Read only</span></div><h4>{finding.title}</h4><p>{finding.explanation}</p>
+                  <div className="contradiction-canon"><strong>Canon under question</strong><span>{finding.canonTitle}</span><q>{finding.canonClaim}</q></div>
+                  <div className="canon-citations">{finding.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open contradiction citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span><q>{source.excerpt ?? source.text}</q></button>)}</div>
+                </article>)}</>}
+              </section>}
               {session.player.role === 'owner' && <section className="canon-section" aria-labelledby="continuity-heading">
                 <div className="canon-section-title"><h3 id="continuity-heading">Session continuity</h3><button className="folio-small-action" onClick={() => void prepareContinuityBrief()} disabled={continuityPending}>{continuityPending ? 'Reading…' : continuityBrief ? 'Refresh brief' : 'Prepare brief'}</button></div>
                 {!continuityBrief && continuityLoaded && <div className="canon-empty"><BookMarked size={18} /><span>No private continuity brief has been prepared.</span></div>}

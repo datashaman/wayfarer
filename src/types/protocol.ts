@@ -47,6 +47,26 @@ export type CampaignWorld = {
   createdAt?: string
   updatedAt?: string
   updatedByName?: string | null
+  consequences: WorldConsequence[]
+}
+
+export type WorldConsequence = {
+  id: Id
+  sourceSceneId: Id
+  sourceSceneTitle: string
+  entityType: 'faction' | 'location' | 'npc' | 'hook'
+  entityId: Id
+  entityName: string
+  beforeState: string
+  afterState: string
+  pressure: string
+  status: 'active' | 'resolved'
+  resolvedSceneId: Id | null
+  resolvedSceneTitle: string | null
+  resolution: string | null
+  createdByName: string | null
+  createdAt: string
+  resolvedAt: string | null
 }
 
 export type PlayerSession = {
@@ -113,9 +133,11 @@ export type CampaignScene = {
 
 export type SceneContext = {
   openingCrisis: CampaignWorld['openingCrisis'] | null
+  worldEntities: Array<{ id: Id; name: string; type: WorldConsequence['entityType'] }>
   characters: Array<{ id: Id; name: string; playerName: string; concept: string }>
   activeScene: CampaignScene | null
   scenes: CampaignScene[]
+  worldConsequences: WorldConsequence[]
 }
 
 export type Character = {

@@ -6,6 +6,7 @@ Wayfarer is a human-kept campaign memory system, not an autonomous storyteller. 
 
 - AI never creates, revises, publishes, or retracts canon without an explicit GM action.
 - Creative generation may draft a campaign opening from a GM premise, but the draft establishes no world truth until a GM edits and saves the complete foundation.
+- Scene resolution may create GM-authored world consequences anchored to saved factions, locations, NPCs, or hooks. Consequences preserve immutable before/after snapshots and scene provenance; active pressure can be explicitly carried into the next scene, but is never applied automatically.
 - Character concepts are private editable options grounded only in the saved campaign foundation; only the player creates or revises their character.
 - A scene becomes active only when a GM establishes its framing, stakes, first choice, and present characters; resolving it records what changed without inventing an outcome.
 - Character growth is a player-authored revision, never inferred advancement; scene links are permitted only when that character witnessed the resolved scene.

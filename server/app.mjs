@@ -260,6 +260,10 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 401, { error: 'Session not found.' })
           return
         }
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Only a GM can read the scene folio.' })
+          return
+        }
         sendJson(response, 200, store.getSceneContext(requestSession.campaign.id))
         return
       }
@@ -309,13 +313,24 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         }
         const body = await readJson(request)
         const outcome = cleanCanonText(body.outcome, 2_000)
-        if (!outcome) {
+        const consequences = Array.isArray(body.consequences) && body.consequences.length <= 3 ? body.consequences.map((item) => ({
+          entityType: ['faction', 'location', 'npc', 'hook'].includes(item?.entityType) ? item.entityType : '',
+          entityId: typeof item?.entityId === 'string' ? item.entityId : '',
+          afterState: cleanCanonText(item?.afterState, 1_000),
+          pressure: cleanCanonText(item?.pressure, 1_000),
+        })) : null
+        const consequenceTargets = consequences?.map((item) => `${item.entityType}:${item.entityId}`) ?? []
+        if (!outcome || !consequences || consequences.some((item) => !item.entityType || !item.entityId || !item.afterState || !item.pressure) || consequenceTargets.length !== new Set(consequenceTargets).size) {
           sendJson(response, 400, { error: 'Record what changed before resolving the scene.' })
           return
         }
-        const result = store.resolveScene(requestSession.campaign.id, requestSession.player.id, sceneResolution[1], outcome)
+        const result = store.resolveScene(requestSession.campaign.id, requestSession.player.id, sceneResolution[1], outcome, consequences)
         if (result.outcome === 'not_found') {
           sendJson(response, 404, { error: 'Active scene not found.' })
+          return
+        }
+        if (result.outcome === 'invalid_consequence') {
+          sendJson(response, 400, { error: 'Choose world material from this campaign.' })
           return
         }
         broadcastScene(requestSession.campaign.id, result)
@@ -1377,7 +1392,9 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
 
   function broadcastScene(campaignId, result) {
     broadcast(result.roomId, envelope('chat.message', result.roomId, result.message))
-    broadcastCampaignEvent(campaignId, envelope('campaign.scene_updated', campaignId, result.context))
+    for (const [socket, client] of clients) {
+      if (client.campaign.id === campaignId && client.player.knowledgeRole === 'gm') send(socket, envelope('campaign.scene_updated', campaignId, result.context))
+    }
     broadcastCampaignEvent(campaignId, envelope('room.activity', result.roomId, { senderId: result.message.senderId }))
   }
 

@@ -1,5 +1,5 @@
 import { BookOpenText, X } from 'lucide-react'
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { api } from './lib/api'
 import type { CampaignWorld, TableSession } from './types/protocol'
 
@@ -13,6 +13,7 @@ function blankWorld(premise: string): CampaignWorld {
     hooks: Array.from({ length: 4 }, () => ({ title: '', situation: '' })),
     openingCrisis: { title: '', situation: '', stakes: '' },
     generatorVersion: 'manual:campaign-seed-v1',
+    consequences: [],
   }
 }
 
@@ -30,7 +31,7 @@ function complete(world: CampaignWorld) {
 }
 
 export function CampaignWorldFolio({ session, onClose }: { session: TableSession; onClose: () => void }) {
-  const authorization = { authorization: `Bearer ${session.player.token}` }
+  const authorization = useMemo(() => ({ authorization: `Bearer ${session.player.token}` }), [session.player.token])
   const [world, setWorld] = useState<CampaignWorld | null>(null)
   const [draft, setDraft] = useState<CampaignWorld | null>(null)
   const [premise, setPremise] = useState('')
@@ -50,7 +51,7 @@ export function CampaignWorldFolio({ session, onClose }: { session: TableSession
       .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : 'The campaign opening could not be read.') })
       .finally(() => { if (active) setPending('') })
     return () => { active = false }
-  }, [session.player.token])
+  }, [authorization])
 
   const generate = () => {
     setPending('generate'); setError(''); setNotice('')
@@ -104,6 +105,8 @@ export function CampaignWorldFolio({ session, onClose }: { session: TableSession
             <label htmlFor="world-pitch">What the players are stepping into</label><textarea id="world-pitch" value={draft.pitch} onChange={(event) => setDraft({ ...draft, pitch: event.target.value })} maxLength={1_000} />
             <small>{draft.generatorVersion === 'manual:campaign-seed-v1' ? 'Begun by hand' : `Private draft · ${draft.generatorVersion}`}</small>
           </header>
+
+          {(draft.consequences ?? []).length > 0 && <section className="world-spread__section world-aftermath" aria-labelledby="world-aftermath-heading"><div><span>The world remembers play</span><h2 id="world-aftermath-heading">World in motion</h2></div><ol>{(draft.consequences ?? []).map((consequence) => <li key={consequence.id} className={consequence.status === 'active' ? 'is-active' : ''}><div className="world-aftermath__provenance"><span>{consequence.entityType}</span><small>{consequence.status === 'active' ? `Changed in ${consequence.sourceSceneTitle}` : `Changed again in ${consequence.resolvedSceneTitle}`}</small></div><h3>{consequence.entityName}</h3><div className="world-aftermath__change"><p><small>Before</small>{consequence.beforeState}</p><span aria-hidden="true">→</span><p><small>Now</small>{consequence.afterState}</p></div><blockquote>{consequence.pressure}</blockquote>{consequence.status === 'resolved' && consequence.resolution && <p className="world-aftermath__resolution">Later outcome: {consequence.resolution}</p>}</li>)}</ol></section>}
 
           <section className="world-spread__section world-spread__truths" aria-labelledby="world-truths-heading"><div><span>What cannot be ignored</span><h2 id="world-truths-heading">Three truths</h2></div><ol>{draft.truths.map((truth, index) => <li key={truth.id ?? index}><label htmlFor={`world-truth-${index}`}>Truth {index + 1}</label><textarea id={`world-truth-${index}`} value={truth.text} onChange={(event) => updateList('truths', index, { text: event.target.value })} maxLength={500} /></li>)}</ol></section>
 

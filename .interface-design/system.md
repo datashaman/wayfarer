@@ -149,6 +149,14 @@ Aftermath lives inside the existing character folio, above the editable public f
 
 The revision trail is a vertical sequence of folio leaves marked by small wax circles and one brass hairline. Each leaf leads with revision and date, then the player’s authored reason, linked scene when present, and a quiet list of changed fields. Creation is revision 0. The current character remains visually dominant; history explains how they arrived there without becoming an audit dashboard. Sealed fields follow the same owner-and-GM visibility boundary in every snapshot.
 
+### World aftermath
+
+World aftermath closes the core play loop: a GM may attach up to three concrete consequences while resolving a scene, each anchored to one saved faction, location, NPC, or hook. The server snapshots the prior state; the GM writes what is true now and what pressure remains. Never infer or automatically apply narrative changes.
+
+An established World folio leads with **World in motion** before the original campaign invitation. Each consequence is an immutable before → now ledger leaf with its source scene. A later consequence for the same entity resolves the previous pressure while preserving both leaves. Active pressure appears at the next Scene threshold with a deliberate **Carry into the stakes** action; it never edits framing by itself. This qualitative state trail remains separate from numeric faction clocks.
+
+Use one wax left hairline for active leaves, moss only for continuing pressure or resolved meaning, inset soot fields, serif world state, sans provenance, and the existing borders-only 8px system. Avoid activity feeds, metrics, generic status cards, and automatic canon mutation.
+
 ### Session transcript
 
 Messages are avatar-and-copy rows, never speech bubbles. Sender, timestamp, delivery state, and literary body text form the hierarchy. System events sit between hairline rules. Keep transcript measure near 760px for readability.

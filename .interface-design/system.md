@@ -96,6 +96,7 @@ Treat AI quality as a human-kept campaign ruling trail, never as model-confidenc
 - Verdict strips pair one large tabular percentage with the judged sample count, a thin semantic outcome bar, and explicit category totals. Use an em dash when no judgment exists rather than implying a zero score.
 - Release gates form the main scan path. Each row states the threshold and its current evidence; use moss checks only for passed gates and wax marks for evidence still being gathered.
 - Generator editions are compact ledger rows with surface, exact version, success rate, sample size, and a restrained `Learning`, `Steady`, or `Watch` state. A version is evidence, not a product badge.
+- Surface evidence is one continuous bordered ledger with a row for every production assistant. Each row joins authority class, current edition, latest adversarial proof, and privacy-safe runtime health. `Observed` uses moss, `Watch` uses danger, `Untried` uses wax, and `Unconfigured` remains muted; absent evidence must never inherit success color.
 - Recorded checks show date, suite, model, generator version, pass count, and change from the prior comparable run. Empty states explain how to record campaign-scoped evidence.
 - Secret leaks and material regressions are explicit alerts above the verdicts. Never expose this owner-private evaluation surface to ordinary campaign members.
 

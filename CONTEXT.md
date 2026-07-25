@@ -14,6 +14,7 @@ Wayfarer is a human-kept campaign memory system, not an autonomous storyteller. 
 - Perspective answers may cite only canon readable by the requesting seat; model synthesis cannot widen an audience.
 - Spotlight reporting is opt-in, begins at consent, uses text counts only, and never infers emotion, attention, engagement, or intent.
 - Faction motion and table rules become true only through an explicit GM or table ruling; generated proposals remain counterfactual.
+- Inference observability is campaign-private operational metadata only: surface, edition, duration, provider usage, outcome, and coarse error category. It never stores prompt, campaign content, output, reasoning, or error messages.
 
 ## Domain language
 
@@ -29,3 +30,4 @@ Wayfarer is a human-kept campaign memory system, not an autonomous storyteller. 
 - **Faction clock proposal**: editable counterfactual motion with explicit assumptions; accepting it advances the human-kept clock.
 - **Spotlight report**: message counts for seats that opted in before the counted activity; it is not an assessment of participation quality.
 - **Intent draft**: private, editable phrasing grounded only in that player’s messages and readable canon; it is never sent automatically.
+- **AI surface**: one registered production inference boundary with a stable ID, exact generator edition, authority class, live evaluation suite, and privacy-safe runtime evidence.

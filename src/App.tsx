@@ -500,6 +500,9 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
   const [continuityBrief, setContinuityBrief] = useState<ContinuityBrief | null>(null)
   const [continuityLoaded, setContinuityLoaded] = useState(false)
   const [continuityPending, setContinuityPending] = useState(false)
+  const [lifecycleEditingId, setLifecycleEditingId] = useState('')
+  const [lifecycleStatus, setLifecycleStatus] = useState<'open' | 'dormant' | 'resolved'>('open')
+  const [lifecycleReason, setLifecycleReason] = useState('')
   const [contradictionReport, setContradictionReport] = useState<ContradictionReport | null>(null)
   const [contradictionsLoaded, setContradictionsLoaded] = useState(false)
   const [contradictionsPending, setContradictionsPending] = useState(false)
@@ -846,16 +849,23 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     }
   }
 
-  const transitionContinuityThread = async (thread: ContinuityBrief['threads'][number], status: 'open' | 'dormant' | 'resolved') => {
-    const reason = window.prompt(`${status === 'open' ? 'Reopen' : status === 'dormant' ? 'Mark dormant' : 'Resolve'} “${thread.title}” — why?`)
-    if (!reason?.trim()) return
+  const beginLifecycleEdit = (thread: ContinuityBrief['threads'][number], status: 'open' | 'dormant' | 'resolved') => {
+    setLifecycleEditingId(thread.id)
+    setLifecycleStatus(status)
+    setLifecycleReason('')
+  }
+
+  const transitionContinuityThread = async (thread: ContinuityBrief['threads'][number]) => {
+    if (!lifecycleReason.trim()) return
     setPending(thread.id)
     setError('')
     try {
       const result = await api<{ brief: ContinuityBrief }>(`/api/campaign/continuity/threads/${thread.id}/lifecycle`, {
-        method: 'POST', headers: authorization, body: JSON.stringify({ status, reason }),
+        method: 'POST', headers: authorization, body: JSON.stringify({ status: lifecycleStatus, reason: lifecycleReason }),
       })
       setContinuityBrief(result.brief)
+      setLifecycleEditingId('')
+      setLifecycleReason('')
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The continuity status could not be changed.')
     } finally {
@@ -959,7 +969,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
                 {continuityBrief && <><p className="continuity-note">Private to GMs · prepared {new Date(continuityBrief.createdAt).toLocaleString()}{continuityBrief.contextSession ? ` · ${continuityBrief.contextSession.title} · messages ${continuityBrief.contextSession.startSequence}–${continuityBrief.contextSession.endSequence}` : ''}</p>{!continuityBrief.threads.length && <div className="canon-empty"><Check size={18} /><span>No well-supported loose threads were found.</span></div>}{continuityBrief.threads.map((thread) => <article className="continuity-card" key={thread.id}>
                   <div className="canon-card-meta"><span>GM only</span><span>{thread.lifecycle.status}</span></div><h4>{thread.title}</h4><p>{thread.summary}</p><strong>Why it matters</strong><p>{thread.whyItMatters}</p>
                   <div className="canon-citations">{thread.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open continuity citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span><q>{source.excerpt ?? source.text}</q></button>)}</div>
-                  <div className="canon-actions" aria-label={`Lifecycle for ${thread.title}`}>{thread.lifecycle.status !== 'open' && <button className="folio-button" disabled={pending === thread.id} onClick={() => void transitionContinuityThread(thread, 'open')}>Reopen</button>}{thread.lifecycle.status !== 'dormant' && <button className="folio-button" disabled={pending === thread.id} onClick={() => void transitionContinuityThread(thread, 'dormant')}>Mark dormant</button>}{thread.lifecycle.status !== 'resolved' && <button className="folio-button" disabled={pending === thread.id} onClick={() => void transitionContinuityThread(thread, 'resolved')}>Resolve</button>}</div>
+                  {lifecycleEditingId === thread.id ? <div className="canon-edit continuity-lifecycle-editor"><label htmlFor={`continuity-status-${thread.id}`}>New status</label><select id={`continuity-status-${thread.id}`} value={lifecycleStatus} onChange={(event) => setLifecycleStatus(event.target.value as 'open' | 'dormant' | 'resolved')}><option value="open">Open</option><option value="dormant">Dormant</option><option value="resolved">Resolved</option></select><label htmlFor={`continuity-reason-${thread.id}`}>Reason</label><input id={`continuity-reason-${thread.id}`} value={lifecycleReason} onChange={(event) => setLifecycleReason(event.target.value)} maxLength={500} placeholder="What changed at the table?" autoFocus /><div className="canon-actions"><button className="primary-action" disabled={pending === thread.id || !lifecycleReason.trim()} onClick={() => void transitionContinuityThread(thread)}>{pending === thread.id ? 'Recording…' : 'Record status'}</button><button className="folio-button" onClick={() => setLifecycleEditingId('')}>Cancel</button></div></div> : <div className="canon-actions" aria-label={`Lifecycle for ${thread.title}`}>{thread.lifecycle.status !== 'open' && <button className="folio-button" disabled={pending === thread.id} onClick={() => beginLifecycleEdit(thread, 'open')}>Reopen</button>}{thread.lifecycle.status !== 'dormant' && <button className="folio-button" disabled={pending === thread.id} onClick={() => beginLifecycleEdit(thread, 'dormant')}>Mark dormant</button>}{thread.lifecycle.status !== 'resolved' && <button className="folio-button" disabled={pending === thread.id} onClick={() => beginLifecycleEdit(thread, 'resolved')}>Resolve</button>}</div>}
                   {thread.lifecycle.reason && <p className="continuity-note">{thread.lifecycle.createdByName}: {thread.lifecycle.reason}</p>}
                   <div className="canon-actions" aria-label={`Feedback for ${thread.title}`}><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'useful')}>Useful</button><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'incorrect')}>Incorrect</button><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'secret_leak')}>Secret leak</button><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'not_useful')}>Not useful</button>{thread.feedback && <span className="continuity-feedback">Recorded: {thread.feedback.rating.replace('_', ' ')}</span>}</div>
                 </article>)}</>}

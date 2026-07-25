@@ -11,6 +11,7 @@ Wayfarer is a human-kept campaign memory system, not an autonomous storyteller. 
 - Character concepts are private editable options grounded only in the saved campaign foundation; only the player creates or revises their character.
 - A scene becomes active only from a saved GM preparation containing its framing, stakes, first choice, present characters, involved locations and NPCs, possible discoveries and complications, and questions to play toward. Preparation never dictates an outcome; resolution records only what actually changed.
 - In-play generation returns one private editable draft grounded in the active scene. Only a GM can keep it; NPCs and places join their World collections, while complications, possible consequences, rumours, and treasure join as hooks. A possible consequence is never world state.
+- Adventure continuation may privately draft the next session only from resolved outcomes, current characters, open hooks, and unresolved World pressure. It must cite surviving campaign thread IDs and use only saved character, location, and NPC IDs; a GM explicitly moves it into the ordinary preparation folio, edits it, and saves it before anything persists.
 - Character growth is a player-authored revision, never inferred advancement; scene links are permitted only when that character witnessed the resolved scene.
 - Campaign ownership governs administration. GM knowledge access governs private lore.
 - Every AI artifact identifies the exact session range that produced it and retains transcript citations.
@@ -30,6 +31,7 @@ Wayfarer is a human-kept campaign memory system, not an autonomous storyteller. 
 - **Character folio**: one player-owned character per seat, split between table-readable identity and a secret readable only by that player and GMs, with durable world and party connections.
 - **Campaign scene**: one GM-established active moment with present characters, pressure, and a first choice; its opening and human-recorded resolution are immutable in-character transcript markers.
 - **Session preparation**: one revision-protected GM folio for the next scene, joining cast, stage, pressure, discoveries, complications, and open questions without scripting an outcome; beginning play snapshots and consumes it.
+- **Continuation draft**: one non-persistent, source-threaded proposal for the next session; using it only populates the editable session preparation and never establishes future events.
 - **In-play material**: one GM-kept improvisation leaf attached to its source scene, retaining its original type, wording, and generator edition; its World representation is a person, place, or actionable hook.
 - **World entity state**: the latest scene-resolved truth for one saved entity, kept separately from its editable campaign foundation and backed by an immutable consequence lineage.
 - **Character revision**: immutable snapshot of a player-authored character change with its reason, changed fields, and optional provenance from a resolved scene the character witnessed.

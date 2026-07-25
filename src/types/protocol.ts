@@ -202,10 +202,22 @@ export type ScenePreparation = {
   updatedByName: string | null
 }
 
+export type ContinuationThread = {
+  id: string
+  type: 'pressure' | 'outcome' | 'hook' | 'character'
+  label: string
+  detail: string
+}
+
+export type AdventureContinuationDraft = Omit<ScenePreparation, 'revision' | 'updatedAt' | 'updatedByName'> & {
+  generatorVersion: string
+  threads: ContinuationThread[]
+}
+
 export type SceneContext = {
   openingCrisis: CampaignWorld['openingCrisis'] | null
   worldEntities: Array<{ id: Id; name: string; type: WorldConsequence['entityType']; state: WorldEntityState }>
-  characters: Array<{ id: Id; name: string; playerName: string; concept: string; locationId: Id | null; npcId: Id | null }>
+  characters: Array<{ id: Id; name: string; playerName: string; concept: string; drive: string; belief: string; revision: number; locationId: Id | null; npcId: Id | null }>
   locations: CampaignWorld['locations']
   npcs: CampaignWorld['npcs']
   preparation: ScenePreparation | null

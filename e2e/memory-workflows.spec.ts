@@ -41,7 +41,7 @@ test('a GM edits and publishes a recap and resolves continuity inline', async ({
   await expect(continuity.getByText('The road beyond remains unexplored.', { exact: true })).toBeVisible()
   await continuity.getByRole('button', { name: 'Useful', exact: true }).click()
   const evaluation = ledger.getByLabel('AI evaluation ledger')
-  await expect(evaluation.getByText('e2e:continuity-v1', { exact: true })).toBeVisible()
+  await expect(evaluation.locator('.evaluation-surface').filter({ hasText: 'Continuity brief' }).getByText('e2e:continuity-v1', { exact: true })).toBeVisible()
   await expect(evaluation.locator('.evaluation-verdict').filter({ hasText: 'Continuity verdicts' }).getByText('100%', { exact: true })).toBeVisible()
   await continuity.getByRole('button', { name: 'Resolve' }).click()
   await continuity.getByLabel('Reason').fill('The party mapped the road.')

@@ -268,6 +268,36 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         return
       }
 
+      if (request.method === 'POST' && request.url === '/api/campaign/scene-preparation/draft') {
+        if (!requestSession) { sendJson(response, 401, { error: 'Session not found.' }); return }
+        if (!hasGmKnowledge) { sendJson(response, 403, { error: 'Only a GM can prepare what follows.' }); return }
+        if (!campaignIntelligence) { sendJson(response, 503, { error: 'Adventure continuation is not configured.' }); return }
+        const context = store.getSceneContext(requestSession.campaign.id)
+        if (context.activeScene) { sendJson(response, 409, { error: 'Resolve the active scene before preparing what follows.' }); return }
+        const resolvedScenes = context.scenes.filter((scene) => scene.status === 'resolved').slice(0, 3)
+        if (!resolvedScenes.length) { sendJson(response, 400, { error: 'Play and resolve a scene before drafting what follows.' }); return }
+        const world = store.getCampaignWorld(requestSession.campaign.id)
+        const currentFirst = (items, maximum) => [...items.filter((item) => item.state), ...items.filter((item) => !item.state)].slice(0, maximum)
+        const continuationWorld = {
+          title: world.title, pitch: world.pitch, truths: world.truths.slice(0, 6),
+          factions: currentFirst(world.factions, 12),
+          locations: currentFirst(world.locations, 20),
+          npcs: currentFirst(world.npcs, 30),
+          hooks: currentFirst(world.hooks.filter((item) => item.state?.status !== 'resolved'), 20),
+        }
+        const characters = context.characters.slice(0, 20)
+        const threads = [
+          ...context.worldConsequences.slice(0, 10).map((item) => ({ id: `consequence:${item.id}`, type: 'pressure', label: item.entityName, detail: item.pressure })),
+          ...resolvedScenes.map((item) => ({ id: `scene:${item.id}`, type: 'outcome', label: item.title, detail: item.outcome })),
+          ...continuationWorld.hooks.slice(0, 8).map((item) => ({ id: `hook:${item.id}`, type: 'hook', label: item.title, detail: item.state?.situation ?? item.situation })),
+          ...characters.slice(0, 8).map((item) => ({ id: `character:${item.id}`, type: 'character', label: item.name, detail: `${item.drive} ${item.belief}` })),
+        ]
+        const result = await campaignIntelligence.draftAdventureContinuation({ campaignId: requestSession.campaign.id, world: continuationWorld, characters, resolvedScenes, threads })
+        const threadsById = new Map(threads.map((item) => [item.id, item]))
+        sendJson(response, 200, { draft: { ...result, threads: result.threadIds.map((id) => threadsById.get(id)), threadIds: undefined } })
+        return
+      }
+
       if (request.method === 'PUT' && request.url === '/api/campaign/scene-preparation') {
         if (!requestSession) {
           sendJson(response, 401, { error: 'Session not found.' })

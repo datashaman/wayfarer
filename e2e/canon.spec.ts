@@ -61,7 +61,7 @@ test('the owner reviews a cited canon proposal and returns to its source', async
   await expect(evaluation.getByText('1 judged', { exact: true })).toBeVisible()
   await expect(evaluation.getByText('e2e-fixture-v1', { exact: true })).toBeVisible()
   await expect(evaluation.getByText('Gathering evidence', { exact: true })).toBeVisible()
-  await expect(evaluation.locator('.evaluation-surface')).toHaveCount(8)
+  await expect(evaluation.locator('.evaluation-surface')).toHaveCount(9)
   await expect(evaluation.locator('.evaluation-surface').filter({ hasText: 'Canon suggestions' }).getByText('Unconfigured', { exact: true })).toBeVisible()
   await expect(evaluation.locator('.evaluation-surface').filter({ hasText: 'Continuity brief' }).getByText('Untried', { exact: true })).toBeVisible()
   await ledger.getByRole('button', { name: 'Edit', exact: true }).click()

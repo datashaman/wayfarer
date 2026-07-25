@@ -119,6 +119,14 @@ Personal and GM-assisted campaign tools share one right-side folio so the transc
 
 At narrow widths the folio fills the viewport, two-column forms stack, and the document reading order remains unchanged. Keep borders-only depth, inset controls, serif narrative records, sans mechanics, and the 8px spacing system.
 
+### Campaign opening folio
+
+Campaign creation is a first-class GM **World** surface, separate from administration and AI evaluation. Begin with one generous premise field and two explicit paths: draft a playable opening or start with a blank folio. Generated material is a private editable draft until the GM establishes it.
+
+The reusable opening spread reads top-to-bottom as invitation → truths → factions → locations → cast → hooks → opening crisis. Use narrative ledger groups rather than a wizard, chat transcript, or dashboard metrics. Two- and three-column groups may express opposing forces and parallel material on wide screens; they collapse to one uninterrupted reading order below 760px. The opening crisis uses one restrained wax boundary because it is the point where play begins. A sticky footer states revision or unsaved status and holds the only establishment/save action.
+
+Keep the established borders-only soot surfaces, serif fiction fields, sans structural labels, and 8px spacing system. Inputs remain inset. Every repeated item has a real label, stable identity after saving, and visible focus boundary. World material is GM-private in this slice; never imply player publication.
+
 ### Session transcript
 
 Messages are avatar-and-copy rows, never speech bubbles. Sender, timestamp, delivery state, and literary body text form the hierarchy. System events sit between hairline rules. Keep transcript measure near 760px for readability.

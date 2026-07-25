@@ -94,6 +94,7 @@ export type CampaignSession = {
 
 export type CanonKind = 'fact' | 'character' | 'relationship' | 'promise' | 'event' | 'question' | 'contradiction' | 'rule'
 export type CanonVisibility = 'campaign' | 'gm_only'
+export type CanonAudience = CanonVisibility | 'characters'
 export type CanonProposalStatus = 'proposed' | 'accepted' | 'disputed' | 'rejected'
 
 export type CanonConstitution = {
@@ -141,7 +142,9 @@ export type CanonEntry = {
   kind: CanonKind
   title: string
   claim: string
-  visibility: CanonVisibility
+  visibility: CanonAudience
+  audiencePlayerIds: Id[]
+  audienceNames: string[]
   revision: number
   status: 'active' | 'superseded' | 'retracted'
   createdAt: string
@@ -157,7 +160,9 @@ export type CanonEntryRevision = {
   action: 'accepted' | 'revised' | 'superseded' | 'retracted'
   title: string
   claim: string
-  visibility: CanonVisibility
+  visibility: CanonAudience
+  audiencePlayerIds: Id[]
+  audienceNames: string[]
   reason: string | null
   createdAt: string
   createdByName: string

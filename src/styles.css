@@ -1692,6 +1692,22 @@ textarea:focus-visible {
   text-transform: capitalize;
 }
 
+.canon-audience {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 1rem;
+  margin: 0;
+  padding: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+}
+
+.canon-audience label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
 .canon-citations {
   display: grid;
   gap: 5px;

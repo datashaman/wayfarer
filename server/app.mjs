@@ -64,6 +64,7 @@ function cleanDescription(value, maximum) {
 
 const canonKinds = new Set(['fact', 'character', 'relationship', 'promise', 'event', 'question', 'contradiction', 'rule'])
 const canonVisibilities = new Set(['campaign', 'gm_only'])
+const canonAudienceVisibilities = new Set(['campaign', 'gm_only', 'characters'])
 const canonDecisionActions = new Set(['accept', 'edit_accept', 'dispute', 'reject'])
 const continuityRatings = new Set(['useful', 'incorrect', 'secret_leak', 'not_useful'])
 const continuityStatuses = new Set(['open', 'dormant', 'resolved'])
@@ -108,10 +109,10 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
     return true
   }
 
-  function canonLedger(campaignId, { includeGmOnly = false } = {}) {
+  function canonLedger(campaignId, { includeGmOnly = false, viewerPlayerId = null } = {}) {
     return {
       proposals: store.listCanonProposals(campaignId, { includeGmOnly }),
-      entries: store.listCanonEntries(campaignId, { includeGmOnly }),
+      entries: store.listCanonEntries(campaignId, { includeGmOnly, viewerPlayerId }),
       coverage: store.getCanonCoverage(campaignId),
     }
   }
@@ -156,6 +157,30 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           return
         }
         sendJson(response, 200, store.getCampaignManagement(requestSession.campaign.id))
+        return
+      }
+
+      if (request.method === 'GET' && request.url === '/api/campaign/members') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        sendJson(response, 200, { players: store.listCampaignMembers(requestSession.campaign.id) })
+        return
+      }
+
+      const characterKnowledge = request.url?.match(/^\/api\/campaign\/knowledge\/players\/([^/]+)$/)
+      if (request.method === 'GET' && characterKnowledge) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Character knowledge lenses are private to GMs.' })
+          return
+        }
+        const knowledge = store.getCharacterKnowledge(requestSession.campaign.id, characterKnowledge[1])
+        sendJson(response, knowledge ? 200 : 404, knowledge ?? { error: 'Player not found.' })
         return
       }
 
@@ -255,7 +280,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           return
         }
         const includeGmOnly = hasGmKnowledge
-        sendJson(response, 200, canonLedger(requestSession.campaign.id, { includeGmOnly }))
+        sendJson(response, 200, canonLedger(requestSession.campaign.id, { includeGmOnly, viewerPlayerId: requestSession.player.id }))
         return
       }
 
@@ -411,19 +436,26 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         const title = action === 'edit_accept' ? cleanCanonText(body.title, 80) : null
         const claim = action === 'edit_accept' ? cleanCanonText(body.claim, 2_000) : null
         const visibility = action === 'accept' || action === 'edit_accept'
-          ? canonVisibilities.has(body.visibility) ? body.visibility : null
+          ? canonAudienceVisibilities.has(body.visibility) ? body.visibility : null
           : null
-        if (!action || reason === undefined || (action === 'edit_accept' && (!title || !claim)) || ((action === 'accept' || action === 'edit_accept') && !visibility)) {
+        const audiencePlayerIds = visibility === 'characters' && Array.isArray(body.audiencePlayerIds)
+          && body.audiencePlayerIds.length > 0 && body.audiencePlayerIds.length <= 50
+          && body.audiencePlayerIds.every((id) => typeof id === 'string' && id.length <= 100) ? body.audiencePlayerIds : []
+        if (!action || reason === undefined || (action === 'edit_accept' && (!title || !claim)) || ((action === 'accept' || action === 'edit_accept') && (!visibility || (visibility === 'characters' && !audiencePlayerIds.length)))) {
           sendJson(response, 400, { error: 'Canon decision fields are invalid.' })
           return
         }
-        const result = store.decideCanonProposal(requestSession.campaign.id, requestSession.player.id, canonDecision[1], { action, reason, title, claim, visibility })
+        const result = store.decideCanonProposal(requestSession.campaign.id, requestSession.player.id, canonDecision[1], { action, reason, title, claim, visibility, audiencePlayerIds })
         if (result.outcome === 'not_found') {
           sendJson(response, 404, { error: 'Canon proposal not found.' })
           return
         }
         if (result.outcome === 'already_decided') {
           sendJson(response, 409, { error: 'This proposal was already decided.', proposal: result.proposal })
+          return
+        }
+        if (result.outcome === 'invalid_audience') {
+          sendJson(response, 400, { error: 'Every canon audience must be an active campaign seat.' })
           return
         }
         broadcastCanon(requestSession.campaign.id)
@@ -437,7 +469,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 401, { error: 'Session not found.' })
           return
         }
-        const history = store.listCanonEntryHistory(requestSession.campaign.id, canonEntryHistory[1], { includeGmOnly: hasGmKnowledge })
+        const history = store.listCanonEntryHistory(requestSession.campaign.id, canonEntryHistory[1], { includeGmOnly: hasGmKnowledge, viewerPlayerId: requestSession.player.id })
         sendJson(response, history ? 200 : 404, history ?? { error: 'Canon entry not found.' })
         return
       }
@@ -456,21 +488,28 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         const action = body.action === 'revise' || body.action === 'supersede' ? body.action : null
         const title = cleanCanonText(body.title, 80)
         const claim = cleanCanonText(body.claim, 2_000)
-        const visibility = canonVisibilities.has(body.visibility) ? body.visibility : null
+        const visibility = canonAudienceVisibilities.has(body.visibility) ? body.visibility : null
+        const audiencePlayerIds = visibility === 'characters' && Array.isArray(body.audiencePlayerIds)
+          && body.audiencePlayerIds.length > 0 && body.audiencePlayerIds.length <= 50
+          && body.audiencePlayerIds.every((id) => typeof id === 'string' && id.length <= 100) ? body.audiencePlayerIds : []
         const expectedRevision = Number.isInteger(body.revision) && body.revision >= 0 ? body.revision : null
         const reason = body.reason === undefined || body.reason === null || body.reason === '' ? null : cleanCanonText(body.reason, 500)
-        if (!action || !title || !claim || !visibility || expectedRevision === null || reason === undefined || (action === 'supersede' && !reason)) {
+        if (!action || !title || !claim || !visibility || (visibility === 'characters' && !audiencePlayerIds.length) || expectedRevision === null || reason === undefined || (action === 'supersede' && !reason)) {
           sendJson(response, 400, { error: 'Canon revision fields are invalid.' })
           return
         }
         const historyAction = action === 'revise' ? 'revised' : 'superseded'
-        const result = store.reviseCanonEntry(requestSession.campaign.id, requestSession.player.id, canonEntryMutation[1], { action: historyAction, title, claim, visibility, reason, expectedRevision })
+        const result = store.reviseCanonEntry(requestSession.campaign.id, requestSession.player.id, canonEntryMutation[1], { action: historyAction, title, claim, visibility, audiencePlayerIds, reason, expectedRevision })
         if (result.outcome === 'not_found') {
           sendJson(response, 404, { error: 'Canon entry not found.' })
           return
         }
         if (result.outcome === 'conflict') {
           sendJson(response, 409, { error: 'This canon entry changed before your revision was saved.', entry: result.entry })
+          return
+        }
+        if (result.outcome === 'invalid_audience') {
+          sendJson(response, 400, { error: 'Every canon audience must be an active campaign seat.' })
           return
         }
         broadcastCanon(requestSession.campaign.id)
@@ -1037,7 +1076,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
     for (const [socket, client] of clients) {
       if (client.campaign.id !== campaignId) continue
       const includeGmOnly = client.player.knowledgeRole === 'gm'
-      send(socket, envelope('campaign.canon_updated', campaignId, canonLedger(campaignId, { includeGmOnly })))
+      send(socket, envelope('campaign.canon_updated', campaignId, canonLedger(campaignId, { includeGmOnly, viewerPlayerId: client.player.id })))
     }
   }
 

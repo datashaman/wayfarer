@@ -90,7 +90,7 @@ function publicCanonProposal(row, sources = []) {
   }
 }
 
-function publicCanonEntry(row, sources = []) {
+function publicCanonEntry(row, sources = [], audiences = []) {
   return {
     id: row.id,
     proposalId: row.proposal_id,
@@ -98,7 +98,9 @@ function publicCanonEntry(row, sources = []) {
     kind: row.kind,
     title: row.title,
     claim: row.claim,
-    visibility: row.visibility,
+    visibility: audiences.length ? 'characters' : row.visibility,
+    audiencePlayerIds: audiences.map((audience) => audience.id),
+    audienceNames: audiences.map((audience) => audience.name),
     revision: row.revision,
     status: row.status === 'active' ? 'active' : row.retired_reason ?? 'superseded',
     createdAt: row.created_at,
@@ -117,7 +119,7 @@ function publicCanonEntry(row, sources = []) {
   }
 }
 
-function publicCanonRevision(row) {
+function publicCanonRevision(row, audiences = []) {
   return {
     id: row.id,
     entryId: row.entry_id,
@@ -125,7 +127,9 @@ function publicCanonRevision(row) {
     action: row.action,
     title: row.title,
     claim: row.claim,
-    visibility: row.visibility,
+    visibility: audiences.length ? 'characters' : row.visibility,
+    audiencePlayerIds: audiences.map((audience) => audience.id),
+    audienceNames: audiences.map((audience) => audience.name),
     reason: row.reason,
     createdAt: row.created_at,
     createdByName: row.created_by_name,
@@ -304,6 +308,16 @@ export function createStore(databasePath) {
       player_id TEXT NOT NULL REFERENCES players(id),
       created_at TEXT NOT NULL,
       UNIQUE(entry_id, revision)
+    );
+    CREATE TABLE IF NOT EXISTS canon_entry_audiences (
+      entry_id TEXT NOT NULL REFERENCES canon_entries(id) ON DELETE CASCADE,
+      player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      PRIMARY KEY (entry_id, player_id)
+    );
+    CREATE TABLE IF NOT EXISTS canon_revision_audiences (
+      revision_id TEXT NOT NULL REFERENCES canon_entry_revisions(id) ON DELETE CASCADE,
+      player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      PRIMARY KEY (revision_id, player_id)
     );
     CREATE TABLE IF NOT EXISTS canon_scan_state (
       campaign_id TEXT PRIMARY KEY REFERENCES campaigns(id) ON DELETE CASCADE,
@@ -813,6 +827,19 @@ export function createStore(databasePath) {
     WHERE canon_entries.id = ?
     ORDER BY messages.rowid
   `)
+  const canonAudiencesForEntry = database.prepare(`
+    SELECT players.id, players.name FROM canon_entry_audiences
+    JOIN players ON players.id = canon_entry_audiences.player_id
+    WHERE canon_entry_audiences.entry_id = ? ORDER BY players.name
+  `)
+  const canonAudiencesForRevision = database.prepare(`
+    SELECT players.id, players.name FROM canon_revision_audiences
+    JOIN players ON players.id = canon_revision_audiences.player_id
+    WHERE canon_revision_audiences.revision_id = ? ORDER BY players.name
+  `)
+  const insertCanonEntryAudience = database.prepare('INSERT INTO canon_entry_audiences (entry_id, player_id) VALUES (?, ?)')
+  const deleteCanonEntryAudiences = database.prepare('DELETE FROM canon_entry_audiences WHERE entry_id = ?')
+  const insertCanonRevisionAudience = database.prepare('INSERT INTO canon_revision_audiences (revision_id, player_id) VALUES (?, ?)')
   const insertCanonEntryRevision = database.prepare(`
     INSERT INTO canon_entry_revisions (
       id, entry_id, revision, action, title, claim, visibility, reason, player_id, created_at
@@ -1016,6 +1043,10 @@ export function createStore(databasePath) {
 
     getCampaignManagement(campaignId) {
       return { players: playersByCampaign.all(campaignId).map((row) => publicPlayer(row)) }
+    },
+
+    listCampaignMembers(campaignId) {
+      return playersByCampaign.all(campaignId).map((row) => publicPlayer(row))
     },
 
     setPlayerKnowledgeRole(campaignId, playerId, knowledgeRole) {
@@ -1320,14 +1351,16 @@ export function createStore(databasePath) {
         .map((row) => publicCanonProposal(row, canonSourcesForProposal.all(row.id)))
     },
 
-    decideCanonProposal(campaignId, playerId, proposalId, { action, reason = null, title = null, claim = null, visibility = null }) {
+    decideCanonProposal(campaignId, playerId, proposalId, { action, reason = null, title = null, claim = null, visibility = null, audiencePlayerIds = [] }) {
       const proposal = canonProposalById.get(proposalId, campaignId)
       if (!proposal) return { outcome: 'not_found' }
       if (proposal.status !== 'proposed') return { outcome: 'already_decided', proposal: this.getCanonProposal(campaignId, proposalId) }
       const nextStatus = action === 'accept' || action === 'edit_accept' ? 'accepted' : action === 'dispute' ? 'disputed' : 'rejected'
       const acceptedTitle = action === 'edit_accept' ? title : proposal.title
       const acceptedClaim = action === 'edit_accept' ? claim : proposal.claim
-      const acceptedVisibility = nextStatus === 'accepted' ? visibility ?? proposal.visibility : null
+      const acceptedVisibility = nextStatus === 'accepted' ? visibility === 'characters' ? 'gm_only' : visibility ?? proposal.visibility : null
+      const audiences = visibility === 'characters' ? [...new Set(audiencePlayerIds)] : []
+      if (audiences.some((audienceId) => !playerForCampaign.get(audienceId, campaignId))) return { outcome: 'invalid_audience' }
       const now = new Date().toISOString()
       database.exec('BEGIN IMMEDIATE')
       try {
@@ -1335,8 +1368,13 @@ export function createStore(databasePath) {
         insertCanonDecision.run(randomUUID(), proposalId, playerId, action, reason, acceptedTitle, acceptedClaim, acceptedVisibility, now)
         if (nextStatus === 'accepted') {
           const entryId = randomUUID()
+          const revisionId = randomUUID()
           insertCanonEntry.run(entryId, proposalId, campaignId, proposal.kind, acceptedTitle, acceptedClaim, acceptedVisibility, playerId, now, now)
-          insertCanonEntryRevision.run(randomUUID(), entryId, 0, 'accepted', acceptedTitle, acceptedClaim, acceptedVisibility, reason, playerId, now)
+          insertCanonEntryRevision.run(revisionId, entryId, 0, 'accepted', acceptedTitle, acceptedClaim, acceptedVisibility, reason, playerId, now)
+          for (const audienceId of audiences) {
+            insertCanonEntryAudience.run(entryId, audienceId)
+            insertCanonRevisionAudience.run(revisionId, audienceId)
+          }
         }
         database.exec('COMMIT')
       } catch (error) {
@@ -1417,27 +1455,38 @@ export function createStore(databasePath) {
       return { canon, continuity, deduplication: this.getCanonProposalMatchMetrics(campaignId) }
     },
 
-    listCanonEntries(campaignId, { includeGmOnly = false } = {}) {
+    listCanonEntries(campaignId, { includeGmOnly = false, viewerPlayerId = null } = {}) {
       return canonEntriesForCampaign.all(campaignId)
-        .filter((row) => includeGmOnly || row.visibility === 'campaign')
-        .map((row) => publicCanonEntry(row, canonSourcesForEntry.all(row.id)))
+        .map((row) => ({ row, audiences: canonAudiencesForEntry.all(row.id) }))
+        .filter(({ row, audiences }) => includeGmOnly || row.visibility === 'campaign' || audiences.some((audience) => audience.id === viewerPlayerId))
+        .map(({ row, audiences }) => publicCanonEntry(row, canonSourcesForEntry.all(row.id), audiences))
     },
 
-    getCanonEntry(campaignId, entryId, { includeGmOnly = false } = {}) {
+    getCanonEntry(campaignId, entryId, { includeGmOnly = false, viewerPlayerId = null } = {}) {
       const row = canonEntryById.get(entryId, campaignId)
-      if (!row || (!includeGmOnly && row.visibility !== 'campaign')) return null
-      return publicCanonEntry(row, canonSourcesForEntry.all(entryId))
+      const audiences = row ? canonAudiencesForEntry.all(entryId) : []
+      if (!row || (!includeGmOnly && row.visibility !== 'campaign' && !audiences.some((audience) => audience.id === viewerPlayerId))) return null
+      return publicCanonEntry(row, canonSourcesForEntry.all(entryId), audiences)
     },
 
-    reviseCanonEntry(campaignId, playerId, entryId, { action, title, claim, visibility, reason = null, expectedRevision }) {
+    reviseCanonEntry(campaignId, playerId, entryId, { action, title, claim, visibility, audiencePlayerIds = [], reason = null, expectedRevision }) {
       const current = canonEntryById.get(entryId, campaignId)
       if (!current) return { outcome: 'not_found' }
       if (current.status !== 'active' || current.revision !== expectedRevision) return { outcome: 'conflict', entry: this.getCanonEntry(campaignId, entryId, { includeGmOnly: true }) }
       const now = new Date().toISOString()
+      const storedVisibility = visibility === 'characters' ? 'gm_only' : visibility
+      const audiences = visibility === 'characters' ? [...new Set(audiencePlayerIds)] : []
+      if (audiences.some((audienceId) => !playerForCampaign.get(audienceId, campaignId))) return { outcome: 'invalid_audience' }
       database.exec('BEGIN IMMEDIATE')
       try {
-        if (updateCanonEntry.run(title, claim, visibility, now, entryId, campaignId, expectedRevision).changes !== 1) throw new Error('canon_entry_conflict')
-        insertCanonEntryRevision.run(randomUUID(), entryId, expectedRevision + 1, action, title, claim, visibility, reason, playerId, now)
+        if (updateCanonEntry.run(title, claim, storedVisibility, now, entryId, campaignId, expectedRevision).changes !== 1) throw new Error('canon_entry_conflict')
+        const revisionId = randomUUID()
+        insertCanonEntryRevision.run(revisionId, entryId, expectedRevision + 1, action, title, claim, storedVisibility, reason, playerId, now)
+        deleteCanonEntryAudiences.run(entryId)
+        for (const audienceId of audiences) {
+          insertCanonEntryAudience.run(entryId, audienceId)
+          insertCanonRevisionAudience.run(revisionId, audienceId)
+        }
         database.exec('COMMIT')
       } catch (error) {
         database.exec('ROLLBACK')
@@ -1454,7 +1503,9 @@ export function createStore(databasePath) {
       database.exec('BEGIN IMMEDIATE')
       try {
         if (retractCanonEntry.run(now, entryId, campaignId, expectedRevision).changes !== 1) throw new Error('canon_entry_conflict')
-        insertCanonEntryRevision.run(randomUUID(), entryId, expectedRevision + 1, 'retracted', current.title, current.claim, current.visibility, reason, playerId, now)
+        const revisionId = randomUUID()
+        insertCanonEntryRevision.run(revisionId, entryId, expectedRevision + 1, 'retracted', current.title, current.claim, current.visibility, reason, playerId, now)
+        for (const audience of canonAudiencesForEntry.all(entryId)) insertCanonRevisionAudience.run(revisionId, audience.id)
         database.exec('COMMIT')
       } catch (error) {
         database.exec('ROLLBACK')
@@ -1466,7 +1517,17 @@ export function createStore(databasePath) {
     listCanonEntryHistory(campaignId, entryId, { includeGmOnly = false } = {}) {
       const entry = this.getCanonEntry(campaignId, entryId, { includeGmOnly })
       if (!entry) return null
-      return { entry, revisions: canonRevisionsForEntry.all(entryId).map(publicCanonRevision) }
+      return { entry, revisions: canonRevisionsForEntry.all(entryId).map((revision) => publicCanonRevision(revision, canonAudiencesForRevision.all(revision.id))) }
+    },
+
+    getCharacterKnowledge(campaignId, playerId) {
+      const player = playerForCampaign.get(playerId, campaignId)
+      if (!player) return null
+      return {
+        player: publicPlayer(player),
+        entries: this.listCanonEntries(campaignId, { viewerPlayerId: playerId }),
+        sessions: this.listCampaignSessions(campaignId).filter((session) => session.participants.some((participant) => participant.id === playerId)),
+      }
     },
 
     createContradictionReport({ campaignId, playerId, generatorVersion, session = null, findings }) {

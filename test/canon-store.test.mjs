@@ -315,6 +315,33 @@ test('canon revisions preserve supersession and retraction history', () => {
   store.close()
 })
 
+test('character audiences remain private, visible to their seats, and revisioned', () => {
+  const { store, owner, first } = seededStore()
+  const theo = store.joinCampaign(owner.campaign.inviteCode, 'Theo')
+  const nina = store.joinCampaign(owner.campaign.inviteCode, 'Nina')
+  const proposal = store.createCanonProposal({
+    campaignId: owner.campaign.id, playerId: owner.player.id, kind: 'fact', title: 'Theo’s signet',
+    claim: 'Theo alone recognizes the royal signet.', visibility: 'gm_only', confidence: 0.9,
+    extractorVersion: 'fixture-v1', sources: [{ messageId: first.id }],
+  }).proposal
+  store.decideCanonProposal(owner.campaign.id, owner.player.id, proposal.id, {
+    action: 'accept', visibility: 'characters', audiencePlayerIds: [theo.player.id],
+  })
+  assert.equal(store.listCanonEntries(owner.campaign.id, { viewerPlayerId: nina.player.id }).length, 0)
+  const visible = store.listCanonEntries(owner.campaign.id, { viewerPlayerId: theo.player.id })[0]
+  assert.equal(visible.visibility, 'characters')
+  assert.deepEqual(visible.audienceNames, ['Theo'])
+  const revised = store.reviseCanonEntry(owner.campaign.id, owner.player.id, visible.id, {
+    action: 'revised', title: visible.title, claim: 'Theo and Nina recognize the royal signet.',
+    visibility: 'characters', audiencePlayerIds: [theo.player.id, nina.player.id], expectedRevision: 0,
+  })
+  assert.deepEqual(revised.entry.audienceNames, ['Nina', 'Theo'])
+  const history = store.listCanonEntryHistory(owner.campaign.id, visible.id, { includeGmOnly: true })
+  assert.deepEqual(history.revisions.map((revision) => revision.audienceNames), [['Nina', 'Theo'], ['Theo']])
+  assert.equal(store.getCharacterKnowledge(owner.campaign.id, nina.player.id).entries.length, 1)
+  store.close()
+})
+
 test('contradiction reports preserve canon snapshots and campaign transcript evidence', () => {
   const { store, owner, first, second } = seededStore()
   const proposal = store.createCanonProposal({

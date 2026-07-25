@@ -143,6 +143,12 @@ Its signature is the threshold marker inside the `in-character` transcript: pair
 
 The active folio reads as framing → pressure → cast → outcome. Resolution requires a concrete statement of what became true; it never disappears on close and never resolves automatically. Beginning or resolving a scene returns the GM to the in-character room so the transcript remains the play surface.
 
+### First-session folio
+
+Before the threshold, the Scene folio is a durable GM preparation spine: framing and pressure lead into an explicit stage of saved locations and NPCs, then clues or discoveries, likely complications, questions to play toward, and the present character cast. Character world connections preselect the likely stage, but every choice remains human-editable.
+
+Use continuous bordered ledger groups rather than a wizard, card dashboard, or AI chat. Repeated preparation lines are inset serif fields with restrained add/remove controls. A sticky footer distinguishes **Save preparation** from **Begin play**: play remains unavailable while changes are unsaved, and crossing the threshold snapshots the complete private folio before consuming the draft. Prepared possibilities remain behind the GM screen and must never be inserted into the player transcript or described as inevitable outcomes.
+
 ### Character aftermath
 
 Aftermath lives inside the existing character folio, above the editable public face. It is reflection, not advancement machinery: ask what happened to the character, offer only resolved scenes they witnessed, and require the player’s reason before keeping any revision. Do not introduce XP, levels, skill trees, unlocks, rewards, completion meters, or inferred personality changes.

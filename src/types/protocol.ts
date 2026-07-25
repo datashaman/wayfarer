@@ -125,6 +125,11 @@ export type RoomMessage = {
     question?: string
     outcome?: string
     characters?: Array<{ id: Id; name: string; playerName: string }>
+    locations?: Array<{ id: Id; name: string; description: string; danger: string }>
+    npcs?: Array<{ id: Id; name: string; role: string; want: string; leverage: string }>
+    clues?: string[]
+    complications?: string[]
+    sessionQuestions?: string[]
   }
 }
 
@@ -135,6 +140,11 @@ export type CampaignScene = {
   framing: string
   stakes: string
   question: string
+  locations: Array<{ id: Id; name: string; description: string; danger: string }>
+  npcs: Array<{ id: Id; name: string; role: string; want: string; leverage: string }>
+  clues: string[]
+  complications: string[]
+  sessionQuestions: string[]
   status: 'active' | 'resolved'
   outcome: string | null
   characters: Array<{ id: Id; name: string; playerName: string }>
@@ -144,10 +154,29 @@ export type CampaignScene = {
   resolvedAt: string | null
 }
 
+export type ScenePreparation = {
+  title: string
+  framing: string
+  stakes: string
+  question: string
+  characterIds: Id[]
+  locationIds: Id[]
+  npcIds: Id[]
+  clues: string[]
+  complications: string[]
+  sessionQuestions: string[]
+  revision: number
+  updatedAt: string
+  updatedByName: string | null
+}
+
 export type SceneContext = {
   openingCrisis: CampaignWorld['openingCrisis'] | null
   worldEntities: Array<{ id: Id; name: string; type: WorldConsequence['entityType'] }>
-  characters: Array<{ id: Id; name: string; playerName: string; concept: string }>
+  characters: Array<{ id: Id; name: string; playerName: string; concept: string; locationId: Id | null; npcId: Id | null }>
+  locations: CampaignWorld['locations']
+  npcs: CampaignWorld['npcs']
+  preparation: ScenePreparation | null
   activeScene: CampaignScene | null
   scenes: CampaignScene[]
   worldConsequences: WorldConsequence[]

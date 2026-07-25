@@ -30,7 +30,7 @@ import {
   Users,
   X,
 } from 'lucide-react'
-import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react'
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { RealtimeClient } from './lib/realtime'
 import { api } from './lib/api'
@@ -1505,6 +1505,7 @@ function App() {
   const [voiceError, setVoiceError] = useState('')
   const [mobileLedger, setMobileLedger] = useState(false)
   const [mobileTable, setMobileTable] = useState(false)
+  const [mobileTools, setMobileTools] = useState(false)
   const [campaignFolio, setCampaignFolio] = useState(false)
   const [invitationSheet, setInvitationSheet] = useState(false)
   const [transcriptSearch, setTranscriptSearch] = useState(false)
@@ -1539,6 +1540,17 @@ function App() {
   const ownCharacter = characterContext?.characters.find((character) => character.playerId === playerId)
   const currentPlayer: Participant = { playerId, playerName: displayName, name: ownCharacter?.name ?? displayName, characterId: ownCharacter?.id ?? null, characterName: ownCharacter?.name ?? null, muted }
   const activeRoomData = rooms.find((room) => room.id === activeRoom) ?? rooms[0]
+
+  const refreshTableJourney = useCallback(() => {
+    if (!realtimePlayer) return
+    const authorization = { authorization: `Bearer ${realtimePlayer.token}` }
+    void api<CharacterCreationContext>('/api/campaign/characters', { headers: authorization }).then(setCharacterContext).catch(() => undefined)
+    if (realtimePlayer.knowledgeRole === 'gm') void api<SceneContext>('/api/campaign/scenes', { headers: authorization }).then(setSceneContext).catch(() => undefined)
+  }, [realtimePlayer])
+
+  useEffect(() => {
+    refreshTableJourney()
+  }, [refreshTableJourney])
 
   useEffect(() => {
     if (!realtimePlayer) return
@@ -1856,6 +1868,8 @@ function App() {
   }, [joinedVoice, pushToTalk])
 
   const enterTable = (entered: TableSession) => {
+    setCharacterContext(null)
+    setSceneContext(null)
     setSavedSeats(saveSeat(entered))
     const roomId = entered.campaign.rooms[0]?.id ?? ''
     activeRoomRef.current = roomId
@@ -2073,15 +2087,18 @@ function App() {
         </div>
         <div className="campaign-actions">
           {connection !== 'live' && <span className="connection-state"><i />{connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span>}
-          <button className="text-button" onClick={() => setTranscriptSearch(true)}><Search size={15} />Search</button>
-          <button className="text-button" onClick={() => setSharedNotes(true)}><NotebookPen size={15} />Notes</button>
-          <button className="text-button" onClick={() => setCanonLedger(true)}><BookMarked size={15} />Canon</button>
-          <button className="text-button" onClick={() => setCharacterFolio(true)}><BookUser size={15} />Character</button>
-          {session.player.knowledgeRole === 'gm' && <button className="text-button" onClick={() => setSceneFolio(true)}><CircleDot size={15} />Scene</button>}
-          {session.player.knowledgeRole === 'gm' && <button className="text-button" onClick={() => setCampaignWorld(true)}><BookOpenText size={15} />World</button>}
-          <button className="text-button" onClick={() => setCampaignIntelligence(true)}><Compass size={15} />Table tools</button>
-          <button className="text-button invite-button" onClick={() => setInvitationSheet(true)}><QrCode size={15} />Invite players</button>
-          {session.player.role === 'owner' && <button className="icon-button" onClick={() => setCampaignFolio(true)} aria-label="Open campaign folio"><Settings size={18} /></button>}
+          <div className="desktop-tools">
+            <button className="text-button" onClick={() => setTranscriptSearch(true)}><Search size={15} />Search</button>
+            <button className="text-button" onClick={() => setSharedNotes(true)}><NotebookPen size={15} />Notes</button>
+            <button className="text-button" onClick={() => setCanonLedger(true)}><BookMarked size={15} />Canon</button>
+            <button className="text-button" onClick={() => setCharacterFolio(true)}><BookUser size={15} />Character</button>
+            {session.player.knowledgeRole === 'gm' && <button className="text-button" onClick={() => setSceneFolio(true)}><CircleDot size={15} />Scene</button>}
+            {session.player.knowledgeRole === 'gm' && <button className="text-button" onClick={() => setCampaignWorld(true)}><BookOpenText size={15} />World</button>}
+            <button className="text-button" onClick={() => setCampaignIntelligence(true)}><Compass size={15} />Table tools</button>
+            <button className="text-button invite-button" onClick={() => setInvitationSheet(true)}><QrCode size={15} />Invite players</button>
+            {session.player.role === 'owner' && <button className="icon-button" onClick={() => setCampaignFolio(true)} aria-label="Open campaign folio"><Settings size={18} /></button>}
+          </div>
+          <button className="icon-button mobile-only" onClick={() => setMobileTools(true)} aria-label="Open table tools"><Compass size={19} /></button>
           <button className="icon-button mobile-only" onClick={() => setMobileTable(true)} aria-label="Open voice table"><Users size={19} /></button>
         </div>
       </header>
@@ -2102,7 +2119,13 @@ function App() {
         <div className="timeline" ref={timelineRef} aria-live="polite" aria-label={`${activeRoomData.name} messages`}>
           {hasOlderMessages && <button className="earlier-entries" onClick={loadEarlierMessages} disabled={loadingOlderMessages}><span /><strong>{loadingOlderMessages ? 'Reading earlier entries…' : 'Read earlier entries'}</strong><span /></button>}
           {historyError && <div className="history-error" role="alert">{historyError}</div>}
-          {messages.length ? messages.map((message) => <MessageItem key={message.id} message={message} highlighted={message.id === targetMessageId} />) : (
+          {messages.length ? messages.map((message) => <MessageItem key={message.id} message={message} highlighted={message.id === targetMessageId} />) : characterContext && !characterContext.world ? (
+            <div className="table-next-step"><span className="eyebrow">First at the table</span><BookOpenText size={22} /><strong>{session.player.knowledgeRole === 'gm' ? 'Give the campaign somewhere to begin' : 'The campaign opening is still being established'}</strong><p>{session.player.knowledgeRole === 'gm' ? 'Start with one rough premise. Keep the people, places, pressure, and crisis only after they feel playable.' : 'A GM needs to establish the world before you can make a character who belongs in it.'}</p>{session.player.knowledgeRole === 'gm' && <button className="primary-action" onClick={() => setCampaignWorld(true)}>Create the campaign opening</button>}</div>
+          ) : characterContext && (session.player.knowledgeRole !== 'gm' ? !ownCharacter : characterContext.characters.length === 0) ? (
+            <div className="table-next-step"><span className="eyebrow">The world is waiting</span><BookUser size={22} /><strong>{session.player.knowledgeRole === 'gm' ? 'Bring the first character to the table' : 'Make someone who belongs here'}</strong><p>Choose drives, beliefs, secrets, and connections that give play something to pull on.</p><button className="primary-action" onClick={() => setCharacterFolio(true)}>Create a character</button></div>
+          ) : session.player.knowledgeRole === 'gm' && sceneContext && !sceneContext.activeScene ? (
+            <div className="table-next-step"><span className="eyebrow">{sceneContext.scenes.some((scene) => scene.status === 'resolved') ? 'Play has changed the world' : 'The party is ready'}</span><CircleDot size={22} /><strong>{sceneContext.preparation ? 'Cross the threshold into play' : sceneContext.scenes.some((scene) => scene.status === 'resolved') ? 'Prepare what follows from play' : 'Frame the opening scene'}</strong><p>{sceneContext.preparation ? 'The scene is prepared. Put its opening moment into the transcript when everyone is ready.' : 'Bring the crisis, characters, and pressure together around a choice—not a scripted outcome.'}</p><button className="primary-action" onClick={() => setSceneFolio(true)}>{sceneContext.preparation ? 'Open prepared scene' : sceneContext.scenes.some((scene) => scene.status === 'resolved') ? 'Draft the next scene' : 'Build the first session'}</button></div>
+          ) : (
             <div className="empty-transcript"><Hash size={20} /><strong>Start the conversation</strong><span>There are no messages in #{activeRoomData.name} yet.</span></div>
           )}
         </div>
@@ -2130,13 +2153,30 @@ function App() {
         </div>
       )}
 
+      {mobileTools && (
+        <div className="drawer-layer drawer-layer--right mobile-only" role="dialog" aria-modal="true" aria-label="Table tools">
+          <button className="drawer-scrim" onClick={() => setMobileTools(false)} aria-label="Close table tools" />
+          <aside className="mobile-tools-drawer"><div className="drawer-heading"><span>Table tools</span><button className="icon-button" onClick={() => setMobileTools(false)} aria-label="Close table tools"><X size={18} /></button></div><nav className="mobile-tool-list" aria-label="Campaign actions">
+            <button onClick={() => { setMobileTools(false); setCharacterFolio(true) }}><BookUser size={18} /><span><strong>Character</strong><small>Create and keep who you play</small></span></button>
+            {session.player.knowledgeRole === 'gm' && <button onClick={() => { setMobileTools(false); setSceneFolio(true) }}><CircleDot size={18} /><span><strong>Scene</strong><small>Prepare, begin, and resolve play</small></span></button>}
+            {session.player.knowledgeRole === 'gm' && <button onClick={() => { setMobileTools(false); setCampaignWorld(true) }}><BookOpenText size={18} /><span><strong>World</strong><small>Keep the campaign and its changes</small></span></button>}
+            <button onClick={() => { setMobileTools(false); setInvitationSheet(true) }}><QrCode size={18} /><span><strong>Invite players</strong><small>Bring another seat to the table</small></span></button>
+            <button onClick={() => { setMobileTools(false); setSharedNotes(true) }}><NotebookPen size={18} /><span><strong>Notes</strong><small>Write what the party shares</small></span></button>
+            <button onClick={() => { setMobileTools(false); setCanonLedger(true) }}><BookMarked size={18} /><span><strong>Canon</strong><small>Rule on what became true</small></span></button>
+            <button onClick={() => { setMobileTools(false); setTranscriptSearch(true) }}><Search size={18} /><span><strong>Search</strong><small>Find a passage from play</small></span></button>
+            <button onClick={() => { setMobileTools(false); setCampaignIntelligence(true) }}><Compass size={18} /><span><strong>Campaign tools</strong><small>Read continuity and table signals</small></span></button>
+            {session.player.role === 'owner' && <button onClick={() => { setMobileTools(false); setCampaignFolio(true) }}><Settings size={18} /><span><strong>Campaign settings</strong><small>Rooms, seats, and invitation access</small></span></button>}
+          </nav></aside>
+        </div>
+      )}
+
       {campaignFolio && <CampaignFolio session={session} onClose={() => setCampaignFolio(false)} onCampaign={updateCampaign} onOpenInvitation={() => { setCampaignFolio(false); setInvitationSheet(true) }} />}
       {invitationSheet && <InvitationSheet campaign={session.campaign} onClose={() => setInvitationSheet(false)} />}
       {transcriptSearch && <TranscriptSearch session={session} onClose={() => setTranscriptSearch(false)} onOpenRoom={changeRoom} />}
       {sharedNotes && <SharedNotes session={session} note={campaignNote} onNote={setCampaignNote} onClose={() => setSharedNotes(false)} />}
       {canonLedger && <CanonLedgerSheet session={session} ledger={campaignCanon} initialTarget={canonLedgerTarget} onLedger={setCampaignCanon} onClose={() => { setCanonLedger(false); setCanonLedgerTarget(null) }} onOpenSource={openCanonSource} />}
       {campaignIntelligence && <CampaignIntelligenceFolio session={session} onClose={() => setCampaignIntelligence(false)} onUseDraft={setDraft} onOpenLedger={(target) => { setCampaignIntelligence(false); setCanonLedgerTarget(target); setCanonLedger(true) }} />}
-      {campaignWorld && <CampaignWorldFolio session={session} onClose={() => setCampaignWorld(false)} />}
+      {campaignWorld && <CampaignWorldFolio session={session} onClose={() => setCampaignWorld(false)} onWorld={refreshTableJourney} />}
       {characterFolio && <CharacterFolio session={session} context={characterContext} onContext={setCharacterContext} onClose={() => setCharacterFolio(false)} />}
       {sceneFolio && <SceneFolio session={session} suppliedContext={sceneContext} onContext={setSceneContext} onOpenRoom={(roomId) => { changeRoom(roomId); setSceneFolio(false) }} onClose={() => setSceneFolio(false)} />}
 

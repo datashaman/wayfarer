@@ -39,7 +39,7 @@ function complete(world: CampaignWorld) {
   return values.every((value) => value.trim())
 }
 
-export function CampaignWorldFolio({ session, onClose }: { session: TableSession; onClose: () => void }) {
+export function CampaignWorldFolio({ session, onClose, onWorld }: { session: TableSession; onClose: () => void; onWorld?: (world: CampaignWorld) => void }) {
   const authorization = useMemo(() => ({ authorization: `Bearer ${session.player.token}` }), [session.player.token])
   const [world, setWorld] = useState<CampaignWorld | null>(null)
   const [draft, setDraft] = useState<CampaignWorld | null>(null)
@@ -81,6 +81,7 @@ export function CampaignWorldFolio({ session, onClose }: { session: TableSession
         setWorld(result.world)
         setDraft(result.world)
         setPremise(result.world.premise)
+        onWorld?.(result.world)
         setNotice(world ? `Campaign foundation saved as revision ${result.world.revision}.` : 'Campaign foundation established. The table now has somewhere to begin.')
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : 'The campaign opening could not be saved.'))

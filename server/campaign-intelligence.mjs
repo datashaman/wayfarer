@@ -11,12 +11,12 @@ function text(value, maximum) {
   return cleaned && cleaned.length <= maximum ? cleaned : null
 }
 
-export function createCampaignIntelligence({ version, generateKnowledgeAnswer, generateIntentDrafts, generateFactionProposal }) {
-  if (!version || !generateKnowledgeAnswer || !generateIntentDrafts || !generateFactionProposal) throw new Error('Campaign intelligence requires every generator.')
+export function createCampaignIntelligence({ version, generateKnowledgeAnswer, generateIntentDrafts, generateFactionProposal, generateHouseRule }) {
+  if (!version || !generateKnowledgeAnswer || !generateIntentDrafts || !generateFactionProposal || !generateHouseRule) throw new Error('Campaign intelligence requires every generator.')
   return {
     version,
-    async answerKnowledge({ question, canon }) {
-      const output = await generateKnowledgeAnswer({ question, canon })
+    async answerKnowledge({ question, canon, priorFeedback = [] }) {
+      const output = await generateKnowledgeAnswer({ question, canon, priorFeedback })
       const answer = text(output?.answer, 2_000)
       const allowed = new Set(canon.map((entry) => entry.id))
       const citations = Array.isArray(output?.citations) ? [...new Set(output.citations)] : []
@@ -38,10 +38,25 @@ export function createCampaignIntelligence({ version, generateKnowledgeAnswer, g
       const summary = text(output?.summary, 1_000)
       const assumptions = text(output?.assumptions, 1_000)
       const proposedProgress = output?.proposedProgress
-      if (!summary || !assumptions || !Number.isInteger(proposedProgress) || proposedProgress < 0 || proposedProgress > clock.segments) {
+      const allowed = new Set(messages.map((message) => message.id))
+      const citations = Array.isArray(output?.citations) ? [...new Set(output.citations)] : []
+      if (!summary || !assumptions || !Number.isInteger(proposedProgress) || proposedProgress < 0 || proposedProgress > clock.segments || !citations.length || citations.length > 12 || citations.some((id) => typeof id !== 'string' || !allowed.has(id))) {
         throw new CampaignIntelligenceError('invalid_faction_proposal', 'The faction proposal is outside the clock boundary.')
       }
-      return { summary, assumptions, proposedProgress }
+      return { summary, assumptions, proposedProgress, citations }
+    },
+    async compileHouseRule({ messages }) {
+      const output = await generateHouseRule({ messages })
+      const title = text(output?.title, 120)
+      const sourceRule = text(output?.sourceRule, 1_000)
+      const interpretation = text(output?.interpretation, 2_000)
+      const ruling = text(output?.ruling, 2_000)
+      const allowed = new Set(messages.map((message) => message.id))
+      const citations = Array.isArray(output?.citations) ? [...new Set(output.citations)] : []
+      if (!title || !sourceRule || !interpretation || !ruling || !citations.length || citations.length > 12 || citations.some((id) => typeof id !== 'string' || !allowed.has(id))) {
+        throw new CampaignIntelligenceError('invalid_house_rule', 'The house-rule proposal must cite only selected transcript passages.')
+      }
+      return { title, sourceRule, interpretation, ruling, citations }
     },
   }
 }

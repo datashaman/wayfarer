@@ -263,7 +263,7 @@ export type SessionRecapRevision = {
 export type AiReadiness = {
   eligible: boolean
   mode: 'prepare_only'
-  checks: Array<{ id: string; label: string; passed: boolean; value: number | null }>
+  checks: Array<{ id: string; label: string; passed: boolean; value: number | null; remaining: number; target: 'canon' | 'continuity' }>
   metrics: AiFeedbackMetrics
 }
 
@@ -335,8 +335,15 @@ export type PreparationRun = {
   id: Id
   sessionId: Id
   status: 'queued' | 'running' | 'complete' | 'failed'
-  tasks: IntelligenceSettings['tasks']
-  result: Record<string, unknown> | null
+  tasks: Array<{
+    name: keyof IntelligenceSettings['tasks']
+    status: 'queued' | 'running' | 'complete' | 'failed'
+    attempts: number
+    result: Record<string, unknown> | null
+    error: string | null
+    startedAt: string | null
+    completedAt: string | null
+  }>
   error: string | null
   createdAt: string
   completedAt: string | null
@@ -352,6 +359,7 @@ export type HouseRule = {
   revision: number
   createdAt: string
   updatedAt: string
+  sources: CanonProposalSource[]
 }
 
 export type HouseRuleRevision = Omit<HouseRule, 'id' | 'createdAt' | 'updatedAt'> & {
@@ -365,11 +373,16 @@ export type FactionProposal = {
   id: Id
   summary: string
   assumptions: string
+  baseProgress: number
   proposedProgress: number
+  sessionId: Id
   status: 'proposed' | 'accepted' | 'rejected'
   generatorVersion: string
+  createdByName: string
+  decidedByName: string | null
   createdAt: string
   decidedAt: string | null
+  sources: CanonProposalSource[]
 }
 
 export type FactionClock = {
@@ -390,14 +403,32 @@ export type CampaignIntelligenceOverview = {
   preparationRuns: PreparationRun[]
   houseRules: HouseRule[]
   factionClocks: FactionClock[]
+  knowledgeMetrics: Array<{
+    generatorVersion: string
+    total: number
+    useful: number
+    incorrect: number
+    incomplete: number
+    secretLeak: number
+    usefulRate: number | null
+  }>
   spotlightParticipants: Array<{ id: Id; name: string; enabled: boolean }>
 }
 
 export type SpotlightReport = {
-  session: CampaignSession
+  id: Id
+  session: Pick<CampaignSession, 'id' | 'title' | 'status' | 'startSequence' | 'endSequence'>
   basis: 'opted_in_text_messages'
   participants: Array<{ id: Id; name: string; messages: number; share: number }>
   totalMessages: number
+  createdAt: string
+}
+
+export type SpotlightConsent = {
+  enabled: boolean
+  updatedAt: string | null
+  history: Array<{ enabled: boolean; effectiveSequence: number; createdAt: string }>
+  reports: Array<{ id: Id; session: { id: Id; title: string }; messages: number; share: number; totalMessages: number; createdAt: string }>
 }
 
 export type ClientVoiceSignal = Envelope<
@@ -435,6 +466,7 @@ export type ServerEvent =
   | Envelope<'campaign.updated', { campaign: Campaign }>
   | Envelope<'campaign.note_updated', { note: CampaignNote }>
   | Envelope<'campaign.canon_updated', CanonLedger>
+  | Envelope<'campaign.preparation_updated', { run: PreparationRun }>
   | Envelope<'room.activity', { senderId: Id }>
   | Envelope<'room.snapshot', { participants: Participant[]; voiceParticipants: Participant[]; messages: RoomMessage[]; hasMore: boolean }>
   | Envelope<'presence.snapshot', { participants: Participant[] }>

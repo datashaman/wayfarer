@@ -12,6 +12,22 @@ function emptyContinuityMetrics() {
   return { total: 0, useful: 0, incorrect: 0, secretLeak: 0, notUseful: 0 }
 }
 
+function calculateKnowledgeMetrics(knowledge = []) {
+  const overall = { total: 0, useful: 0, incorrect: 0, incomplete: 0, secretLeak: 0 }
+  const versions = new Map()
+  for (const fixture of knowledge) {
+    const metrics = versions.get(fixture.generatorVersion) ?? { total: 0, useful: 0, incorrect: 0, incomplete: 0, secretLeak: 0 }
+    const outcome = fixture.feedback.rating === 'secret_leak' ? 'secretLeak' : fixture.feedback.rating
+    metrics.total += 1
+    metrics[outcome] += 1
+    overall.total += 1
+    overall[outcome] += 1
+    versions.set(fixture.generatorVersion, metrics)
+  }
+  const finish = (metrics) => ({ ...metrics, usefulRate: ratio(metrics.useful, metrics.total) })
+  return { ...finish(overall), byGeneratorVersion: Object.fromEntries([...versions].sort().map(([version, metrics]) => [version, finish(metrics)])) }
+}
+
 function finishCanonMetrics(metrics) {
   return {
     ...metrics,
@@ -74,6 +90,7 @@ export function calculateFeedbackMetrics({ canon = [], continuity = [] }) {
 export function createFeedbackEvaluationExport(feedback) {
   const canon = feedback.canon ?? []
   const continuity = feedback.continuity ?? []
+  const knowledge = feedback.knowledge ?? []
   const deduplication = feedback.deduplication ?? []
   return {
     schemaVersion: feedbackEvaluationSchemaVersion,
@@ -82,19 +99,26 @@ export function createFeedbackEvaluationExport(feedback) {
       containsCampaignText: true,
       playerAndCampaignNamesExcluded: true,
     },
-    fixtures: { canon, continuity },
-    metrics: { ...calculateFeedbackMetrics({ canon, continuity }), deduplication },
+    fixtures: { canon, continuity, knowledge },
+    metrics: { ...calculateFeedbackMetrics({ canon, continuity }), knowledge: calculateKnowledgeMetrics(knowledge), deduplication },
   }
 }
 
 export function calculateAutomationReadiness(feedback) {
   const metrics = calculateFeedbackMetrics(feedback)
+  const canonSuccesses = metrics.canon.accepted + metrics.canon.edited
+  const canonPrecisionNeeded = metrics.canon.acceptanceRate !== null && metrics.canon.acceptanceRate < 0.8
+    ? Math.ceil((0.8 * metrics.canon.total - canonSuccesses) / 0.2)
+    : 0
+  const continuityUsefulNeeded = metrics.continuity.usefulRate !== null && metrics.continuity.usefulRate < 0.7
+    ? Math.ceil((0.7 * metrics.continuity.total - metrics.continuity.useful) / 0.3)
+    : 0
   const checks = [
-    { id: 'canon_sample', label: 'At least 20 reviewed canon suggestions', passed: metrics.canon.total >= 20, value: metrics.canon.total },
-    { id: 'canon_precision', label: 'Canon acceptance at least 80%', passed: (metrics.canon.acceptanceRate ?? 0) >= 0.8, value: metrics.canon.acceptanceRate },
-    { id: 'continuity_sample', label: 'At least 10 rated continuity threads', passed: metrics.continuity.total >= 10, value: metrics.continuity.total },
-    { id: 'continuity_useful', label: 'Continuity usefulness at least 70%', passed: (metrics.continuity.usefulRate ?? 0) >= 0.7, value: metrics.continuity.usefulRate },
-    { id: 'zero_leaks', label: 'No reported secret leaks', passed: metrics.continuity.secretLeak === 0, value: metrics.continuity.secretLeak },
+    { id: 'canon_sample', label: 'At least 20 reviewed canon suggestions', passed: metrics.canon.total >= 20, value: metrics.canon.total, remaining: Math.max(0, 20 - metrics.canon.total), target: 'canon' },
+    { id: 'canon_precision', label: 'Canon acceptance at least 80%', passed: (metrics.canon.acceptanceRate ?? 0) >= 0.8, value: metrics.canon.acceptanceRate, remaining: metrics.canon.total === 0 ? 1 : canonPrecisionNeeded, target: 'canon' },
+    { id: 'continuity_sample', label: 'At least 10 rated continuity threads', passed: metrics.continuity.total >= 10, value: metrics.continuity.total, remaining: Math.max(0, 10 - metrics.continuity.total), target: 'continuity' },
+    { id: 'continuity_useful', label: 'Continuity usefulness at least 70%', passed: (metrics.continuity.usefulRate ?? 0) >= 0.7, value: metrics.continuity.usefulRate, remaining: metrics.continuity.total === 0 ? 1 : continuityUsefulNeeded, target: 'continuity' },
+    { id: 'zero_leaks', label: 'No reported secret leaks', passed: metrics.continuity.secretLeak === 0, value: metrics.continuity.secretLeak, remaining: metrics.continuity.secretLeak, target: 'continuity' },
   ]
   return { eligible: checks.every((check) => check.passed), mode: 'prepare_only', checks, metrics }
 }

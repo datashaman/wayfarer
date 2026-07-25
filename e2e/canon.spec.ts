@@ -82,5 +82,5 @@ test('the owner reviews a cited canon proposal and returns to its source', async
   await expect(page.getByLabel('Message fireside')).toHaveValue('I raise the lantern and call the party onward.')
   await page.getByRole('button', { name: 'Table tools' }).click()
   await page.getByRole('dialog', { name: 'Campaign intelligence' }).getByRole('button', { name: 'Opt in' }).click()
-  await expect(page.getByRole('dialog', { name: 'Campaign intelligence' }).getByRole('button', { name: 'Opted in' })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: 'Campaign intelligence' }).getByRole('button', { name: 'Revoke future counts' })).toBeVisible()
 })

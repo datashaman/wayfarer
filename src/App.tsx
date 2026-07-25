@@ -31,6 +31,7 @@ import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { RealtimeClient } from './lib/realtime'
 import { api } from './lib/api'
+import { readinessRequirement } from './lib/readiness'
 import { CampaignIntelligenceFolio } from './CampaignIntelligenceFolio'
 import {
   createEvent,
@@ -52,6 +53,7 @@ import {
   type CampaignSession,
   type CampaignRoom,
   type Participant,
+  type PreparationRun,
   type MessagePage,
   type RoomMessage,
   type RuntimeConfig,
@@ -472,7 +474,7 @@ function evaluationPercent(rate: number | null) {
   return rate === null ? '—' : `${Math.round(rate * 100)}%`
 }
 
-function EvaluationLedger({ dashboard }: { dashboard: AiEvaluationDashboard }) {
+function EvaluationLedger({ dashboard, onNavigate }: { dashboard: AiEvaluationDashboard; onNavigate: (target: CanonLedgerTarget) => void }) {
   const { readiness, versions, runs, alerts } = dashboard
   const { canon, continuity } = readiness.metrics
   const canonTotal = Math.max(canon.total, 1)
@@ -485,13 +487,15 @@ function EvaluationLedger({ dashboard }: { dashboard: AiEvaluationDashboard }) {
       <article className="evaluation-verdict"><div><span>Canon rulings</span><strong>{evaluationPercent(canon.acceptanceRate)}</strong><small>accepted or edited · {canon.total} judged</small></div><div className="evaluation-bar" aria-label={`${canon.accepted} accepted, ${canon.edited} edited, ${canon.disputed} disputed, ${canon.rejected} rejected`}><span className="evaluation-bar__accepted" style={{ width: `${canon.accepted / canonTotal * 100}%` }} /><span className="evaluation-bar__edited" style={{ width: `${canon.edited / canonTotal * 100}%` }} /><span className="evaluation-bar__disputed" style={{ width: `${canon.disputed / canonTotal * 100}%` }} /><span className="evaluation-bar__rejected" style={{ width: `${canon.rejected / canonTotal * 100}%` }} /></div><div className="evaluation-key"><span>Accepted {canon.accepted}</span><span>Edited {canon.edited}</span><span>Disputed {canon.disputed}</span><span>Rejected {canon.rejected}</span></div></article>
       <article className="evaluation-verdict"><div><span>Continuity verdicts</span><strong>{evaluationPercent(continuity.usefulRate)}</strong><small>useful · {continuity.total} rated</small></div><div className="evaluation-bar" aria-label={`${continuity.useful} useful, ${continuity.incorrect} incorrect, ${continuity.secretLeak} secret leaks, ${continuity.notUseful} not useful`}><span className="evaluation-bar__accepted" style={{ width: `${continuity.useful / continuityTotal * 100}%` }} /><span className="evaluation-bar__disputed" style={{ width: `${continuity.notUseful / continuityTotal * 100}%` }} /><span className="evaluation-bar__rejected" style={{ width: `${continuity.incorrect / continuityTotal * 100}%` }} /><span className="evaluation-bar__leak" style={{ width: `${continuity.secretLeak / continuityTotal * 100}%` }} /></div><div className="evaluation-key"><span>Useful {continuity.useful}</span><span>Not useful {continuity.notUseful}</span><span>Incorrect {continuity.incorrect}</span><span>Leaks {continuity.secretLeak}</span></div></article>
     </div>
-    <div className="evaluation-subsection"><h4>Release gates</h4><ol className="evaluation-gates">{readiness.checks.map((check) => <li className={check.passed ? 'evaluation-gate evaluation-gate--passed' : 'evaluation-gate'} key={check.id}><span aria-hidden="true">{check.passed ? '✓' : '·'}</span><div><strong>{check.label}</strong><small>Current: {check.value === null ? 'no rulings yet' : check.id.includes('precision') || check.id.includes('useful') ? evaluationPercent(check.value) : check.value}</small></div></li>)}</ol></div>
+    <div className="evaluation-subsection"><h4>Release gates</h4><ol className="evaluation-gates">{readiness.checks.map((check) => <li className={check.passed ? 'evaluation-gate evaluation-gate--passed' : 'evaluation-gate'} key={check.id}><span aria-hidden="true">{check.passed ? '✓' : '·'}</span><div><strong>{check.label}</strong><small>{readinessRequirement(check)}</small></div>{!check.passed && <button className="folio-small-action" onClick={() => onNavigate(check.target)}>{check.target === 'canon' ? 'Review suggestions' : 'Rate threads'}</button>}</li>)}</ol></div>
     <div className="evaluation-subsection"><h4>Generator editions</h4>{versions.length === 0 ? <p className="evaluation-empty">No judged generator output yet. Decisions will appear here by version.</p> : <div className="evaluation-versions">{versions.map((version) => { const watch = version.secretLeakRate !== null && version.secretLeakRate > 0 || version.errorRate !== null && version.errorRate > 0.2; return <article className="evaluation-version" key={`${version.surface}:${version.version}`}><div><span>{version.surface}</span><strong>{version.version}</strong></div><div><strong>{evaluationPercent(version.successRate)}</strong><small>{version.sampleSize} judged</small></div><span className={watch ? 'evaluation-version__state evaluation-version__state--watch' : 'evaluation-version__state'}>{version.sampleSize < 5 ? 'Learning' : watch ? 'Watch' : 'Steady'}</span></article> })}</div>}</div>
     <div className="evaluation-subsection"><h4>Recorded live checks</h4>{runs.length === 0 ? <p className="evaluation-empty">No campaign-scoped live checks recorded. Use <code>npm run eval:record</code> with this campaign ID.</p> : <ol className="evaluation-runs">{runs.map((run) => <li key={run.id}><time dateTime={run.createdAt}>{new Date(run.createdAt).toLocaleDateString()}</time><div><strong>{run.suite} · {run.model}</strong><small>{run.generatorVersion}{run.notes ? ` · ${run.notes}` : ''}</small></div><span>{run.passed}/{run.total}{run.delta === null ? '' : ` · ${run.delta >= 0 ? '+' : ''}${Math.round(run.delta * 100)} pts`}</span></li>)}</ol>}</div>
   </section>
 }
 
-function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: { session: TableSession; ledger: CanonLedger | null; onLedger: (ledger: CanonLedger) => void; onClose: () => void; onOpenSource: (source: CanonProposalSource) => void }) {
+type CanonLedgerTarget = 'canon' | 'continuity' | 'recap'
+
+function CanonLedgerSheet({ session, ledger, initialTarget, onLedger, onClose, onOpenSource }: { session: TableSession; ledger: CanonLedger | null; initialTarget: CanonLedgerTarget | null; onLedger: (ledger: CanonLedger) => void; onClose: () => void; onOpenSource: (source: CanonProposalSource) => void }) {
   const [pending, setPending] = useState('')
   const [extracting, setExtracting] = useState(false)
   const [editing, setEditing] = useState<CanonProposal | null>(null)
@@ -608,6 +612,13 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [onClose])
+
+  useEffect(() => {
+    if (!initialTarget || !ledger) return
+    const headingId = initialTarget === 'canon' ? 'canon-proposals-heading' : initialTarget === 'continuity' ? 'continuity-heading' : 'session-recap-heading'
+    const frame = requestAnimationFrame(() => document.getElementById(headingId)?.scrollIntoView({ block: 'start' }))
+    return () => cancelAnimationFrame(frame)
+  }, [continuityLoaded, initialTarget, ledger, sessionRecap])
 
   const decide = async (proposal: CanonProposal, action: 'accept' | 'edit_accept' | 'dispute' | 'reject', reason?: 'incorrect' | 'secret_leak' | 'not_useful', visibility?: CanonAudience) => {
     setPending(proposal.id)
@@ -924,7 +935,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
                   {recapHistory && <ol className="canon-history">{recapHistory.map((revision) => <li key={revision.id}><span>Revision {revision.revision}</span><strong>{revision.publicSummary}</strong><p>{revision.gmNotes}</p><small>{revision.createdByName} · {new Date(revision.createdAt).toLocaleString()}</small></li>)}</ol>}
                 </article>}
               </section>
-              {isGm && aiDashboard && <EvaluationLedger dashboard={aiDashboard} />}
+              {isGm && aiDashboard && <EvaluationLedger dashboard={aiDashboard} onNavigate={(target) => document.getElementById(target === 'canon' ? 'canon-proposals-heading' : 'continuity-heading')?.scrollIntoView({ block: 'start', behavior: 'smooth' })} />}
               {isGm && <section className="canon-section" aria-labelledby="canon-proposals-heading">
                 <div className="canon-section-title"><h3 id="canon-proposals-heading">Awaiting review</h3><div><span>{pendingProposals.length}</span><button className="folio-small-action" onClick={() => void extractCanon()} disabled={extracting || !coverage?.unscannedCount}>{extracting ? 'Reading…' : coverage?.unscannedCount ? 'Find passages' : 'Up to date'}</button></div></div>
                 {coverage && <p className="canon-coverage">{coverage.unscannedCount > 0 ? `${coverage.unscannedCount} new transcript ${coverage.unscannedCount === 1 ? 'message' : 'messages'} ready to scan.` : coverage.latestSequence > 0 ? 'The transcript is scanned through its latest message.' : 'The transcript has no messages to scan yet.'}</p>}
@@ -1475,7 +1486,10 @@ function App() {
   const [transcriptSearch, setTranscriptSearch] = useState(false)
   const [sharedNotes, setSharedNotes] = useState(false)
   const [canonLedger, setCanonLedger] = useState(false)
+  const [canonLedgerTarget, setCanonLedgerTarget] = useState<CanonLedgerTarget | null>(null)
   const [campaignIntelligence, setCampaignIntelligence] = useState(false)
+  const [preparationNotice, setPreparationNotice] = useState<PreparationRun | null>(null)
+  const [preparationRetrying, setPreparationRetrying] = useState(false)
   const [campaignCanon, setCampaignCanon] = useState<CanonLedger | null>(null)
   const [targetMessageId, setTargetMessageId] = useState('')
   const [campaignNote, setCampaignNote] = useState<CampaignNote | null>(null)
@@ -1709,6 +1723,10 @@ function App() {
       }
       if (event.type === 'campaign.canon_updated') {
         setCampaignCanon(event.payload)
+        return
+      }
+      if (event.type === 'campaign.preparation_updated') {
+        if (event.payload.run.status === 'complete' || event.payload.run.status === 'failed') setPreparationNotice(event.payload.run)
         return
       }
       if (event.roomId !== activeRoomRef.current) return
@@ -1972,6 +1990,23 @@ function App() {
     if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() }
   }
 
+  const openPreparedArtifact = (target: CanonLedgerTarget) => {
+    setCanonLedgerTarget(target)
+    setCanonLedger(true)
+    setPreparationNotice(null)
+  }
+
+  const retryPreparation = async () => {
+    if (!preparationNotice || !realtimePlayer) return
+    setPreparationRetrying(true)
+    try {
+      const result = await api<{ run: PreparationRun }>(`/api/campaign/intelligence/preparation/${preparationNotice.id}/retry`, { method: 'POST', headers: { authorization: `Bearer ${realtimePlayer.token}` } })
+      setPreparationNotice(result.run)
+    } finally {
+      setPreparationRetrying(false)
+    }
+  }
+
   if (restoringSession) return <main className="entry-gate"><span className="entry-wait">Returning to the table…</span></main>
   if (!session) return <EntryGate inviteCode={inviteCode} recoverySeed={recoverySeed} pendingEntry={pendingSeatEntry} savedSeats={savedSeats} switchingCampaign={switchingCampaign} notice={entryNotice} onEnter={enterTable} onSelectSaved={(seat) => void switchCampaign(seat)} />
   if (!activeRoomData) return null
@@ -2009,6 +2044,15 @@ function App() {
           <button className="icon-button mobile-only" onClick={() => setMobileTable(true)} aria-label="Open voice table"><Users size={19} /></button>
         </div>
       </header>
+
+      {preparationNotice && <aside className={`preparation-notice ${preparationNotice.status === 'failed' ? 'preparation-notice--failed' : ''}`} aria-live="polite">
+        <div><span>Post-session preparation</span><strong>{preparationNotice.status === 'complete' ? 'Drafts are ready for your ruling' : preparationNotice.status === 'failed' ? 'Some preparation needs attention' : 'Retrying failed work…'}</strong></div>
+        <button className="quiet-icon" onClick={() => setPreparationNotice(null)} aria-label="Dismiss preparation notice"><X size={15} /></button>
+        <div className="preparation-notice__actions">
+          {preparationNotice.tasks.filter((task) => task.status === 'complete').map((task) => <button key={task.name} onClick={() => openPreparedArtifact(task.name)}>{task.name === 'canon' ? 'Review canon' : task.name === 'continuity' ? 'Open continuity' : 'Open recap'}</button>)}
+          {preparationNotice.tasks.some((task) => task.status === 'failed') && <button onClick={() => void retryPreparation()} disabled={preparationRetrying}>{preparationRetrying ? 'Retrying…' : 'Retry failed work'}</button>}
+        </div>
+      </aside>}
 
       <CampaignLedger rooms={rooms} activeRoom={activeRoom} unreadRooms={unreadRooms} participants={participants} currentPlayer={currentPlayer} onRoomChange={changeRoom} />
 
@@ -2049,8 +2093,8 @@ function App() {
       {invitationSheet && <InvitationSheet campaign={session.campaign} onClose={() => setInvitationSheet(false)} />}
       {transcriptSearch && <TranscriptSearch session={session} onClose={() => setTranscriptSearch(false)} onOpenRoom={changeRoom} />}
       {sharedNotes && <SharedNotes session={session} note={campaignNote} onNote={setCampaignNote} onClose={() => setSharedNotes(false)} />}
-      {canonLedger && <CanonLedgerSheet session={session} ledger={campaignCanon} onLedger={setCampaignCanon} onClose={() => setCanonLedger(false)} onOpenSource={openCanonSource} />}
-      {campaignIntelligence && <CampaignIntelligenceFolio session={session} onClose={() => setCampaignIntelligence(false)} onUseDraft={setDraft} />}
+      {canonLedger && <CanonLedgerSheet session={session} ledger={campaignCanon} initialTarget={canonLedgerTarget} onLedger={setCampaignCanon} onClose={() => { setCanonLedger(false); setCanonLedgerTarget(null) }} onOpenSource={openCanonSource} />}
+      {campaignIntelligence && <CampaignIntelligenceFolio session={session} onClose={() => setCampaignIntelligence(false)} onUseDraft={setDraft} onOpenLedger={(target) => { setCampaignIntelligence(false); setCanonLedgerTarget(target); setCanonLedger(true) }} />}
 
       <div className="voice-dock mobile-only">
         {!joinedVoice ? <button className="primary-action" onClick={joinVoice} disabled={joiningVoice || connection !== 'live' || !voiceConfigReady}><Headphones size={17} />{joiningVoice ? 'Joining…' : voiceConfigReady ? 'Join voice' : 'Preparing voice…'}</button> : <><button className={`dock-mic ${muted ? 'dock-mic--muted' : ''}`} onClick={() => setMuted((current) => !current)} aria-label={muted ? 'Unmute' : 'Mute'}>{muted ? <MicOff size={18} /> : <Mic size={18} />}</button><span>{Object.values(peerConnectionStates).includes('failed') ? 'Voice issue' : Object.values(peerConnectionStates).includes('recovering') ? 'Reconnecting voice…' : muted ? 'Muted' : `${voiceParticipants.length} in voice`}</span><button className="quiet-icon" onClick={() => setMobileTable(true)} aria-label="Voice settings"><PanelRight size={17} /></button></>}

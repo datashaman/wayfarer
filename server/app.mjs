@@ -82,7 +82,7 @@ function cleanCanonText(value, maximum) {
 
 export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers, allowedOrigins, trustProxy = false, rateLimits = {}, canonExtractor = null, continuityGenerator = null, contradictionRadar = null, recapGenerator = null, campaignIntelligence = null } = {}) {
   const store = createStore(databasePath)
-  const intelligenceRoutes = createCampaignIntelligenceRoutes({ store, intelligence: campaignIntelligence, canonExtractor, continuityGenerator, recapGenerator })
+  const intelligenceRoutes = createCampaignIntelligenceRoutes({ store, intelligence: campaignIntelligence, canonExtractor, continuityGenerator, recapGenerator, onPreparationUpdated: broadcastPreparation })
   const clients = new Map()
   const originAllowlist = new Set(allowedOrigins ?? (dev ? developmentOrigins : []))
   const limits = { ...defaultRateLimits, ...rateLimits }
@@ -1206,6 +1206,14 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
     }
   }
 
+  function broadcastPreparation(run) {
+    for (const [socket, client] of clients) {
+      if (client.campaign.id === run.campaignId && client.player.knowledgeRole === 'gm') {
+        send(socket, envelope('campaign.preparation_updated', run.campaignId, { run }))
+      }
+    }
+  }
+
   function presenceSnapshot(roomId) {
     if (!roomId) return
     broadcast(roomId, envelope('presence.snapshot', roomId, { participants: members(roomId).map(([, client]) => participant(client)) }))
@@ -1339,12 +1347,14 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         server.once('error', reject)
         server.listen(port, resolve)
       })
+      intelligenceRoutes.resume()
       return server.address().port
     },
     async close() {
       for (const socket of wss.clients) socket.terminate()
       await new Promise((resolve) => wss.close(resolve))
       await new Promise((resolve) => server.close(resolve))
+      await intelligenceRoutes.close()
       store.close()
     },
   }

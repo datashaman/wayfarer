@@ -7,7 +7,8 @@ test('OpenAI campaign intelligence is strict, non-stored, and scoped for each pr
   const outputs = [
     { answer: 'Ilyra keeps the light.', citations: ['canon-1'] },
     { drafts: ['I raise the lantern.'] },
-    { summary: 'The court advances.', assumptions: 'The gate remains open.', proposedProgress: 2 },
+    { summary: 'The court advances.', assumptions: 'The gate remains open.', proposedProgress: 2, citations: ['message-1'] },
+    { title: 'Lantern test', sourceRule: 'Core test rule.', interpretation: 'Light reveals marks.', ruling: 'Gain advantage.', citations: ['message-1'] },
   ]
   const client = { responses: { create: async (request) => {
     requests.push(request)
@@ -16,18 +17,21 @@ test('OpenAI campaign intelligence is strict, non-stored, and scoped for each pr
   const intelligence = createOpenAICampaignIntelligence({ client, model: 'test-model' })
   const canon = [{ id: 'canon-1', kind: 'fact', title: 'Ilyra', claim: 'Ilyra keeps the light.' }]
 
-  assert.equal((await intelligence.answerKnowledge({ question: 'Who keeps the light?', canon })).citations[0], 'canon-1')
+  assert.equal((await intelligence.answerKnowledge({ question: 'Who keeps the light?', canon, priorFeedback: [{ question: 'What is hidden?', rating: 'secret_leak', generatorVersion: 'v0' }] })).citations[0], 'canon-1')
   assert.equal((await intelligence.draftIntent({ intent: 'Signal the party.', messages: [{ text: 'The light is ours.' }], canon }))[0], 'I raise the lantern.')
-  assert.equal((await intelligence.proposeFaction({ clock: { name: 'Moth Court', goal: 'Open the gate', progress: 1, segments: 6 }, messages: [], canon })).proposedProgress, 2)
+  assert.equal((await intelligence.proposeFaction({ clock: { name: 'Moth Court', goal: 'Open the gate', progress: 1, segments: 6 }, messages: [{ id: 'message-1', text: 'The western gate remains open.' }], canon })).proposedProgress, 2)
+  assert.equal((await intelligence.compileHouseRule({ messages: [{ id: 'message-1', roomName: 'rules-desk', senderName: 'Mara', text: 'We use advantage here.' }] })).citations[0], 'message-1')
 
-  assert.equal(requests.length, 3)
+  assert.equal(requests.length, 4)
   for (const request of requests) {
     assert.equal(request.model, 'test-model')
     assert.equal(request.store, false)
     assert.equal(request.reasoning.effort, 'none')
     assert.equal(request.text.format.strict, true)
   }
-  assert.deepEqual(Object.keys(JSON.parse(requests[0].input)), ['question', 'readableCanon'])
+  assert.deepEqual(Object.keys(JSON.parse(requests[0].input)), ['question', 'priorVerdicts', 'readableCanon'])
+  assert.equal(JSON.parse(requests[0].input).priorVerdicts[0].rating, 'secret_leak')
   assert.deepEqual(Object.keys(JSON.parse(requests[1].input)), ['intent', 'ownVoiceExamples', 'readableCanon'])
   assert.match(requests[2].instructions, /do not declare it true/i)
+  assert.match(requests[3].instructions, /editable house-rule proposal/i)
 })

@@ -16,6 +16,10 @@ test('feedback evaluation reports outcomes overall and by generator version', ()
       { generatorVersion: 'continuity-v2', feedback: { rating: 'incorrect' } },
       { generatorVersion: 'continuity-v2', feedback: { rating: 'not_useful' } },
     ],
+    knowledge: [
+      { generatorVersion: 'knowledge-v1', feedback: { rating: 'useful' } },
+      { generatorVersion: 'knowledge-v1', feedback: { rating: 'incomplete' } },
+    ],
   })
 
   assert.equal(evaluation.schemaVersion, feedbackEvaluationSchemaVersion)
@@ -29,6 +33,8 @@ test('feedback evaluation reports outcomes overall and by generator version', ()
   })
   assert.equal(evaluation.metrics.byGeneratorVersion.canon['canon-v1'].acceptanceRate, 1)
   assert.equal(evaluation.metrics.byGeneratorVersion.continuity['continuity-v2'].incorrectRate, 0.5)
+  assert.equal(evaluation.metrics.knowledge.byGeneratorVersion['knowledge-v1'].usefulRate, 0.5)
+  assert.equal(evaluation.fixtures.knowledge.length, 2)
   assert.deepEqual(evaluation.metrics.deduplication, [])
 })
 
@@ -47,10 +53,31 @@ test('automation readiness requires strong samples and fails on any secret leak'
     continuity: Array.from({ length: 10 }, () => ({ feedback: { rating: 'useful' }, generatorVersion: 'v1' })),
   })
   assert.equal(ready.eligible, true)
+  assert.equal(ready.checks.find((check) => check.id === 'canon_sample').remaining, 0)
   assert.equal(calculateAutomationReadiness({
     canon: Array.from({ length: 20 }, () => ({ decision: { action: 'accept' }, generatorVersion: 'v1' })),
     continuity: [...Array.from({ length: 10 }, () => ({ feedback: { rating: 'useful' }, generatorVersion: 'v1' })), { feedback: { rating: 'secret_leak' }, generatorVersion: 'v1' }],
   }).eligible, false)
+})
+
+test('automation readiness tells a GM exactly how much evidence remains', () => {
+  const readiness = calculateAutomationReadiness({
+    canon: [
+      ...Array.from({ length: 7 }, () => ({ decision: { action: 'accept' }, generatorVersion: 'v1' })),
+      ...Array.from({ length: 3 }, () => ({ decision: { action: 'reject' }, generatorVersion: 'v1' })),
+    ],
+    continuity: [
+      ...Array.from({ length: 3 }, () => ({ feedback: { rating: 'useful' }, generatorVersion: 'v1' })),
+      ...Array.from({ length: 2 }, () => ({ feedback: { rating: 'incorrect' }, generatorVersion: 'v1' })),
+    ],
+  })
+  assert.deepEqual(readiness.checks.map(({ id, remaining, target }) => ({ id, remaining, target })), [
+    { id: 'canon_sample', remaining: 10, target: 'canon' },
+    { id: 'canon_precision', remaining: 5, target: 'canon' },
+    { id: 'continuity_sample', remaining: 5, target: 'continuity' },
+    { id: 'continuity_useful', remaining: 2, target: 'continuity' },
+    { id: 'zero_leaks', remaining: 0, target: 'continuity' },
+  ])
 })
 
 test('the evaluation dashboard compares generator versions and flags run regressions', () => {

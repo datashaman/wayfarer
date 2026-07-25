@@ -209,6 +209,28 @@ function publicSessionRecap(row, sources = [], { includeGmNotes = false } = {}) 
   }
 }
 
+function publicPreparationRun(row, tasks = []) {
+  return {
+    id: row.id,
+    campaignId: row.campaign_id,
+    sessionId: row.session_id,
+    requestedByPlayerId: row.requested_by_player_id,
+    status: row.status,
+    tasks: tasks.map((task) => ({
+      name: task.task,
+      status: task.status,
+      attempts: task.attempts,
+      result: task.result ? JSON.parse(task.result) : null,
+      error: task.error,
+      startedAt: task.started_at,
+      completedAt: task.completed_at,
+    })),
+    error: row.error,
+    createdAt: row.created_at,
+    completedAt: row.completed_at,
+  }
+}
+
 export function createStore(databasePath) {
   if (databasePath !== ':memory:') mkdirSync(dirname(databasePath), { recursive: true })
   const database = new DatabaseSync(databasePath)
@@ -403,6 +425,7 @@ export function createStore(databasePath) {
     CREATE TABLE IF NOT EXISTS continuity_briefs (
       id TEXT PRIMARY KEY,
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      preparation_run_id TEXT,
       generator_version TEXT NOT NULL,
       session_id TEXT,
       session_title TEXT,
@@ -445,6 +468,7 @@ export function createStore(databasePath) {
     CREATE TABLE IF NOT EXISTS session_recaps (
       id TEXT PRIMARY KEY,
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      preparation_run_id TEXT,
       generator_version TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'published')),
       revision INTEGER NOT NULL DEFAULT 0,
@@ -511,6 +535,39 @@ export function createStore(databasePath) {
       completed_at TEXT,
       UNIQUE(campaign_id, session_id)
     );
+    CREATE TABLE IF NOT EXISTS preparation_run_tasks (
+      run_id TEXT NOT NULL REFERENCES preparation_runs(id) ON DELETE CASCADE,
+      task TEXT NOT NULL CHECK(task IN ('canon', 'continuity', 'recap')),
+      status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued', 'running', 'complete', 'failed')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      result TEXT,
+      error TEXT,
+      started_at TEXT,
+      completed_at TEXT,
+      PRIMARY KEY (run_id, task)
+    );
+    CREATE TABLE IF NOT EXISTS knowledge_answers (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      subject_player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      requested_by_player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      question TEXT NOT NULL,
+      answer TEXT NOT NULL,
+      generator_version TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS knowledge_answer_sources (
+      answer_id TEXT NOT NULL REFERENCES knowledge_answers(id) ON DELETE CASCADE,
+      canon_entry_id TEXT NOT NULL REFERENCES canon_entries(id) ON DELETE RESTRICT,
+      PRIMARY KEY (answer_id, canon_entry_id)
+    );
+    CREATE TABLE IF NOT EXISTS knowledge_answer_feedback (
+      id TEXT PRIMARY KEY,
+      answer_id TEXT NOT NULL REFERENCES knowledge_answers(id) ON DELETE CASCADE,
+      player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      rating TEXT NOT NULL CHECK(rating IN ('useful', 'incorrect', 'incomplete', 'secret_leak')),
+      created_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS house_rules (
       id TEXT PRIMARY KEY,
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
@@ -538,6 +595,12 @@ export function createStore(databasePath) {
       created_at TEXT NOT NULL,
       UNIQUE(rule_id, revision)
     );
+    CREATE TABLE IF NOT EXISTS house_rule_revision_sources (
+      revision_id TEXT NOT NULL REFERENCES house_rule_revisions(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
+      excerpt TEXT,
+      PRIMARY KEY (revision_id, message_id)
+    );
     CREATE TABLE IF NOT EXISTS faction_clocks (
       id TEXT PRIMARY KEY,
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
@@ -555,7 +618,9 @@ export function createStore(databasePath) {
       clock_id TEXT NOT NULL REFERENCES faction_clocks(id) ON DELETE CASCADE,
       summary TEXT NOT NULL,
       assumptions TEXT NOT NULL,
+      base_progress INTEGER NOT NULL,
       proposed_progress INTEGER NOT NULL,
+      session_id TEXT NOT NULL REFERENCES campaign_sessions(id) ON DELETE RESTRICT,
       status TEXT NOT NULL DEFAULT 'proposed' CHECK(status IN ('proposed', 'accepted', 'rejected')),
       generator_version TEXT NOT NULL,
       created_by_player_id TEXT NOT NULL REFERENCES players(id),
@@ -563,11 +628,43 @@ export function createStore(databasePath) {
       created_at TEXT NOT NULL,
       decided_at TEXT
     );
+    CREATE TABLE IF NOT EXISTS faction_clock_proposal_sources (
+      proposal_id TEXT NOT NULL REFERENCES faction_clock_proposals(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
+      excerpt TEXT,
+      PRIMARY KEY (proposal_id, message_id)
+    );
     CREATE TABLE IF NOT EXISTS spotlight_consents (
       player_id TEXT PRIMARY KEY REFERENCES players(id) ON DELETE CASCADE,
       enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0, 1)),
       start_sequence INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS spotlight_consent_events (
+      id TEXT PRIMARY KEY,
+      player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+      enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
+      effective_sequence INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS spotlight_reports (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES campaign_sessions(id) ON DELETE RESTRICT,
+      session_title TEXT NOT NULL,
+      session_start_sequence INTEGER NOT NULL,
+      session_end_sequence INTEGER NOT NULL,
+      total_messages INTEGER NOT NULL,
+      created_by_player_id TEXT NOT NULL REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      UNIQUE(campaign_id, session_id)
+    );
+    CREATE TABLE IF NOT EXISTS spotlight_report_participants (
+      report_id TEXT NOT NULL REFERENCES spotlight_reports(id) ON DELETE CASCADE,
+      player_id TEXT NOT NULL REFERENCES players(id) ON DELETE RESTRICT,
+      message_count INTEGER NOT NULL,
+      share REAL NOT NULL,
+      PRIMARY KEY (report_id, player_id)
     );
   `)
 
@@ -615,6 +712,14 @@ export function createStore(databasePath) {
   if (!recapColumns.some((column) => column.name === 'revision')) database.exec('ALTER TABLE session_recaps ADD COLUMN revision INTEGER NOT NULL DEFAULT 0')
   if (!recapColumns.some((column) => column.name === 'updated_by_player_id')) database.exec('ALTER TABLE session_recaps ADD COLUMN updated_by_player_id TEXT REFERENCES players(id)')
   if (!recapColumns.some((column) => column.name === 'updated_at')) database.exec('ALTER TABLE session_recaps ADD COLUMN updated_at TEXT')
+  if (!recapColumns.some((column) => column.name === 'preparation_run_id')) database.exec('ALTER TABLE session_recaps ADD COLUMN preparation_run_id TEXT')
+  const continuityColumns = database.prepare('PRAGMA table_info(continuity_briefs)').all()
+  if (!continuityColumns.some((column) => column.name === 'preparation_run_id')) database.exec('ALTER TABLE continuity_briefs ADD COLUMN preparation_run_id TEXT')
+  database.exec('CREATE UNIQUE INDEX IF NOT EXISTS continuity_briefs_preparation_run ON continuity_briefs(preparation_run_id) WHERE preparation_run_id IS NOT NULL')
+  database.exec('CREATE UNIQUE INDEX IF NOT EXISTS session_recaps_preparation_run ON session_recaps(preparation_run_id) WHERE preparation_run_id IS NOT NULL')
+  const factionProposalColumns = database.prepare('PRAGMA table_info(faction_clock_proposals)').all()
+  if (!factionProposalColumns.some((column) => column.name === 'base_progress')) database.exec('ALTER TABLE faction_clock_proposals ADD COLUMN base_progress INTEGER NOT NULL DEFAULT 0')
+  if (!factionProposalColumns.some((column) => column.name === 'session_id')) database.exec("ALTER TABLE faction_clock_proposals ADD COLUMN session_id TEXT NOT NULL DEFAULT ''")
   database.exec(`
     INSERT OR IGNORE INTO session_recap_revisions (id, recap_id, revision, public_summary, gm_notes, player_id, created_at)
     SELECT lower(hex(randomblob(16))), id, revision, public_summary, gm_notes, created_by_player_id, created_at FROM session_recaps
@@ -1027,10 +1132,11 @@ export function createStore(databasePath) {
   `)
   const insertContinuityBrief = database.prepare(`
     INSERT INTO continuity_briefs (
-      id, campaign_id, generator_version, session_id, session_title, session_status,
+      id, campaign_id, preparation_run_id, generator_version, session_id, session_title, session_status,
       session_start_sequence, session_end_sequence, created_by_player_id, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
+  const continuityBriefForPreparationRun = database.prepare('SELECT id FROM continuity_briefs WHERE preparation_run_id = ?')
   const insertContradictionReport = database.prepare(`
     INSERT INTO contradiction_reports (
       id, campaign_id, generator_version, session_id, session_title, session_status,
@@ -1132,11 +1238,12 @@ export function createStore(databasePath) {
   `)
   const insertSessionRecap = database.prepare(`
     INSERT INTO session_recaps (
-      id, campaign_id, generator_version, public_summary, gm_notes, session_id, session_title,
+      id, campaign_id, preparation_run_id, generator_version, public_summary, gm_notes, session_id, session_title,
       session_status, session_start_sequence, session_end_sequence, created_by_player_id, created_at,
       updated_by_player_id, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
+  const sessionRecapForPreparationRun = database.prepare('SELECT id FROM session_recaps WHERE preparation_run_id = ?')
   const insertSessionRecapRevision = database.prepare(`INSERT INTO session_recap_revisions (id, recap_id, revision, public_summary, gm_notes, player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
   const insertSessionRecapSource = database.prepare('INSERT INTO session_recap_sources (recap_id, message_id, excerpt) VALUES (?, ?, ?)')
   const latestSessionRecap = database.prepare(`SELECT session_recaps.*, players.name AS updated_by_name FROM session_recaps LEFT JOIN players ON players.id = session_recaps.updated_by_player_id WHERE session_recaps.campaign_id = ? ORDER BY session_recaps.rowid DESC LIMIT 1`)
@@ -1158,29 +1265,102 @@ export function createStore(databasePath) {
   const insertIntelligenceSettings = database.prepare('INSERT INTO campaign_intelligence_settings (campaign_id) VALUES (?)')
   const updateIntelligenceSettings = database.prepare(`UPDATE campaign_intelligence_settings SET auto_prepare = ?, prepare_canon = ?, prepare_continuity = ?, prepare_recap = ?, updated_by_player_id = ?, updated_at = ? WHERE campaign_id = ?`)
   const insertPreparationRun = database.prepare(`INSERT OR IGNORE INTO preparation_runs (id, campaign_id, session_id, status, tasks, requested_by_player_id, created_at) VALUES (?, ?, ?, 'queued', ?, ?, ?)`)
+  const insertPreparationRunTask = database.prepare(`INSERT INTO preparation_run_tasks (run_id, task) VALUES (?, ?)`)
   const preparationRunForSession = database.prepare('SELECT * FROM preparation_runs WHERE campaign_id = ? AND session_id = ?')
+  const preparationRunById = database.prepare('SELECT * FROM preparation_runs WHERE id = ? AND campaign_id = ?')
   const preparationRuns = database.prepare('SELECT * FROM preparation_runs WHERE campaign_id = ? ORDER BY rowid DESC LIMIT ?')
-  const updatePreparationRun = database.prepare(`UPDATE preparation_runs SET status = ?, result = ?, error = ?, completed_at = ? WHERE id = ? AND campaign_id = ?`)
+  const resumablePreparationRuns = database.prepare("SELECT * FROM preparation_runs WHERE status IN ('queued', 'running') ORDER BY rowid")
+  const preparationTasks = database.prepare('SELECT * FROM preparation_run_tasks WHERE run_id = ? ORDER BY rowid')
+  const startPreparationTask = database.prepare("UPDATE preparation_run_tasks SET status = 'running', attempts = attempts + 1, error = NULL, started_at = ?, completed_at = NULL WHERE run_id = ? AND task = ? AND status = 'queued'")
+  const finishPreparationTask = database.prepare("UPDATE preparation_run_tasks SET status = ?, result = ?, error = ?, completed_at = ? WHERE run_id = ? AND task = ? AND status = 'running'")
+  const resetRunningPreparationTasks = database.prepare("UPDATE preparation_run_tasks SET status = 'queued', started_at = NULL WHERE status = 'running'")
+  const resetFailedPreparationTasks = database.prepare("UPDATE preparation_run_tasks SET status = 'queued', error = NULL, started_at = NULL, completed_at = NULL WHERE run_id = ? AND status = 'failed'")
+  const updatePreparationRunState = database.prepare('UPDATE preparation_runs SET status = ?, error = ?, completed_at = ? WHERE id = ?')
+  const insertKnowledgeAnswer = database.prepare('INSERT INTO knowledge_answers (id, campaign_id, subject_player_id, requested_by_player_id, question, answer, generator_version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+  const insertKnowledgeAnswerSource = database.prepare('INSERT INTO knowledge_answer_sources (answer_id, canon_entry_id) VALUES (?, ?)')
+  const knowledgeAnswerForRequester = database.prepare('SELECT * FROM knowledge_answers WHERE id = ? AND campaign_id = ? AND requested_by_player_id = ?')
+  const insertKnowledgeAnswerFeedback = database.prepare('INSERT INTO knowledge_answer_feedback (id, answer_id, player_id, rating, created_at) VALUES (?, ?, ?, ?, ?)')
+  const knowledgeFeedbackExamples = database.prepare(`
+    SELECT knowledge_answers.question, knowledge_answers.generator_version, knowledge_answer_feedback.rating
+    FROM knowledge_answer_feedback JOIN knowledge_answers ON knowledge_answers.id = knowledge_answer_feedback.answer_id
+    WHERE knowledge_answers.campaign_id = ? AND knowledge_answers.subject_player_id = ?
+      AND knowledge_answer_feedback.rowid = (SELECT MAX(latest.rowid) FROM knowledge_answer_feedback AS latest WHERE latest.answer_id = knowledge_answers.id)
+    ORDER BY knowledge_answer_feedback.rowid DESC LIMIT ?
+  `)
+  const knowledgeFeedbackForCampaign = database.prepare(`
+    SELECT knowledge_answers.id AS answer_id, knowledge_answers.question, knowledge_answers.answer,
+           knowledge_answers.generator_version, knowledge_answers.created_at,
+           knowledge_answer_feedback.rating, knowledge_answer_feedback.created_at AS rated_at
+    FROM knowledge_answer_feedback JOIN knowledge_answers ON knowledge_answers.id = knowledge_answer_feedback.answer_id
+    WHERE knowledge_answers.campaign_id = ?
+      AND knowledge_answer_feedback.rowid = (SELECT MAX(latest.rowid) FROM knowledge_answer_feedback AS latest WHERE latest.answer_id = knowledge_answers.id)
+    ORDER BY knowledge_answer_feedback.rowid
+  `)
+  const knowledgeAnswerSources = database.prepare('SELECT canon_entry_id FROM knowledge_answer_sources WHERE answer_id = ? ORDER BY rowid')
   const insertHouseRule = database.prepare(`INSERT INTO house_rules (id, campaign_id, title, source_rule, interpretation, ruling, created_by_player_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   const insertHouseRuleRevision = database.prepare(`INSERT INTO house_rule_revisions (id, rule_id, revision, title, source_rule, interpretation, ruling, status, reason, player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   const houseRules = database.prepare('SELECT * FROM house_rules WHERE campaign_id = ? ORDER BY status, title COLLATE NOCASE')
   const houseRuleForCampaign = database.prepare('SELECT * FROM house_rules WHERE id = ? AND campaign_id = ?')
   const houseRuleRevisions = database.prepare(`SELECT house_rule_revisions.*, players.name AS player_name FROM house_rule_revisions JOIN players ON players.id = house_rule_revisions.player_id WHERE rule_id = ? ORDER BY revision DESC`)
+  const insertHouseRuleRevisionSource = database.prepare('INSERT INTO house_rule_revision_sources (revision_id, message_id, excerpt) VALUES (?, ?, ?)')
+  const houseRuleRevisionSources = database.prepare(`
+    SELECT house_rule_revision_sources.message_id, house_rule_revision_sources.excerpt,
+           messages.text, messages.sent_at, messages.rowid AS sequence,
+           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+    FROM house_rule_revision_sources JOIN messages ON messages.id = house_rule_revision_sources.message_id
+    JOIN rooms ON rooms.id = messages.room_id JOIN players ON players.id = messages.player_id
+    WHERE house_rule_revision_sources.revision_id = ? ORDER BY messages.rowid
+  `)
+  const latestHouseRuleRevision = database.prepare('SELECT id FROM house_rule_revisions WHERE rule_id = ? ORDER BY revision DESC LIMIT 1')
   const updateHouseRule = database.prepare(`UPDATE house_rules SET title = ?, source_rule = ?, interpretation = ?, ruling = ?, status = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND campaign_id = ? AND revision = ?`)
   const insertFactionClock = database.prepare(`INSERT INTO faction_clocks (id, campaign_id, name, goal, progress, segments, created_by_player_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   const factionClocks = database.prepare('SELECT * FROM faction_clocks WHERE campaign_id = ? ORDER BY name COLLATE NOCASE')
   const factionClockForCampaign = database.prepare('SELECT * FROM faction_clocks WHERE id = ? AND campaign_id = ?')
-  const insertFactionProposal = database.prepare(`INSERT INTO faction_clock_proposals (id, clock_id, summary, assumptions, proposed_progress, generator_version, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-  const factionProposals = database.prepare(`SELECT faction_clock_proposals.* FROM faction_clock_proposals JOIN faction_clocks ON faction_clocks.id = faction_clock_proposals.clock_id WHERE faction_clocks.campaign_id = ? ORDER BY faction_clock_proposals.rowid DESC`)
+  const insertFactionProposal = database.prepare(`INSERT INTO faction_clock_proposals (id, clock_id, summary, assumptions, base_progress, proposed_progress, session_id, generator_version, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  const insertFactionProposalSource = database.prepare('INSERT INTO faction_clock_proposal_sources (proposal_id, message_id, excerpt) VALUES (?, ?, ?)')
+  const factionProposalSources = database.prepare(`
+    SELECT faction_clock_proposal_sources.message_id, faction_clock_proposal_sources.excerpt,
+           messages.text, messages.sent_at, messages.rowid AS sequence,
+           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+    FROM faction_clock_proposal_sources JOIN messages ON messages.id = faction_clock_proposal_sources.message_id
+    JOIN rooms ON rooms.id = messages.room_id JOIN players ON players.id = messages.player_id
+    WHERE faction_clock_proposal_sources.proposal_id = ? ORDER BY messages.rowid
+  `)
+  const factionProposals = database.prepare(`SELECT faction_clock_proposals.*, creators.name AS created_by_name, deciders.name AS decided_by_name FROM faction_clock_proposals JOIN faction_clocks ON faction_clocks.id = faction_clock_proposals.clock_id JOIN players AS creators ON creators.id = faction_clock_proposals.created_by_player_id LEFT JOIN players AS deciders ON deciders.id = faction_clock_proposals.decided_by_player_id WHERE faction_clocks.campaign_id = ? ORDER BY faction_clock_proposals.rowid DESC`)
   const factionProposalForCampaign = database.prepare(`SELECT faction_clock_proposals.*, faction_clocks.progress, faction_clocks.segments FROM faction_clock_proposals JOIN faction_clocks ON faction_clocks.id = faction_clock_proposals.clock_id WHERE faction_clock_proposals.id = ? AND faction_clocks.campaign_id = ?`)
   const decideFactionProposal = database.prepare(`UPDATE faction_clock_proposals SET status = ?, decided_by_player_id = ?, decided_at = ? WHERE id = ? AND status = 'proposed'`)
   const advanceFactionClock = database.prepare(`UPDATE faction_clocks SET progress = ?, revision = revision + 1, updated_at = ? WHERE id = ?`)
   const latestMessageSequence = database.prepare('SELECT COALESCE(MAX(rowid), 0) AS sequence FROM messages')
   const upsertSpotlightConsent = database.prepare(`INSERT INTO spotlight_consents (player_id, enabled, start_sequence, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(player_id) DO UPDATE SET enabled = excluded.enabled, start_sequence = excluded.start_sequence, updated_at = excluded.updated_at`)
+  const insertSpotlightConsentEvent = database.prepare('INSERT INTO spotlight_consent_events (id, player_id, enabled, effective_sequence, created_at) VALUES (?, ?, ?, ?, ?)')
   const spotlightConsentForPlayer = database.prepare('SELECT enabled, updated_at FROM spotlight_consents WHERE player_id = ?')
+  const spotlightConsentHistory = database.prepare('SELECT enabled, effective_sequence, created_at FROM spotlight_consent_events WHERE player_id = ? ORDER BY rowid DESC')
   const spotlightParticipants = database.prepare(`SELECT players.id, players.name, COALESCE(spotlight_consents.enabled, 0) AS enabled FROM players LEFT JOIN spotlight_consents ON spotlight_consents.player_id = players.id WHERE players.campaign_id = ? AND players.removed_at IS NULL ORDER BY players.rowid`)
-  const spotlightMessageCounts = database.prepare(`SELECT players.id, players.name, COUNT(messages.id) AS message_count FROM players JOIN messages ON messages.player_id = players.id JOIN spotlight_consents ON spotlight_consents.player_id = players.id WHERE players.campaign_id = ? AND players.removed_at IS NULL AND spotlight_consents.enabled = 1 AND messages.rowid > spotlight_consents.start_sequence AND messages.rowid BETWEEN ? AND ? GROUP BY players.id ORDER BY players.rowid`)
+  const spotlightMessageCounts = database.prepare(`
+    SELECT players.id, players.name, COUNT(messages.id) AS message_count
+    FROM players JOIN messages ON messages.player_id = players.id
+    WHERE players.campaign_id = ? AND players.removed_at IS NULL AND messages.rowid BETWEEN ? AND ?
+      AND 1 = (SELECT enabled FROM spotlight_consent_events WHERE player_id = players.id AND effective_sequence < messages.rowid ORDER BY rowid DESC LIMIT 1)
+    GROUP BY players.id ORDER BY players.rowid
+  `)
+  const insertSpotlightReport = database.prepare('INSERT OR IGNORE INTO spotlight_reports (id, campaign_id, session_id, session_title, session_start_sequence, session_end_sequence, total_messages, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+  const spotlightReportForSession = database.prepare('SELECT * FROM spotlight_reports WHERE campaign_id = ? AND session_id = ?')
+  const insertSpotlightReportParticipant = database.prepare('INSERT INTO spotlight_report_participants (report_id, player_id, message_count, share) VALUES (?, ?, ?, ?)')
+  const spotlightReportParticipants = database.prepare(`SELECT spotlight_report_participants.*, players.name FROM spotlight_report_participants JOIN players ON players.id = spotlight_report_participants.player_id WHERE report_id = ? ORDER BY players.rowid`)
+  const spotlightReportsForPlayer = database.prepare(`SELECT spotlight_reports.* FROM spotlight_reports JOIN spotlight_report_participants ON spotlight_report_participants.report_id = spotlight_reports.id WHERE spotlight_report_participants.player_id = ? ORDER BY spotlight_reports.rowid DESC`)
   const recentPlayerMessages = database.prepare(`SELECT messages.text, messages.sent_at FROM messages JOIN rooms ON rooms.id = messages.room_id WHERE rooms.campaign_id = ? AND messages.player_id = ? ORDER BY messages.rowid DESC LIMIT ?`)
+
+  function publicSpotlightReport(row) {
+    const participants = spotlightReportParticipants.all(row.id).map((participant) => ({
+      id: participant.player_id, name: participant.name, messages: participant.message_count, share: participant.share,
+    }))
+    return {
+      id: row.id,
+      session: { id: row.session_id, title: row.session_title, status: 'closed', startSequence: row.session_start_sequence, endSequence: row.session_end_sequence },
+      basis: 'opted_in_text_messages', participants, totalMessages: row.total_messages,
+      createdAt: row.created_at,
+    }
+  }
 
   function createPlayer(campaignId, name, role = 'member') {
     const token = randomBytes(32).toString('base64url')
@@ -1668,7 +1848,16 @@ export function createStore(databasePath) {
         },
         feedback: { rating: row.rating, ratedAt: row.rated_at },
       }))
-      return { canon, continuity, deduplication: this.getCanonProposalMatchMetrics(campaignId) }
+      const knowledge = knowledgeFeedbackForCampaign.all(campaignId).map((row) => ({
+        fixtureId: `knowledge:${row.answer_id}`,
+        generatorVersion: row.generator_version,
+        generatedAt: row.created_at,
+        question: row.question,
+        answer: row.answer,
+        citationIds: knowledgeAnswerSources.all(row.answer_id).map((source) => source.canon_entry_id),
+        feedback: { rating: row.rating, ratedAt: row.rated_at },
+      }))
+      return { canon, continuity, knowledge, deduplication: this.getCanonProposalMatchMetrics(campaignId) }
     },
 
     listContinuityFeedbackExamples(campaignId, limit = 20) {
@@ -1825,7 +2014,10 @@ export function createStore(databasePath) {
       return publicContradictionReport(row, findings)
     },
 
-    createContinuityBrief({ campaignId, playerId, generatorVersion, session = null, threads }) {
+    createContinuityBrief({ campaignId, playerId, generatorVersion, session = null, threads, preparationRunId = null }) {
+      if (preparationRunId && continuityBriefForPreparationRun.get(preparationRunId)) {
+        return { outcome: 'existing', brief: { id: continuityBriefForPreparationRun.get(preparationRunId).id } }
+      }
       const resolved = threads.map((thread) => ({
         ...thread,
         sources: thread.sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) })),
@@ -1836,7 +2028,7 @@ export function createStore(databasePath) {
       database.exec('BEGIN IMMEDIATE')
       try {
         insertContinuityBrief.run(
-          briefId, campaignId, generatorVersion, session?.id ?? null, session?.title ?? null,
+          briefId, campaignId, preparationRunId, generatorVersion, session?.id ?? null, session?.title ?? null,
           session?.status ?? null, session?.startSequence ?? null, session?.endSequence ?? null,
           playerId, createdAt,
         )
@@ -1900,14 +2092,17 @@ export function createStore(databasePath) {
       return this.getLatestContinuityBrief(campaignId)
     },
 
-    createSessionRecap({ campaignId, playerId, generatorVersion, session, publicSummary, gmNotes, sources }) {
+    createSessionRecap({ campaignId, playerId, generatorVersion, session, publicSummary, gmNotes, sources, preparationRunId = null }) {
+      if (preparationRunId && sessionRecapForPreparationRun.get(preparationRunId)) {
+        return { outcome: 'existing', recap: { id: sessionRecapForPreparationRun.get(preparationRunId).id } }
+      }
       const resolved = sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) }))
       if (resolved.some((source) => !source.row)) return { outcome: 'invalid_source' }
       const id = randomUUID()
       const createdAt = new Date().toISOString()
       database.exec('BEGIN IMMEDIATE')
       try {
-        insertSessionRecap.run(id, campaignId, generatorVersion, publicSummary, gmNotes, session.id, session.title, session.status, session.startSequence, session.endSequence, playerId, createdAt, playerId, createdAt)
+        insertSessionRecap.run(id, campaignId, preparationRunId, generatorVersion, publicSummary, gmNotes, session.id, session.title, session.status, session.startSequence, session.endSequence, playerId, createdAt, playerId, createdAt)
         insertSessionRecapRevision.run(randomUUID(), id, 0, publicSummary, gmNotes, playerId, createdAt)
         for (const source of resolved) insertSessionRecapSource.run(id, source.messageId, source.excerpt ?? null)
         database.exec('COMMIT')
@@ -1977,6 +2172,48 @@ export function createStore(databasePath) {
       }))
     },
 
+    recordKnowledgeAnswer({ campaignId, subjectPlayerId, requestedByPlayerId, question, answer, generatorVersion, citationIds }) {
+      if (citationIds.some((entryId) => !this.getCanonEntry(campaignId, entryId, { includeGmOnly: true }))) return null
+      const record = { id: randomUUID(), campaignId, subjectPlayerId, question, answer, generatorVersion, citationIds: [...new Set(citationIds)], createdAt: new Date().toISOString() }
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        insertKnowledgeAnswer.run(record.id, campaignId, subjectPlayerId, requestedByPlayerId, question, answer, generatorVersion, record.createdAt)
+        for (const entryId of record.citationIds) insertKnowledgeAnswerSource.run(record.id, entryId)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return record
+    },
+
+    recordKnowledgeAnswerFeedback(campaignId, playerId, answerId, rating) {
+      if (!knowledgeAnswerForRequester.get(answerId, campaignId, playerId)) return null
+      const feedback = { answerId, rating, createdAt: new Date().toISOString() }
+      insertKnowledgeAnswerFeedback.run(randomUUID(), answerId, playerId, rating, feedback.createdAt)
+      return feedback
+    },
+
+    listKnowledgeFeedbackExamples(campaignId, subjectPlayerId, limit = 10) {
+      return knowledgeFeedbackExamples.all(campaignId, subjectPlayerId, limit).map((row) => ({
+        question: row.question, rating: row.rating, generatorVersion: row.generator_version,
+      }))
+    },
+
+    getKnowledgeFeedbackMetrics(campaignId) {
+      const byVersion = {}
+      for (const row of knowledgeFeedbackForCampaign.all(campaignId)) {
+        const metrics = byVersion[row.generator_version] ?? { total: 0, useful: 0, incorrect: 0, incomplete: 0, secretLeak: 0 }
+        const key = row.rating === 'secret_leak' ? 'secretLeak' : row.rating
+        metrics.total += 1
+        metrics[key] += 1
+        byVersion[row.generator_version] = metrics
+      }
+      return Object.entries(byVersion).sort(([left], [right]) => left.localeCompare(right)).map(([generatorVersion, metrics]) => ({
+        generatorVersion, ...metrics, usefulRate: metrics.total ? Number((metrics.useful / metrics.total).toFixed(4)) : null,
+      }))
+    },
+
     getIntelligenceSettings(campaignId) {
       const row = intelligenceSettings.get(campaignId)
       return row ? {
@@ -1993,26 +2230,65 @@ export function createStore(databasePath) {
 
     queuePreparationRun(campaignId, sessionId, playerId, tasks) {
       const id = randomUUID()
-      insertPreparationRun.run(id, campaignId, sessionId, JSON.stringify(tasks), playerId, new Date().toISOString())
-      const row = preparationRunForSession.get(campaignId, sessionId)
-      return {
-        id: row.id, campaignId: row.campaign_id, sessionId: row.session_id, status: row.status,
-        tasks: JSON.parse(row.tasks), result: row.result ? JSON.parse(row.result) : null,
-        error: row.error, createdAt: row.created_at, completedAt: row.completed_at,
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        const inserted = insertPreparationRun.run(id, campaignId, sessionId, JSON.stringify(tasks), playerId, new Date().toISOString())
+        if (inserted.changes === 1) for (const [task, enabled] of Object.entries(tasks)) if (enabled) insertPreparationRunTask.run(id, task)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
       }
+      const row = preparationRunForSession.get(campaignId, sessionId)
+      return publicPreparationRun(row, preparationTasks.all(row.id))
     },
 
-    finishPreparationRun(campaignId, runId, { status, result = null, error = null }) {
-      updatePreparationRun.run(status, result ? JSON.stringify(result) : null, error, status === 'complete' || status === 'failed' ? new Date().toISOString() : null, runId, campaignId)
-      return this.listPreparationRuns(campaignId).find((run) => run.id === runId) ?? null
+    getPreparationRun(campaignId, runId) {
+      const row = preparationRunById.get(runId, campaignId)
+      return row ? publicPreparationRun(row, preparationTasks.all(row.id)) : null
+    },
+
+    listResumablePreparationRuns() {
+      return resumablePreparationRuns.all().map((row) => publicPreparationRun(row, preparationTasks.all(row.id)))
+    },
+
+    recoverPreparationRuns() {
+      resetRunningPreparationTasks.run()
+      for (const row of resumablePreparationRuns.all()) this.refreshPreparationRun(row.campaign_id, row.id)
+      return this.listResumablePreparationRuns()
+    },
+
+    startPreparationTask(campaignId, runId, task) {
+      if (!preparationRunById.get(runId, campaignId)) return null
+      if (startPreparationTask.run(new Date().toISOString(), runId, task).changes !== 1) return null
+      return this.refreshPreparationRun(campaignId, runId)
+    },
+
+    finishPreparationTask(campaignId, runId, task, { status, result = null, error = null }) {
+      if (!['complete', 'failed'].includes(status)) throw new Error('Preparation task must finish complete or failed.')
+      finishPreparationTask.run(status, result ? JSON.stringify(result) : null, error, new Date().toISOString(), runId, task)
+      return this.refreshPreparationRun(campaignId, runId)
+    },
+
+    retryPreparationRun(campaignId, runId) {
+      if (!preparationRunById.get(runId, campaignId)) return null
+      if (resetFailedPreparationTasks.run(runId).changes === 0) return this.getPreparationRun(campaignId, runId)
+      return this.refreshPreparationRun(campaignId, runId)
+    },
+
+    refreshPreparationRun(campaignId, runId) {
+      const row = preparationRunById.get(runId, campaignId)
+      if (!row) return null
+      const tasks = preparationTasks.all(runId)
+      const terminal = tasks.every((task) => ['complete', 'failed'].includes(task.status))
+      const status = terminal ? (tasks.some((task) => task.status === 'failed') ? 'failed' : 'complete') : tasks.every((task) => task.status === 'queued') ? 'queued' : 'running'
+      const error = tasks.filter((task) => task.error).map((task) => `${task.task}: ${task.error}`).join('\n') || null
+      updatePreparationRunState.run(status, error, terminal ? new Date().toISOString() : null, runId)
+      return this.getPreparationRun(campaignId, runId)
     },
 
     listPreparationRuns(campaignId, limit = 20) {
-      return preparationRuns.all(campaignId, limit).map((row) => ({
-        id: row.id, campaignId: row.campaign_id, sessionId: row.session_id, status: row.status,
-        tasks: JSON.parse(row.tasks), result: row.result ? JSON.parse(row.result) : null,
-        error: row.error, createdAt: row.created_at, completedAt: row.completed_at,
-      }))
+      return preparationRuns.all(campaignId, limit).map((row) => publicPreparationRun(row, preparationTasks.all(row.id)))
     },
 
     listHouseRules(campaignId) {
@@ -2020,16 +2296,25 @@ export function createStore(databasePath) {
         id: row.id, title: row.title, sourceRule: row.source_rule, interpretation: row.interpretation,
         ruling: row.ruling, status: row.status, revision: row.revision,
         createdAt: row.created_at, updatedAt: row.updated_at,
+        sources: houseRuleRevisionSources.all(latestHouseRuleRevision.get(row.id).id).map((source) => ({
+          messageId: source.message_id, roomId: source.room_id, roomName: source.room_name,
+          senderName: source.sender_name, text: source.text, excerpt: source.excerpt,
+          sentAt: source.sent_at, sequence: source.sequence,
+        })),
       }))
     },
 
-    createHouseRule(campaignId, playerId, { title, sourceRule, interpretation, ruling, reason }) {
+    createHouseRule(campaignId, playerId, { title, sourceRule, interpretation, ruling, reason, sources = [] }) {
+      const resolved = sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) }))
+      if (resolved.some((source) => !source.row)) return null
       const id = randomUUID()
+      const revisionId = randomUUID()
       const now = new Date().toISOString()
       database.exec('BEGIN IMMEDIATE')
       try {
         insertHouseRule.run(id, campaignId, title, sourceRule, interpretation, ruling, playerId, now, now)
-        insertHouseRuleRevision.run(randomUUID(), id, 0, title, sourceRule, interpretation, ruling, 'active', reason, playerId, now)
+        insertHouseRuleRevision.run(revisionId, id, 0, title, sourceRule, interpretation, ruling, 'active', reason, playerId, now)
+        for (const source of resolved) insertHouseRuleRevisionSource.run(revisionId, source.messageId, source.excerpt ?? null)
         database.exec('COMMIT')
       } catch (error) {
         database.exec('ROLLBACK')
@@ -2038,15 +2323,19 @@ export function createStore(databasePath) {
       return this.listHouseRules(campaignId).find((rule) => rule.id === id)
     },
 
-    reviseHouseRule(campaignId, playerId, ruleId, { title, sourceRule, interpretation, ruling, status, reason, expectedRevision }) {
+    reviseHouseRule(campaignId, playerId, ruleId, { title, sourceRule, interpretation, ruling, status, reason, expectedRevision, sources = [] }) {
       const current = houseRuleForCampaign.get(ruleId, campaignId)
       if (!current) return { outcome: 'not_found' }
       if (current.revision !== expectedRevision) return { outcome: 'conflict', rule: this.listHouseRules(campaignId).find((rule) => rule.id === ruleId) }
+      const resolved = sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) }))
+      if (resolved.some((source) => !source.row)) return { outcome: 'invalid_source' }
       const now = new Date().toISOString()
+      const revisionId = randomUUID()
       database.exec('BEGIN IMMEDIATE')
       try {
         if (updateHouseRule.run(title, sourceRule, interpretation, ruling, status, now, ruleId, campaignId, expectedRevision).changes !== 1) throw new Error('house_rule_conflict')
-        insertHouseRuleRevision.run(randomUUID(), ruleId, expectedRevision + 1, title, sourceRule, interpretation, ruling, status, reason, playerId, now)
+        insertHouseRuleRevision.run(revisionId, ruleId, expectedRevision + 1, title, sourceRule, interpretation, ruling, status, reason, playerId, now)
+        for (const source of resolved) insertHouseRuleRevisionSource.run(revisionId, source.messageId, source.excerpt ?? null)
         database.exec('COMMIT')
       } catch (error) {
         database.exec('ROLLBACK')
@@ -2061,6 +2350,11 @@ export function createStore(databasePath) {
         id: row.id, revision: row.revision, title: row.title, sourceRule: row.source_rule,
         interpretation: row.interpretation, ruling: row.ruling, status: row.status,
         reason: row.reason, playerName: row.player_name, createdAt: row.created_at,
+        sources: houseRuleRevisionSources.all(row.id).map((source) => ({
+          messageId: source.message_id, roomId: source.room_id, roomName: source.room_name,
+          senderName: source.sender_name, text: source.text, excerpt: source.excerpt,
+          sentAt: source.sent_at, sequence: source.sequence,
+        })),
       }))
     },
 
@@ -2071,8 +2365,15 @@ export function createStore(databasePath) {
         revision: row.revision, createdAt: row.created_at, updatedAt: row.updated_at,
         proposals: proposals.filter((proposal) => proposal.clock_id === row.id).map((proposal) => ({
           id: proposal.id, summary: proposal.summary, assumptions: proposal.assumptions,
-          proposedProgress: proposal.proposed_progress, status: proposal.status,
-          generatorVersion: proposal.generator_version, createdAt: proposal.created_at, decidedAt: proposal.decided_at,
+          baseProgress: proposal.base_progress, proposedProgress: proposal.proposed_progress, sessionId: proposal.session_id,
+          status: proposal.status, generatorVersion: proposal.generator_version,
+          createdByName: proposal.created_by_name, decidedByName: proposal.decided_by_name,
+          createdAt: proposal.created_at, decidedAt: proposal.decided_at,
+          sources: factionProposalSources.all(proposal.id).map((source) => ({
+            messageId: source.message_id, roomId: source.room_id, roomName: source.room_name,
+            senderName: source.sender_name, text: source.text, excerpt: source.excerpt,
+            sentAt: source.sent_at, sequence: source.sequence,
+          })),
         })),
       }))
     },
@@ -2084,10 +2385,21 @@ export function createStore(databasePath) {
       return this.listFactionClocks(campaignId).find((clock) => clock.id === id)
     },
 
-    createFactionProposal(campaignId, playerId, clockId, { summary, assumptions, proposedProgress, generatorVersion }) {
-      if (!factionClockForCampaign.get(clockId, campaignId)) return null
+    createFactionProposal(campaignId, playerId, clockId, { summary, assumptions, proposedProgress, generatorVersion, sessionId, sources }) {
+      const clock = factionClockForCampaign.get(clockId, campaignId)
+      if (!clock || !this.listCampaignSessions(campaignId).some((session) => session.id === sessionId)) return null
+      const resolved = sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) }))
+      if (resolved.some((source) => !source.row)) return null
       const id = randomUUID()
-      insertFactionProposal.run(id, clockId, summary, assumptions, proposedProgress, generatorVersion, playerId, new Date().toISOString())
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        insertFactionProposal.run(id, clockId, summary, assumptions, clock.progress, proposedProgress, sessionId, generatorVersion, playerId, new Date().toISOString())
+        for (const source of resolved) insertFactionProposalSource.run(id, source.messageId, source.excerpt ?? null)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
       return this.listFactionClocks(campaignId).find((clock) => clock.id === clockId)
     },
 
@@ -2095,6 +2407,7 @@ export function createStore(databasePath) {
       const proposal = factionProposalForCampaign.get(proposalId, campaignId)
       if (!proposal) return { outcome: 'not_found' }
       if (proposal.status !== 'proposed') return { outcome: 'decided', clocks: this.listFactionClocks(campaignId) }
+      if (action === 'accept' && proposal.progress !== proposal.base_progress) return { outcome: 'conflict', clocks: this.listFactionClocks(campaignId) }
       const now = new Date().toISOString()
       database.exec('BEGIN IMMEDIATE')
       try {
@@ -2109,29 +2422,62 @@ export function createStore(databasePath) {
     },
 
     setSpotlightConsent(playerId, enabled) {
-      upsertSpotlightConsent.run(playerId, enabled ? 1 : 0, latestMessageSequence.get().sequence, new Date().toISOString())
+      const current = spotlightConsentForPlayer.get(playerId)
+      if (current && (current.enabled === 1) === enabled) return this.getSpotlightConsent(playerId)
+      const sequence = latestMessageSequence.get().sequence
+      const now = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        upsertSpotlightConsent.run(playerId, enabled ? 1 : 0, sequence, now)
+        insertSpotlightConsentEvent.run(randomUUID(), playerId, enabled ? 1 : 0, sequence, now)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return this.getSpotlightConsent(playerId)
+    },
+
+    getSpotlightConsent(playerId) {
       const row = spotlightConsentForPlayer.get(playerId)
-      return { enabled: row.enabled === 1, updatedAt: row.updated_at }
+      return {
+        enabled: row?.enabled === 1,
+        updatedAt: row?.updated_at ?? null,
+        history: spotlightConsentHistory.all(playerId).map((event) => ({ enabled: event.enabled === 1, effectiveSequence: event.effective_sequence, createdAt: event.created_at })),
+        reports: this.listSpotlightReportsForPlayer(playerId),
+      }
     },
 
     getSpotlightParticipants(campaignId) {
       return spotlightParticipants.all(campaignId).map((row) => ({ id: row.id, name: row.name, enabled: row.enabled === 1 }))
     },
 
-    createSpotlightReport(campaignId, sessionId) {
+    createSpotlightReport(campaignId, playerId, sessionId) {
       const context = this.getCampaignSessionMessages(campaignId, sessionId, 5_000)
       if (!context || context.truncated) return null
+      const existing = spotlightReportForSession.get(campaignId, sessionId)
+      if (existing) return publicSpotlightReport(existing)
       const participants = spotlightMessageCounts.all(campaignId, context.session.startSequence, context.session.endSequence)
       const totalMessages = participants.reduce((sum, participant) => sum + participant.message_count, 0)
-      return {
-        session: context.session,
-        basis: 'opted_in_text_messages',
-        participants: participants.map((participant) => ({
-          id: participant.id, name: participant.name, messages: participant.message_count,
-          share: totalMessages ? Number((participant.message_count / totalMessages).toFixed(4)) : 0,
-        })),
-        totalMessages,
+      const id = randomUUID()
+      const now = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        insertSpotlightReport.run(id, campaignId, sessionId, context.session.title, context.session.startSequence, context.session.endSequence, totalMessages, playerId, now)
+        for (const participant of participants) insertSpotlightReportParticipant.run(id, participant.id, participant.message_count, totalMessages ? Number((participant.message_count / totalMessages).toFixed(4)) : 0)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
       }
+      return publicSpotlightReport(spotlightReportForSession.get(campaignId, sessionId))
+    },
+
+    listSpotlightReportsForPlayer(playerId) {
+      return spotlightReportsForPlayer.all(playerId).map((row) => {
+        const participant = spotlightReportParticipants.all(row.id).find((item) => item.player_id === playerId)
+        return { id: row.id, session: { id: row.session_id, title: row.session_title }, messages: participant.message_count, share: participant.share, totalMessages: row.total_messages, createdAt: row.created_at }
+      })
     },
 
     listPlayerMessages(campaignId, playerId, limit = 20) {

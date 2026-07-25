@@ -4458,6 +4458,9 @@ textarea:focus-visible {
 .scene-preparation-group { display: grid; gap: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border-soft); }
 .scene-preparation-heading { display: grid; gap: 4px; }
 .scene-preparation-heading p { margin: 0; color: var(--parchment-muted); font-size: 9px; }
+.scene-preparation-heading--action { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+.scene-preparation-heading--action > div { display: grid; gap: 4px; }
+.scene-field-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .scene-world-choices { min-width: 0; margin: 0; padding: 0; border: 0; }
 .scene-world-choices legend { margin-bottom: 8px; color: var(--parchment-dim); font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .scene-world-choices > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
@@ -4804,6 +4807,8 @@ textarea:focus-visible {
   .character-aftermath fieldset > div { grid-template-columns: 1fr; }
   .character-actions { align-items: stretch; flex-direction: column; }
   .character-actions .primary-action { width: 100%; }
+  .scene-preparation-heading--action { grid-template-columns: 1fr; align-items: stretch; }
+  .scene-preparation-heading--action .folio-button { justify-self: start; }
 }
 
 @media (max-width: 520px) {

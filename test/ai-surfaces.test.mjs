@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { AI_SURFACES, AI_SURFACE_IDS, getAiSurface, modelForAiSurface, versionForAiSurface } from '../server/ai-surfaces.mjs'
 
 test('the production AI registry has stable unique surface IDs and evaluation commands', () => {
-  assert.deepEqual(AI_SURFACE_IDS, ['canon', 'continuity', 'contradictions', 'recap', 'knowledge', 'intent', 'house_rules', 'factions', 'campaign_seed', 'character_concepts', 'in_play_material'])
+  assert.deepEqual(AI_SURFACE_IDS, ['canon', 'continuity', 'contradictions', 'recap', 'knowledge', 'intent', 'house_rules', 'factions', 'campaign_seed', 'character_concepts', 'in_play_material', 'adventure_continuation'])
   assert.equal(new Set(AI_SURFACE_IDS).size, AI_SURFACE_IDS.length)
   assert.ok(AI_SURFACES.every((surface) => surface.evaluationCommand.startsWith('npm run eval:')))
   assert.equal(getAiSurface('house_rules').authority, 'proposal')

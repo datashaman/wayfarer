@@ -2207,7 +2207,7 @@ export function createStore(databasePath) {
           ...world.npcs.map((item) => ({ id: item.id, name: item.name, type: 'npc', state: item.state ?? { goal: item.want, relationship: 'Untested by the party.', pressure: '' } })),
           ...world.hooks.map((item) => ({ id: item.id, name: item.title, type: 'hook', state: item.state ?? { situation: item.situation, status: 'open', pressure: '' } })),
         ] : [],
-        characters: charactersByCampaign.all(campaignId).map((row) => ({ id: row.id, name: row.name, playerName: row.player_name, concept: row.concept, locationId: row.location_id, npcId: row.npc_id })),
+        characters: charactersByCampaign.all(campaignId).map((row) => ({ id: row.id, name: row.name, playerName: row.player_name, concept: row.concept, drive: row.drive, belief: row.belief, revision: row.revision, locationId: row.location_id, npcId: row.npc_id })),
         locations: world?.locations ?? [],
         npcs: world?.npcs ?? [],
         preparation: publicScenePreparation(scenePreparation.get(campaignId)),

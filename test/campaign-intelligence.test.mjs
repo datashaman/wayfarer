@@ -28,6 +28,8 @@ const concept = (values = {}) => ({
   locationConnection: 'She drowned there.', npcId: 'npc-1', npcConnection: 'They know what she did.', ...values,
 })
 const conceptWorld = { factions: [{ id: 'faction-1' }], locations: [{ id: 'location-1' }], npcs: [{ id: 'npc-1' }] }
+const continuation = { title: 'Before the salvagers arrive', framing: 'Hooks scrape across Bell Square.', stakes: 'The drowned archive will be stripped bare.', question: 'Who claims the opened stair?', characterIds: ['character-1'], locationIds: ['location-1'], npcIds: ['npc-1'], clues: ['The hooks carry fresh bell-metal.', 'Someone opened the eastern sluice.', 'Corda recognises the salvage mark.'], complications: ['The square floods again.', 'The Tidebound demand the stair.', 'A stolen name answers below.'], sessionQuestions: ['Who reaches the archive first?', 'What will Corda trade?', 'Who controls the stair by dawn?'], threadIds: ['consequence-1'] }
+const continuationContext = { world: { locations: [{ id: 'location-1' }], npcs: [{ id: 'npc-1' }] }, characters: [{ id: 'character-1' }], resolvedScenes: [{ id: 'scene-1' }], threads: [{ id: 'consequence-1' }] }
 
 test('campaign intelligence validates citations, private voice drafts, and clock bounds', async () => {
   const intelligence = createCampaignIntelligence({
@@ -39,6 +41,7 @@ test('campaign intelligence validates citations, private voice drafts, and clock
     generateCampaignSeed: async () => campaignSeed,
     generateCharacterConcepts: async () => ({ concepts: [concept(), concept({ name: 'Sera' }), concept({ name: 'Tovin' })] }),
     generateInPlayMaterial: async () => ({ title: 'Sister Corda', detail: 'Keeper of the drowned archive.', pressure: 'She needs her stolen name before the tide turns.', leverage: 'She knows a dry road beneath the town.' }),
+    generateAdventureContinuation: async () => continuation,
   })
   assert.deepEqual(await intelligence.answerKnowledge({ question: 'Who keeps the light?', canon: [{ id: 'canon-1' }] }), { answer: 'Ilyra keeps the light.', citations: ['canon-1'] })
   assert.equal((await intelligence.draftIntent({ intent: 'signal', messages: [], canon: [] })).length, 2)
@@ -47,6 +50,7 @@ test('campaign intelligence validates citations, private voice drafts, and clock
   assert.equal((await intelligence.draftCampaignSeed({ premise: 'A drowned town returns.' })).npcs.length, 5)
   assert.equal((await intelligence.draftCharacterConcepts({ world: conceptWorld })).length, 3)
   assert.equal((await intelligence.draftInPlayMaterial({ kind: 'npc', prompt: 'Someone in the archive', scene: {}, world: {} })).title, 'Sister Corda')
+  assert.equal((await intelligence.draftAdventureContinuation(continuationContext)).title, 'Before the salvagers arrive')
 
   const leaking = createCampaignIntelligence({
     version: 'fixture-v1',
@@ -57,6 +61,7 @@ test('campaign intelligence validates citations, private voice drafts, and clock
     generateCampaignSeed: async () => ({ ...campaignSeed, hooks: [] }),
     generateCharacterConcepts: async () => ({ concepts: [concept({ factionId: 'invented' }), concept(), concept()] }),
     generateInPlayMaterial: async () => ({ title: 'Incomplete' }),
+    generateAdventureContinuation: async () => ({ ...continuation, locationIds: ['invented'] }),
   })
   await assert.rejects(() => leaking.answerKnowledge({ question: 'Secret?', canon: [{ id: 'visible' }] }), (error) => error instanceof CampaignIntelligenceError && error.code === 'invalid_knowledge_answer')
   await assert.rejects(() => leaking.draftIntent({ intent: 'speak', messages: [], canon: [] }), /invalid drafts/i)
@@ -65,6 +70,7 @@ test('campaign intelligence validates citations, private voice drafts, and clock
   await assert.rejects(() => leaking.draftCampaignSeed({ premise: 'Anything.' }), /complete playable opening/i)
   await assert.rejects(() => leaking.draftCharacterConcepts({ world: conceptWorld }), /not grounded/i)
   await assert.rejects(() => leaking.draftInPlayMaterial({ kind: 'treasure', prompt: 'A reward', scene: {}, world: {} }), /incomplete/i)
+  await assert.rejects(() => leaking.draftAdventureContinuation(continuationContext), /surviving campaign threads/i)
 })
 
 test('campaign intelligence records reversible rulings, proposals, consent, and preparation', () => {

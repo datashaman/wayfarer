@@ -149,6 +149,12 @@ Before the threshold, the Scene folio is a durable GM preparation spine: framing
 
 Use continuous bordered ledger groups rather than a wizard, card dashboard, or AI chat. Repeated preparation lines are inset serif fields with restrained add/remove controls. A sticky footer distinguishes **Save preparation** from **Begin play**: play remains unavailable while changes are unsaved, and crossing the threshold snapshots the complete private folio before consuming the draft. Prepared possibilities remain behind the GM screen and must never be inserted into the player transcript or described as inevitable outcomes.
 
+### Adventure continuation braid
+
+After play has resolved at least one threshold, the preparation folio becomes a continuation folio. Lead with one compact **Threads still moving** leaf: resolved thresholds, active World pressures, and characters in motion are counted as orientation, not metrics. **Draft from play** returns one private continuation leaf with the proposed next situation, inaction pressure, first choice, and the exact source threads it used.
+
+The signature is the source braid: each cited outcome, pressure, open hook, or character appears as a small moss-edged provenance strand beneath the proposed fiction. **Use as preparation** is the only filled action and merely replaces unsaved defaults in the ordinary editable folio; **Save preparation** remains the persistence boundary. Use soot inset surfaces, wax draft provenance, moss source strands, serif fiction, sans mechanics, borders-only depth, and the 8px grid. Avoid AI chat, recommendation dashboards, plotted sequences, automatic saving, and language that declares a future event true.
+
 ### In-play margin leaf
 
 Improvisation lives inside the active Scene folio, between the present cast and prepared material, so the GM never leaves play to create content. Six compact type stamps—NPC, place, complication, consequence, rumour, and treasure—lead into one short need prompt. Generation returns exactly one wax-edged private margin leaf with type-specific labels and editable serif fields for identity, detail, pressure, and leverage.

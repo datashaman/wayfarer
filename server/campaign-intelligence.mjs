@@ -19,8 +19,8 @@ function objectList(value, length, fields) {
   return items.some((item) => Object.values(item).some((value) => !value)) ? null : items
 }
 
-export function createCampaignIntelligence({ version, generateKnowledgeAnswer, generateIntentDrafts, generateFactionProposal, generateHouseRule, generateCampaignSeed, generateCharacterConcepts, generateInPlayMaterial, onInference = null }) {
-  if (!version || !generateKnowledgeAnswer || !generateIntentDrafts || !generateFactionProposal || !generateHouseRule || !generateCampaignSeed || !generateCharacterConcepts || !generateInPlayMaterial) throw new Error('Campaign intelligence requires every generator.')
+export function createCampaignIntelligence({ version, generateKnowledgeAnswer, generateIntentDrafts, generateFactionProposal, generateHouseRule, generateCampaignSeed, generateCharacterConcepts, generateInPlayMaterial, generateAdventureContinuation, onInference = null }) {
+  if (!version || !generateKnowledgeAnswer || !generateIntentDrafts || !generateFactionProposal || !generateHouseRule || !generateCampaignSeed || !generateCharacterConcepts || !generateInPlayMaterial || !generateAdventureContinuation) throw new Error('Campaign intelligence requires every generator.')
   return {
     version,
     async draftCampaignSeed({ campaignId = null, premise }) {
@@ -73,6 +73,29 @@ export function createCampaignIntelligence({ version, generateKnowledgeAnswer, g
           throw new CampaignIntelligenceError('invalid_in_play_material', 'The improvisation draft was incomplete.')
         }
         return draft
+      })
+    },
+    async draftAdventureContinuation({ campaignId = null, world, characters, resolvedScenes, threads }) {
+      return observeAiInference({ campaignId, surface: 'adventure_continuation', generatorVersion: version, onInference }, async (recordUsage) => {
+        const output = await generateAdventureContinuation({ campaignId, world, characters, resolvedScenes, threads, recordUsage })
+        const draft = {
+          title: text(output?.title, 120),
+          framing: text(output?.framing, 2_000),
+          stakes: text(output?.stakes, 1_000),
+          question: text(output?.question, 500),
+          clues: Array.isArray(output?.clues) && output.clues.length === 3 ? output.clues.map((item) => text(item, 500)) : null,
+          complications: Array.isArray(output?.complications) && output.complications.length === 3 ? output.complications.map((item) => text(item, 500)) : null,
+          sessionQuestions: Array.isArray(output?.sessionQuestions) && output.sessionQuestions.length === 3 ? output.sessionQuestions.map((item) => text(item, 500)) : null,
+        }
+        const validateIds = (value, allowed, maximum) => Array.isArray(value) && value.length > 0 && value.length <= maximum && value.length === new Set(value).size && value.every((id) => typeof id === 'string' && allowed.has(id)) ? value : null
+        const characterIds = validateIds(output?.characterIds, new Set(characters.map((item) => item.id)), 20)
+        const locationIds = validateIds(output?.locationIds, new Set(world.locations.map((item) => item.id)), 10)
+        const npcIds = validateIds(output?.npcIds, new Set(world.npcs.map((item) => item.id)), 20)
+        const threadIds = validateIds(output?.threadIds, new Set(threads.map((item) => item.id)), 10)
+        if (Object.values(draft).some((value) => !value || (Array.isArray(value) && value.some((item) => !item))) || !characterIds || !locationIds || !npcIds || !threadIds) {
+          throw new CampaignIntelligenceError('invalid_adventure_continuation', 'The continuation draft was not grounded in surviving campaign threads.')
+        }
+        return { ...draft, characterIds, locationIds, npcIds, threadIds, generatorVersion: version }
       })
     },
     async answerKnowledge({ campaignId = null, question, canon, priorFeedback = [] }) {

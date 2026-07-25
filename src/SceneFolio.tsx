@@ -1,7 +1,7 @@
 import { CircleDot, Plus, Sparkles, Trash2, X } from 'lucide-react'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { api } from './lib/api'
-import type { InPlayMaterial, InPlayMaterialKind, SceneContext, TableSession } from './types/protocol'
+import type { AdventureContinuationDraft, InPlayMaterial, InPlayMaterialKind, SceneContext, TableSession } from './types/protocol'
 
 type SceneDraft = { title: string; framing: string; stakes: string; question: string; characterIds: string[]; locationIds: string[]; npcIds: string[]; clues: string[]; complications: string[]; sessionQuestions: string[]; expectedRevision: number | null }
 type ConsequenceDraft = { entityType: 'faction' | 'location' | 'npc' | 'hook' | ''; entityId: string; state: Record<string, string>; pressure: string }
@@ -64,6 +64,7 @@ export function SceneFolio({ session, suppliedContext, onContext, onOpenRoom, on
   const [materialKind, setMaterialKind] = useState<InPlayMaterialKind>('npc')
   const [materialPrompt, setMaterialPrompt] = useState('')
   const [materialDraft, setMaterialDraft] = useState<InPlayMaterial | null>(null)
+  const [continuationDraft, setContinuationDraft] = useState<AdventureContinuationDraft | null>(null)
   const savedDraft = context?.preparation ? JSON.stringify({ ...context.preparation, revision: undefined, updatedAt: undefined, updatedByName: undefined }) : null
   const currentDraft = draft ? JSON.stringify({ ...draft, expectedRevision: undefined }) : null
   const hasUnsavedChanges = savedDraft !== currentDraft
@@ -127,6 +128,22 @@ export function SceneFolio({ session, suppliedContext, onContext, onOpenRoom, on
       .finally(() => setPending(''))
   }
 
+  const draftContinuation = () => {
+    setPending('draft-continuation'); setError(''); setNotice('')
+    void api<{ draft: AdventureContinuationDraft }>('/api/campaign/scene-preparation/draft', { method: 'POST', headers: authorization })
+      .then(({ draft }) => setContinuationDraft(draft))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'What follows could not be drafted.'))
+      .finally(() => setPending(''))
+  }
+
+  const useContinuation = () => {
+    if (!continuationDraft) return
+    const { title, framing, stakes, question, characterIds, locationIds, npcIds, clues, complications, sessionQuestions } = continuationDraft
+    setDraft({ title, framing, stakes, question, characterIds, locationIds, npcIds, clues, complications, sessionQuestions, expectedRevision: null })
+    setContinuationDraft(null)
+    setNotice('The continuation is in the preparation folio. Edit it freely, then save it before play.')
+  }
+
   const toggleCharacter = (id: string) => {
     if (!draft) return
     setDraft({ ...draft, characterIds: draft.characterIds.includes(id) ? draft.characterIds.filter((item) => item !== id) : [...draft.characterIds, id] })
@@ -178,7 +195,8 @@ export function SceneFolio({ session, suppliedContext, onContext, onOpenRoom, on
             </div>
             <button className="primary-action" onClick={resolve} disabled={!outcome.trim() || !consequencesComplete || !discoveriesComplete || pending === 'resolve'}>{pending === 'resolve' ? 'Keeping the outcome…' : 'Resolve this scene'}</button></div>
         </section> : draft && <form className="scene-draft" onSubmit={savePreparation}>
-          <header><span className="eyebrow">First-session folio</span><h2>Prepare pressure, not an outcome</h2><p>Gather the people, place, discoveries, and trouble the opening needs. Everything remains editable until you cross into play.</p></header>
+          <header><span className="eyebrow">{context.scenes.some((scene) => scene.status === 'resolved') ? 'Continuation folio' : 'First-session folio'}</span><h2>Prepare pressure, not an outcome</h2><p>{context.scenes.some((scene) => scene.status === 'resolved') ? 'Turn what survived play into the next immediate situation. Nothing here predicts what the party will do.' : 'Gather the people, place, discoveries, and trouble the opening needs. Everything remains editable until you cross into play.'}</p></header>
+          {context.scenes.some((scene) => scene.status === 'resolved') && !context.preparation && <section className="scene-continuation" aria-labelledby="scene-continuation-heading">{!continuationDraft ? <><div className="scene-continuation__heading"><div><span className="eyebrow">Threads still moving</span><h3 id="scene-continuation-heading">Draft what follows from play</h3><p>Bring resolved outcomes, current characters, open hooks, and unresolved World pressure into one private preparation draft.</p></div><Sparkles size={18} /></div><div className="scene-continuation__counts"><span><strong>{context.scenes.filter((scene) => scene.status === 'resolved').length}</strong> resolved thresholds</span><span><strong>{context.worldConsequences.length}</strong> active pressures</span><span><strong>{context.characters.length}</strong> characters in motion</span></div><button type="button" className="folio-button" onClick={draftContinuation} disabled={pending === 'draft-continuation'}>{pending === 'draft-continuation' ? 'Following the threads…' : 'Draft from play'}</button></> : <article className="scene-continuation__leaf"><div className="scene-continuation__provenance"><span>Private continuation draft</span><small>{continuationDraft.generatorVersion}</small></div><h3 id="scene-continuation-heading">{continuationDraft.title}</h3><p>{continuationDraft.framing}</p><div className="scene-continuation__pressure"><blockquote><small>If nobody acts</small>{continuationDraft.stakes}</blockquote><blockquote><small>First choice</small>{continuationDraft.question}</blockquote></div><div className="scene-continuation__threads"><span>Drawn from</span>{continuationDraft.threads.map((thread) => <div key={thread.id}><small>{thread.type}</small><strong>{thread.label}</strong><p>{thread.detail}</p></div>)}</div><footer><span>Using this replaces the unsaved opening defaults below. Every field remains editable.</span><button type="button" className="primary-action" onClick={useContinuation}>Use as preparation</button><button type="button" className="folio-button" onClick={() => setContinuationDraft(null)}>Discard draft</button></footer></article>}</section>}
           {context.worldConsequences.length > 0 && <section className="scene-moving-world"><div><span className="eyebrow">Pressure still moving</span><p>These consequences remain true until play changes them again.</p></div>{context.worldConsequences.map((consequence) => <article key={consequence.id}><small>{consequence.entityType} · from {consequence.sourceSceneTitle}</small><strong>{consequence.entityName}</strong><p>{consequence.afterState}</p><span>{consequence.pressure}</span><button type="button" className="folio-button" onClick={() => setDraft({ ...draft, stakes: draft.stakes.trim() ? `${draft.stakes.trim()}\n\n${consequence.entityName}: ${consequence.pressure}` : consequence.pressure })}>Carry into the stakes</button></article>)}</section>}
           <label htmlFor="scene-title">The moment</label><input id="scene-title" value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} maxLength={120} />
           <label htmlFor="scene-framing">What the characters see happening</label><textarea id="scene-framing" value={draft.framing} onChange={(event) => setDraft({ ...draft, framing: event.target.value })} maxLength={2_000} />

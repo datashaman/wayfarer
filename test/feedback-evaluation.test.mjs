@@ -111,7 +111,8 @@ test('the evaluation dashboard compares generator versions and flags run regress
   assert.equal(dashboard.runs[0].delta, -0.2)
   assert.equal(dashboard.alerts[0].severity, 'critical')
   assert.match(dashboard.alerts[1].message, /dropped 20 points/)
-  assert.equal(dashboard.surfaces.length, 11)
+  assert.equal(dashboard.surfaces.length, 12)
+  assert.equal(dashboard.surfaces.at(-1).label, 'Adventure continuation')
   assert.deepEqual(dashboard.surfaces[0].runtime, {
     total: 2, succeeded: 1, failed: 1, successRate: 0.5, averageDurationMs: 200,
     averageInputUnits: 20, averageOutputUnits: 7, lastRunAt: '2026-07-25T03:00:00Z', latestErrorCategory: 'invalid_output',

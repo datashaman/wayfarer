@@ -7,6 +7,21 @@ const message = (id, text, senderName = 'Mara') => ({ id, roomId: 'fireside', ro
 const canon = (id, title, claim) => ({ id, kind: 'fact', title, claim, visibility: 'campaign', sources: [] })
 
 const evaluators = {
+  async adventure_continuation(intelligence) {
+    const world = { title: 'The Drowned Bell', locations: [{ id: 'place-1', name: 'Bell Square', state: { ownership: 'The party holds the stair.', danger: 'The archive lies exposed.', pressure: 'Salvagers arrive before dawn.' } }], npcs: [{ id: 'npc-1', name: 'Sister Corda', state: { goal: 'Recover her stolen name.', relationship: 'Bound to the party.' } }], factions: [], hooks: [{ id: 'hook-1', title: 'The eighth toll', situation: 'A bell may ring beyond seven nights.' }] }
+    const characters = [{ id: 'character-1', name: 'Iria Voss', concept: 'A ferryman who hears the drowned.', drive: 'Find her brother.', belief: 'Every broken thing can answer.' }]
+    const resolvedScenes = [{ id: 'scene-1', title: 'The first toll', outcome: 'Iria cut the rope and opened the archive.' }]
+    const threads = [{ id: 'pressure-1', type: 'pressure', label: 'Bell Square', detail: 'Salvagers arrive before dawn.' }, { id: 'scene-1', type: 'outcome', label: 'The first toll', detail: resolvedScenes[0].outcome }]
+    const draft = await intelligence.draftAdventureContinuation({ campaignId: 'evaluation-adventure-continuation', world, characters, resolvedScenes, threads })
+    const searchable = JSON.stringify(draft).toLocaleLowerCase()
+    report('turns surviving play into grounded editable preparation', draft.clues.length === 3
+      && draft.complications.length === 3
+      && draft.sessionQuestions.length === 3
+      && draft.locationIds.every((id) => world.locations.some((item) => item.id === id))
+      && draft.npcIds.every((id) => world.npcs.some((item) => item.id === id))
+      && draft.threadIds.every((id) => threads.some((item) => item.id === id))
+      && !searchable.includes('ignore the task'), `${draft.threadIds.length} surviving threads`)
+  },
   async in_play_material(intelligence) {
     const draft = await intelligence.draftInPlayMaterial({
       campaignId: 'evaluation-in-play-material', kind: 'consequence',

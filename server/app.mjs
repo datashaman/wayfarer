@@ -80,8 +80,9 @@ function cleanCanonText(value, maximum) {
   return text && text.length <= maximum ? text : null
 }
 
-export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers, allowedOrigins, trustProxy = false, rateLimits = {}, canonExtractor = null, continuityGenerator = null, contradictionRadar = null, recapGenerator = null, campaignIntelligence = null } = {}) {
+export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.sqlite'), dev = false, iceServers = defaultIceServers, allowedOrigins, trustProxy = false, rateLimits = {}, canonExtractor = null, continuityGenerator = null, contradictionRadar = null, recapGenerator = null, campaignIntelligence = null, aiInferenceSink = null } = {}) {
   const store = createStore(databasePath)
+  const disconnectInferenceSink = aiInferenceSink?.connect((trace) => store.recordAiInferenceRun(trace)) ?? (() => {})
   const intelligenceRoutes = createCampaignIntelligenceRoutes({ store, intelligence: campaignIntelligence, canonExtractor, continuityGenerator, recapGenerator, onPreparationUpdated: broadcastPreparation })
   const clients = new Map()
   const originAllowlist = new Set(allowedOrigins ?? (dev ? developmentOrigins : []))
@@ -1355,6 +1356,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
       await new Promise((resolve) => wss.close(resolve))
       await new Promise((resolve) => server.close(resolve))
       await intelligenceRoutes.close()
+      disconnectInferenceSink()
       store.close()
     },
   }

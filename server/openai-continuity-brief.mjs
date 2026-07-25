@@ -45,11 +45,12 @@ function refusalFrom(response) {
   return null
 }
 
-export function createOpenAIContinuityBriefGenerator({ apiKey, model = 'gpt-5.6-luna', client } = {}) {
+export function createOpenAIContinuityBriefGenerator({ apiKey, model = 'gpt-5.6-luna', client, onInference = null } = {}) {
   const openai = client ?? new OpenAI({ apiKey })
   return createContinuityBriefGenerator({
     version: `openai:${model}:continuity-v1`,
-    async generate({ messages, acceptedCanon, priorFeedback }) {
+    onInference,
+    async generate({ messages, acceptedCanon, priorFeedback, recordUsage }) {
       const response = await openai.responses.create({
         model,
         reasoning: { effort: 'none' },
@@ -62,6 +63,7 @@ export function createOpenAIContinuityBriefGenerator({ apiKey, model = 'gpt-5.6-
         }),
         text: { format: { type: 'json_schema', name: 'continuity_brief', strict: true, schema: briefSchema } },
       })
+      recordUsage(response.usage)
       if (!response.output_text) {
         const refusal = refusalFrom(response)
         throw new CanonExtractionError(refusal ? 'refused' : 'empty_output', refusal ?? 'The model returned no continuity brief.')

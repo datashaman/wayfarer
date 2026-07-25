@@ -1,4 +1,5 @@
 import { CanonExtractionError } from './canon-extractor.mjs'
+import { observeAiInference } from './ai-observability.mjs'
 
 function requiredText(value, maximum, field) {
   const text = typeof value === 'string' ? value.trim() : ''
@@ -37,14 +38,16 @@ export function validateContradictionFindings(rawFindings, messages, acceptedCan
   })
 }
 
-export function createContradictionRadar({ version, generate, maximumFindings = 5 }) {
+export function createContradictionRadar({ version, generate, maximumFindings = 5, onInference = null }) {
   const radarVersion = requiredText(version, 80, 'Radar version')
   if (typeof generate !== 'function') throw new TypeError('A contradiction generator is required.')
   return {
     version: radarVersion,
     async inspect({ campaignId, messages, acceptedCanon }) {
       if (typeof campaignId !== 'string' || !campaignId || !Array.isArray(messages) || !Array.isArray(acceptedCanon)) throw new CanonExtractionError('invalid_input', 'Campaign, transcript, and accepted canon are required.')
-      return validateContradictionFindings(await generate({ campaignId, messages, acceptedCanon }), messages, acceptedCanon, { maximum: maximumFindings })
+      return observeAiInference({ campaignId, surface: 'contradictions', generatorVersion: radarVersion, onInference }, async (recordUsage) => (
+        validateContradictionFindings(await generate({ campaignId, messages, acceptedCanon, recordUsage }), messages, acceptedCanon, { maximum: maximumFindings })
+      ))
     },
   }
 }

@@ -513,6 +513,19 @@ export function createStore(databasePath) {
       notes TEXT,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS ai_inference_runs (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      surface TEXT NOT NULL,
+      generator_version TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('succeeded', 'failed')),
+      duration_ms INTEGER NOT NULL CHECK(duration_ms >= 0),
+      input_units INTEGER CHECK(input_units IS NULL OR input_units >= 0),
+      output_units INTEGER CHECK(output_units IS NULL OR output_units >= 0),
+      error_category TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS ai_inference_runs_campaign_created ON ai_inference_runs(campaign_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS campaign_intelligence_settings (
       campaign_id TEXT PRIMARY KEY REFERENCES campaigns(id) ON DELETE CASCADE,
       auto_prepare INTEGER NOT NULL DEFAULT 0 CHECK(auto_prepare IN (0, 1)),
@@ -1261,6 +1274,8 @@ export function createStore(databasePath) {
   `)
   const insertAiEvaluationRun = database.prepare(`INSERT INTO ai_evaluation_runs (id, campaign_id, suite, model, generator_version, passed, total, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   const aiEvaluationRuns = database.prepare(`SELECT * FROM ai_evaluation_runs WHERE (? IS NULL OR campaign_id = ?) ORDER BY rowid DESC LIMIT ?`)
+  const insertAiInferenceRun = database.prepare(`INSERT INTO ai_inference_runs (id, campaign_id, surface, generator_version, status, duration_ms, input_units, output_units, error_category, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  const aiInferenceRuns = database.prepare(`SELECT * FROM ai_inference_runs WHERE campaign_id = ? ORDER BY rowid DESC LIMIT ?`)
   const intelligenceSettings = database.prepare('SELECT * FROM campaign_intelligence_settings WHERE campaign_id = ?')
   const insertIntelligenceSettings = database.prepare('INSERT INTO campaign_intelligence_settings (campaign_id) VALUES (?)')
   const updateIntelligenceSettings = database.prepare(`UPDATE campaign_intelligence_settings SET auto_prepare = ?, prepare_canon = ?, prepare_continuity = ?, prepare_recap = ?, updated_by_player_id = ?, updated_at = ? WHERE campaign_id = ?`)
@@ -2169,6 +2184,20 @@ export function createStore(databasePath) {
         id: row.id, campaignId: row.campaign_id, suite: row.suite, model: row.model,
         generatorVersion: row.generator_version, passed: row.passed, total: row.total,
         notes: row.notes, createdAt: row.created_at,
+      }))
+    },
+
+    recordAiInferenceRun({ campaignId, surface, generatorVersion, status, durationMs, inputUnits = null, outputUnits = null, errorCategory = null }) {
+      const run = { id: randomUUID(), campaignId, surface, generatorVersion, status, durationMs, inputUnits, outputUnits, errorCategory, createdAt: new Date().toISOString() }
+      insertAiInferenceRun.run(run.id, campaignId, surface, generatorVersion, status, durationMs, inputUnits, outputUnits, errorCategory, run.createdAt)
+      return run
+    },
+
+    listAiInferenceRuns(campaignId, limit = 100) {
+      return aiInferenceRuns.all(campaignId, limit).map((row) => ({
+        id: row.id, campaignId: row.campaign_id, surface: row.surface, generatorVersion: row.generator_version,
+        status: row.status, durationMs: row.duration_ms, inputUnits: row.input_units,
+        outputUnits: row.output_units, errorCategory: row.error_category, createdAt: row.created_at,
       }))
     },
 

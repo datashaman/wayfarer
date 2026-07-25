@@ -1,3 +1,5 @@
+import { observeAiInference } from './ai-observability.mjs'
+
 const canonKinds = new Set(['fact', 'character', 'relationship', 'promise', 'event', 'question', 'contradiction', 'rule'])
 const canonVisibilities = new Set(['campaign', 'gm_only'])
 
@@ -57,7 +59,7 @@ export function validateCanonDrafts(rawDrafts, messages, { maximum = 5 } = {}) {
   })
 }
 
-export function createCanonExtractor({ version, generate, maximumProposals = 5 }) {
+export function createCanonExtractor({ version, generate, maximumProposals = 5, onInference = null }) {
   const extractorVersion = requiredText(version, 80, 'Extractor version')
   if (typeof generate !== 'function') throw new TypeError('A canon proposal generator is required.')
 
@@ -67,8 +69,10 @@ export function createCanonExtractor({ version, generate, maximumProposals = 5 }
       if (typeof campaignId !== 'string' || !campaignId || !Array.isArray(messages) || !Array.isArray(existingCanon) || !Array.isArray(priorDecisions) || (constitution !== null && (typeof constitution !== 'object' || Array.isArray(constitution)))) {
         throw new CanonExtractionError('invalid_input', 'Campaign, transcript messages, existing canon, prior rulings, and canon constitution are invalid.')
       }
-      const rawDrafts = await generate({ campaignId, messages, existingCanon, priorDecisions, constitution })
-      return validateCanonDrafts(rawDrafts, messages, { maximum: maximumProposals })
+      return observeAiInference({ campaignId, surface: 'canon', generatorVersion: extractorVersion, onInference }, async (recordUsage) => {
+        const rawDrafts = await generate({ campaignId, messages, existingCanon, priorDecisions, constitution, recordUsage })
+        return validateCanonDrafts(rawDrafts, messages, { maximum: maximumProposals })
+      })
     },
   }
 }

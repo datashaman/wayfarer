@@ -1,4 +1,5 @@
 import { CanonExtractionError } from './canon-extractor.mjs'
+import { observeAiInference } from './ai-observability.mjs'
 
 function requiredText(value, maximum, field) {
   const text = typeof value === 'string' ? value.trim() : ''
@@ -34,14 +35,16 @@ export function validateContinuityThreads(rawThreads, messages) {
   })
 }
 
-export function createContinuityBriefGenerator({ version, generate }) {
+export function createContinuityBriefGenerator({ version, generate, onInference = null }) {
   const generatorVersion = requiredText(version, 80, 'Generator version')
   if (typeof generate !== 'function') throw new TypeError('A continuity brief generator is required.')
   return {
     version: generatorVersion,
     async generate({ campaignId, messages, acceptedCanon, priorFeedback = [] }) {
       if (typeof campaignId !== 'string' || !campaignId || !Array.isArray(messages) || !Array.isArray(acceptedCanon) || !Array.isArray(priorFeedback)) throw new CanonExtractionError('invalid_input', 'Campaign context is invalid.')
-      return validateContinuityThreads(await generate({ campaignId, messages, acceptedCanon, priorFeedback }), messages)
+      return observeAiInference({ campaignId, surface: 'continuity', generatorVersion, onInference }, async (recordUsage) => (
+        validateContinuityThreads(await generate({ campaignId, messages, acceptedCanon, priorFeedback, recordUsage }), messages)
+      ))
     },
   }
 }

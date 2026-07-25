@@ -1,4 +1,5 @@
 import { CanonExtractionError } from './canon-extractor.mjs'
+import { observeAiInference } from './ai-observability.mjs'
 
 function requiredText(value, maximum, field) {
   const text = typeof value === 'string' ? value.trim() : ''
@@ -24,13 +25,15 @@ export function validateSessionRecap(raw, messages) {
   }
 }
 
-export function createSessionRecapGenerator({ version, generate }) {
+export function createSessionRecapGenerator({ version, generate, onInference = null }) {
   if (typeof version !== 'string' || !version.trim() || typeof generate !== 'function') throw new TypeError('A versioned session recap generator is required.')
   return {
     version: version.trim(),
     async generate({ campaignId, messages, acceptedCanon }) {
       if (!campaignId || !Array.isArray(messages) || !Array.isArray(acceptedCanon)) throw new CanonExtractionError('invalid_input', 'Session recap context is invalid.')
-      return validateSessionRecap(await generate({ campaignId, messages, acceptedCanon }), messages)
+      return observeAiInference({ campaignId, surface: 'recap', generatorVersion: version.trim(), onInference }, async (recordUsage) => (
+        validateSessionRecap(await generate({ campaignId, messages, acceptedCanon, recordUsage }), messages)
+      ))
     },
   }
 }

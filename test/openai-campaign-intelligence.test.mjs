@@ -4,6 +4,7 @@ import { createOpenAICampaignIntelligence } from '../server/openai-campaign-inte
 
 test('OpenAI campaign intelligence is strict, non-stored, and scoped for each private task', async () => {
   const requests = []
+  const traces = []
   const outputs = [
     { answer: 'Ilyra keeps the light.', citations: ['canon-1'] },
     { drafts: ['I raise the lantern.'] },
@@ -12,15 +13,15 @@ test('OpenAI campaign intelligence is strict, non-stored, and scoped for each pr
   ]
   const client = { responses: { create: async (request) => {
     requests.push(request)
-    return { output_text: JSON.stringify(outputs.shift()) }
+    return { output_text: JSON.stringify(outputs.shift()), usage: { input_tokens: 20, output_tokens: 5 } }
   } } }
-  const intelligence = createOpenAICampaignIntelligence({ client, model: 'test-model' })
+  const intelligence = createOpenAICampaignIntelligence({ client, model: 'test-model', onInference: (trace) => traces.push(trace) })
   const canon = [{ id: 'canon-1', kind: 'fact', title: 'Ilyra', claim: 'Ilyra keeps the light.' }]
 
-  assert.equal((await intelligence.answerKnowledge({ question: 'Who keeps the light?', canon, priorFeedback: [{ question: 'What is hidden?', rating: 'secret_leak', generatorVersion: 'v0' }] })).citations[0], 'canon-1')
-  assert.equal((await intelligence.draftIntent({ intent: 'Signal the party.', messages: [{ text: 'The light is ours.' }], canon }))[0], 'I raise the lantern.')
-  assert.equal((await intelligence.proposeFaction({ clock: { name: 'Moth Court', goal: 'Open the gate', progress: 1, segments: 6 }, messages: [{ id: 'message-1', text: 'The western gate remains open.' }], canon })).proposedProgress, 2)
-  assert.equal((await intelligence.compileHouseRule({ messages: [{ id: 'message-1', roomName: 'rules-desk', senderName: 'Mara', text: 'We use advantage here.' }] })).citations[0], 'message-1')
+  assert.equal((await intelligence.answerKnowledge({ campaignId: 'campaign-1', question: 'Who keeps the light?', canon, priorFeedback: [{ question: 'What is hidden?', rating: 'secret_leak', generatorVersion: 'v0' }] })).citations[0], 'canon-1')
+  assert.equal((await intelligence.draftIntent({ campaignId: 'campaign-1', intent: 'Signal the party.', messages: [{ text: 'The light is ours.' }], canon }))[0], 'I raise the lantern.')
+  assert.equal((await intelligence.proposeFaction({ campaignId: 'campaign-1', clock: { name: 'Moth Court', goal: 'Open the gate', progress: 1, segments: 6 }, messages: [{ id: 'message-1', text: 'The western gate remains open.' }], canon })).proposedProgress, 2)
+  assert.equal((await intelligence.compileHouseRule({ campaignId: 'campaign-1', messages: [{ id: 'message-1', roomName: 'rules-desk', senderName: 'Mara', text: 'We use advantage here.' }] })).citations[0], 'message-1')
 
   assert.equal(requests.length, 4)
   for (const request of requests) {
@@ -34,4 +35,10 @@ test('OpenAI campaign intelligence is strict, non-stored, and scoped for each pr
   assert.deepEqual(Object.keys(JSON.parse(requests[1].input)), ['intent', 'ownVoiceExamples', 'readableCanon'])
   assert.match(requests[2].instructions, /do not declare it true/i)
   assert.match(requests[3].instructions, /editable house-rule proposal/i)
+  assert.deepEqual(traces.map(({ surface, status, inputUnits, outputUnits }) => ({ surface, status, inputUnits, outputUnits })), [
+    { surface: 'knowledge', status: 'succeeded', inputUnits: 20, outputUnits: 5 },
+    { surface: 'intent', status: 'succeeded', inputUnits: 20, outputUnits: 5 },
+    { surface: 'factions', status: 'succeeded', inputUnits: 20, outputUnits: 5 },
+    { surface: 'house_rules', status: 'succeeded', inputUnits: 20, outputUnits: 5 },
+  ])
 })

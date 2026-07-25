@@ -75,11 +75,29 @@ function publicWorldDiscovery(row) {
     sourceSceneId: row.source_scene_id,
     sourceSceneTitle: row.source_scene_title,
     entityType: row.entity_type,
+    materialKind: row.material_kind ?? null,
     entityId: row.entity_id,
     name: row.entity_name,
     snapshot: JSON.parse(row.snapshot),
     createdByName: row.created_by_name ?? null,
     createdAt: row.created_at,
+  }
+}
+
+function publicInPlayMaterial(row) {
+  return {
+    id: row.id,
+    sceneId: row.scene_id,
+    kind: row.kind,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    title: row.title,
+    detail: row.detail,
+    pressure: row.pressure,
+    leverage: row.leverage,
+    generatorVersion: row.generator_version,
+    keptByName: row.kept_by_name ?? null,
+    keptAt: row.kept_at,
   }
 }
 
@@ -585,11 +603,28 @@ export function createStore(databasePath) {
       entity_type TEXT NOT NULL CHECK(entity_type IN ('faction', 'location', 'npc', 'hook')),
       entity_id TEXT NOT NULL,
       entity_name TEXT NOT NULL,
+      material_kind TEXT CHECK(material_kind IS NULL OR material_kind IN ('npc', 'place', 'complication', 'consequence', 'rumour', 'treasure')),
       snapshot TEXT NOT NULL,
       created_by_player_id TEXT NOT NULL REFERENCES players(id),
       created_at TEXT NOT NULL,
       UNIQUE(campaign_id, entity_type, entity_id)
     );
+    CREATE TABLE IF NOT EXISTS in_play_materials (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      scene_id TEXT NOT NULL REFERENCES campaign_scenes(id) ON DELETE RESTRICT,
+      kind TEXT NOT NULL CHECK(kind IN ('npc', 'place', 'complication', 'consequence', 'rumour', 'treasure')),
+      entity_type TEXT NOT NULL CHECK(entity_type IN ('npc', 'location', 'hook')),
+      entity_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      detail TEXT NOT NULL,
+      pressure TEXT NOT NULL,
+      leverage TEXT NOT NULL,
+      generator_version TEXT NOT NULL,
+      kept_by_player_id TEXT NOT NULL REFERENCES players(id),
+      kept_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS in_play_materials_scene ON in_play_materials(scene_id, kept_at);
     CREATE INDEX IF NOT EXISTS world_discoveries_campaign_created ON world_discoveries(campaign_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS character_revisions (
       id TEXT PRIMARY KEY,
@@ -1053,6 +1088,8 @@ export function createStore(databasePath) {
   for (const column of ['locations', 'npcs', 'clues', 'complications', 'session_questions']) {
     if (!sceneColumns.some((item) => item.name === column)) database.exec(`ALTER TABLE campaign_scenes ADD COLUMN ${column} TEXT NOT NULL DEFAULT '[]'`)
   }
+  const worldDiscoveryColumns = database.prepare('PRAGMA table_info(world_discoveries)').all()
+  if (!worldDiscoveryColumns.some((column) => column.name === 'material_kind')) database.exec("ALTER TABLE world_discoveries ADD COLUMN material_kind TEXT CHECK(material_kind IS NULL OR material_kind IN ('npc', 'place', 'complication', 'consequence', 'rumour', 'treasure'))")
   database.exec("CREATE UNIQUE INDEX IF NOT EXISTS campaign_scenes_one_active ON campaign_scenes(campaign_id) WHERE status = 'active'")
   const roomColumns = database.prepare('PRAGMA table_info(rooms)').all()
   if (!roomColumns.some((column) => column.name === 'position')) {
@@ -1217,6 +1254,7 @@ export function createStore(databasePath) {
       opening_crisis_stakes = ?, revision = revision + 1, updated_by_player_id = ?, updated_at = ?
     WHERE campaign_id = ? AND revision = ?
   `)
+  const touchCampaignWorld = database.prepare('UPDATE campaign_worlds SET revision = revision + 1, updated_by_player_id = ?, updated_at = ? WHERE campaign_id = ?')
   const insertCampaignWorldTruth = database.prepare('INSERT INTO campaign_world_truths (id, campaign_id, position, text) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET position = excluded.position, text = excluded.text WHERE campaign_world_truths.campaign_id = excluded.campaign_id')
   const insertCampaignWorldFaction = database.prepare('INSERT INTO campaign_world_factions (id, campaign_id, position, name, goal, opposition) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET position = excluded.position, name = excluded.name, goal = excluded.goal, opposition = excluded.opposition WHERE campaign_world_factions.campaign_id = excluded.campaign_id')
   const insertCampaignWorldLocation = database.prepare('INSERT INTO campaign_world_locations (id, campaign_id, position, name, description, danger) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET position = excluded.position, name = excluded.name, description = excluded.description, danger = excluded.danger WHERE campaign_world_locations.campaign_id = excluded.campaign_id')
@@ -1228,7 +1266,7 @@ export function createStore(databasePath) {
     npc: database.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS position FROM campaign_world_npcs WHERE campaign_id = ?'),
     hook: database.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS position FROM campaign_world_hooks WHERE campaign_id = ?'),
   }
-  const insertWorldDiscovery = database.prepare('INSERT INTO world_discoveries (id, campaign_id, source_scene_id, entity_type, entity_id, entity_name, snapshot, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+  const insertWorldDiscovery = database.prepare('INSERT INTO world_discoveries (id, campaign_id, source_scene_id, entity_type, entity_id, entity_name, material_kind, snapshot, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
   const worldDiscoveries = database.prepare(`
     SELECT world_discoveries.*, source.title AS source_scene_title, creators.name AS created_by_name
     FROM world_discoveries
@@ -1323,6 +1361,8 @@ export function createStore(databasePath) {
   const updateScenePreparation = database.prepare('UPDATE campaign_scene_preparations SET title = ?, framing = ?, stakes = ?, question = ?, character_ids = ?, location_ids = ?, npc_ids = ?, clues = ?, complications = ?, session_questions = ?, revision = revision + 1, updated_by_player_id = ?, updated_at = ? WHERE campaign_id = ? AND revision = ?')
   const deleteScenePreparation = database.prepare('DELETE FROM campaign_scene_preparations WHERE campaign_id = ?')
   const activeScene = database.prepare("SELECT campaign_scenes.*, creators.name AS created_by_name FROM campaign_scenes JOIN players AS creators ON creators.id = campaign_scenes.created_by_player_id WHERE campaign_scenes.campaign_id = ? AND campaign_scenes.status = 'active'")
+  const inPlayMaterialsForScene = database.prepare('SELECT in_play_materials.*, players.name AS kept_by_name FROM in_play_materials JOIN players ON players.id = in_play_materials.kept_by_player_id WHERE in_play_materials.scene_id = ? ORDER BY in_play_materials.rowid')
+  const insertInPlayMaterial = database.prepare('INSERT INTO in_play_materials (id, campaign_id, scene_id, kind, entity_type, entity_id, title, detail, pressure, leverage, generator_version, kept_by_player_id, kept_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
   const scenesByCampaign = database.prepare("SELECT campaign_scenes.*, creators.name AS created_by_name, resolvers.name AS resolved_by_name FROM campaign_scenes JOIN players AS creators ON creators.id = campaign_scenes.created_by_player_id LEFT JOIN players AS resolvers ON resolvers.id = campaign_scenes.resolved_by_player_id WHERE campaign_scenes.campaign_id = ? ORDER BY campaign_scenes.rowid DESC LIMIT 20")
   const sceneCharacters = database.prepare('SELECT characters.id, characters.name, players.name AS player_name FROM campaign_scene_characters JOIN characters ON characters.id = campaign_scene_characters.character_id JOIN players ON players.id = characters.player_id WHERE campaign_scene_characters.scene_id = ? ORDER BY campaign_scene_characters.rowid')
   const insertScene = database.prepare('INSERT INTO campaign_scenes (id, campaign_id, title, framing, stakes, question, locations, npcs, clues, complications, session_questions, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
@@ -2152,6 +2192,7 @@ export function createStore(databasePath) {
         npcs: world?.npcs ?? [],
         preparation: publicScenePreparation(scenePreparation.get(campaignId)),
         activeScene: publicScene(current, current ? sceneCharacters.all(current.id) : []),
+        inPlayMaterials: current ? inPlayMaterialsForScene.all(current.id).map(publicInPlayMaterial) : [],
         scenes: scenesByCampaign.all(campaignId).map((row) => publicScene(row, sceneCharacters.all(row.id))),
         worldConsequences: activeWorldConsequences.all(campaignId).map(publicWorldConsequence),
       }
@@ -2202,6 +2243,38 @@ export function createStore(databasePath) {
       return { outcome: 'started', roomId: room.id, message: publicMessage(messageByClientId.get(playerId, clientMessageId)), context: this.getSceneContext(campaignId) }
     },
 
+    keepInPlayMaterial(campaignId, playerId, sceneId, material) {
+      const current = activeScene.get(campaignId)
+      const world = this.getCampaignWorld(campaignId)
+      if (!current || current.id !== sceneId) return { outcome: 'not_found', context: this.getSceneContext(campaignId) }
+      if (!world || !['npc', 'place', 'complication', 'consequence', 'rumour', 'treasure'].includes(material.kind)) return { outcome: 'invalid', context: this.getSceneContext(campaignId) }
+      const entityType = material.kind === 'npc' ? 'npc' : material.kind === 'place' ? 'location' : 'hook'
+      const entityId = randomUUID()
+      const materialId = randomUUID()
+      const discoveryId = randomUUID()
+      const now = new Date().toISOString()
+      const snapshot = entityType === 'npc'
+        ? { name: material.title, role: material.detail, want: material.pressure, leverage: material.leverage }
+        : entityType === 'location'
+          ? { name: material.title, description: material.detail, danger: material.pressure }
+          : { title: material.title, situation: `${material.detail} ${material.pressure}`, pressure: material.pressure, leverage: material.leverage }
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        const position = nextWorldPositions[entityType].get(campaignId).position
+        if (entityType === 'npc') insertCampaignWorldNpc.run(entityId, campaignId, position, snapshot.name, snapshot.role, snapshot.want, snapshot.leverage)
+        if (entityType === 'location') insertCampaignWorldLocation.run(entityId, campaignId, position, snapshot.name, snapshot.description, snapshot.danger)
+        if (entityType === 'hook') insertCampaignWorldHook.run(entityId, campaignId, position, snapshot.title, snapshot.situation)
+        insertInPlayMaterial.run(materialId, campaignId, sceneId, material.kind, entityType, entityId, material.title, material.detail, material.pressure, material.leverage, material.generatorVersion, playerId, now)
+        insertWorldDiscovery.run(discoveryId, campaignId, sceneId, entityType, entityId, material.title, material.kind, JSON.stringify(snapshot), playerId, now)
+        touchCampaignWorld.run(playerId, now, campaignId)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return { outcome: 'kept', material: publicInPlayMaterial(inPlayMaterialsForScene.all(sceneId).at(-1)), context: this.getSceneContext(campaignId), world: this.getCampaignWorld(campaignId) }
+    },
+
     resolveScene(campaignId, playerId, sceneId, outcome, consequences = [], discoveries = []) {
       const current = activeScene.get(campaignId)
       if (!current || current.id !== sceneId) return { outcome: 'not_found' }
@@ -2249,7 +2322,7 @@ export function createStore(databasePath) {
           if (discovery.entityType === 'location') insertCampaignWorldLocation.run(discovery.entityId, campaignId, position, discovery.snapshot.name, discovery.snapshot.description, discovery.snapshot.danger)
           if (discovery.entityType === 'npc') insertCampaignWorldNpc.run(discovery.entityId, campaignId, position, discovery.snapshot.name, discovery.snapshot.role, discovery.snapshot.want, discovery.snapshot.leverage)
           if (discovery.entityType === 'hook') insertCampaignWorldHook.run(discovery.entityId, campaignId, position, discovery.snapshot.title, discovery.snapshot.situation)
-          insertWorldDiscovery.run(randomUUID(), campaignId, sceneId, discovery.entityType, discovery.entityId, discovery.name, JSON.stringify(discovery.snapshot), playerId, now)
+          insertWorldDiscovery.run(randomUUID(), campaignId, sceneId, discovery.entityType, discovery.entityId, discovery.name, null, JSON.stringify(discovery.snapshot), playerId, now)
         }
         insertMessage.run(messageId, room.id, playerId, clientMessageId, outcome, null, 'scene_end', JSON.stringify(metadata), now)
         database.exec('COMMIT')

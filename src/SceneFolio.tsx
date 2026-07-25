@@ -1,12 +1,21 @@
-import { CircleDot, Plus, Trash2, X } from 'lucide-react'
+import { CircleDot, Plus, Sparkles, Trash2, X } from 'lucide-react'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { api } from './lib/api'
-import type { SceneContext, TableSession } from './types/protocol'
+import type { InPlayMaterial, InPlayMaterialKind, SceneContext, TableSession } from './types/protocol'
 
 type SceneDraft = { title: string; framing: string; stakes: string; question: string; characterIds: string[]; locationIds: string[]; npcIds: string[]; clues: string[]; complications: string[]; sessionQuestions: string[]; expectedRevision: number | null }
 type ConsequenceDraft = { entityType: 'faction' | 'location' | 'npc' | 'hook' | ''; entityId: string; afterState: string; pressure: string }
 type DiscoveryDraft = { entityType: 'faction' | 'location' | 'npc' | 'hook' | ''; name: string; detail: string; tension: string; leverage: string }
 const discoveryTypes = ['faction', 'location', 'npc', 'hook'] as const
+const materialKinds: InPlayMaterialKind[] = ['npc', 'place', 'complication', 'consequence', 'rumour', 'treasure']
+const materialCopy: Record<InPlayMaterialKind, { title: string; detail: string; pressure: string; leverage: string }> = {
+  npc: { title: 'Name', detail: 'Place in the world', pressure: 'What do they want now?', leverage: 'What can they offer or threaten?' },
+  place: { title: 'Name', detail: 'What is here?', pressure: 'What makes it dangerous?', leverage: 'What can be found or used?' },
+  complication: { title: 'Complication', detail: 'What enters the moment?', pressure: 'How does it press the characters?', leverage: 'What choice or opening does it create?' },
+  consequence: { title: 'Possible consequence', detail: 'What might become true?', pressure: 'What action would bring it about?', leverage: 'How might it be avoided or exploited?' },
+  rumour: { title: 'Rumour', detail: 'What is being said?', pressure: 'Why does it matter now?', leverage: 'Who benefits if it is believed?' },
+  treasure: { title: 'Treasure', detail: 'What is it?', pressure: 'What danger or cost follows it?', leverage: 'What can it make possible?' },
+}
 const discoveryCopy = {
   faction: { detail: 'What do they want?', tension: 'What stands against them?', detailPlaceholder: 'Control every route into the drowned town.', tensionPlaceholder: 'Their bargains bind them to the tide.' },
   location: { detail: 'What is here?', tension: 'What makes it dangerous?', detailPlaceholder: 'A chapel revealed beneath the cracked square.', tensionPlaceholder: 'Every spoken name wakes one of its bells.' },
@@ -52,6 +61,9 @@ export function SceneFolio({ session, suppliedContext, onContext, onOpenRoom, on
   const [pending, setPending] = useState('load')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [materialKind, setMaterialKind] = useState<InPlayMaterialKind>('npc')
+  const [materialPrompt, setMaterialPrompt] = useState('')
+  const [materialDraft, setMaterialDraft] = useState<InPlayMaterial | null>(null)
   const savedDraft = context?.preparation ? JSON.stringify({ ...context.preparation, revision: undefined, updatedAt: undefined, updatedByName: undefined }) : null
   const currentDraft = draft ? JSON.stringify({ ...draft, expectedRevision: undefined }) : null
   const hasUnsavedChanges = savedDraft !== currentDraft
@@ -97,6 +109,24 @@ export function SceneFolio({ session, suppliedContext, onContext, onOpenRoom, on
       .finally(() => setPending(''))
   }
 
+  const draftMaterial = () => {
+    if (!context?.activeScene || !materialPrompt.trim()) return
+    setPending('draft-material'); setError(''); setNotice('')
+    void api<{ draft: InPlayMaterial }>(`/api/campaign/scenes/${context.activeScene.id}/materials/draft`, { method: 'POST', headers: authorization, body: JSON.stringify({ kind: materialKind, prompt: materialPrompt }) })
+      .then(({ draft }) => setMaterialDraft(draft))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'No useful draft came back to the table.'))
+      .finally(() => setPending(''))
+  }
+
+  const keepMaterial = () => {
+    if (!context?.activeScene || !materialDraft) return
+    setPending('keep-material'); setError(''); setNotice('')
+    void api<{ context: SceneContext }>(`/api/campaign/scenes/${context.activeScene.id}/materials`, { method: 'POST', headers: authorization, body: JSON.stringify(materialDraft) })
+      .then((result) => { setContext(result.context); onContext(result.context); setNotice(`${materialDraft.title} is now in the campaign.`); setMaterialDraft(null); setMaterialPrompt('') })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'The draft could not enter the campaign.'))
+      .finally(() => setPending(''))
+  }
+
   const toggleCharacter = (id: string) => {
     if (!draft) return
     setDraft({ ...draft, characterIds: draft.characterIds.includes(id) ? draft.characterIds.filter((item) => item !== id) : [...draft.characterIds, id] })
@@ -126,6 +156,12 @@ export function SceneFolio({ session, suppliedContext, onContext, onOpenRoom, on
           <header><span className="eyebrow">Now in play</span><h2>{context.activeScene.title}</h2><p>{context.activeScene.framing}</p></header>
           <div className="scene-active__pressure"><div><span>If nobody acts</span><p>{context.activeScene.stakes}</p></div><div><span>The first choice</span><p>{context.activeScene.question}</p></div></div>
           <div className="scene-cast"><span>Present at the threshold</span><div>{context.activeScene.characters.map((character) => <span key={character.id}><strong>{character.name}</strong><small>{character.playerName}</small></span>)}</div></div>
+          <section className="scene-improvisation"><div className="scene-improvisation__heading"><div><span className="eyebrow">When the table turns</span><h3>Create what play needs now</h3><p>Ask for one private draft. Rewrite it freely; nothing enters the campaign until you keep it.</p></div><Sparkles size={18} /></div>
+            <div className="scene-improvisation__kinds">{materialKinds.map((kind) => <button type="button" key={kind} className={materialKind === kind ? 'is-chosen' : ''} aria-pressed={materialKind === kind} onClick={() => { setMaterialKind(kind); setMaterialDraft(null) }}>{kind}</button>)}</div>
+            <label htmlFor="material-prompt">What does the table need?</label><div className="scene-improvisation__prompt"><textarea id="material-prompt" value={materialPrompt} onChange={(event) => setMaterialPrompt(event.target.value)} maxLength={500} placeholder="Someone who knows why the archive door opened…" /><button type="button" className="folio-button" onClick={draftMaterial} disabled={!materialPrompt.trim() || pending === 'draft-material'}>{pending === 'draft-material' ? 'Drafting…' : 'Draft one'}</button></div>
+            {materialDraft && <article className="scene-material-draft"><div><span>Private {materialDraft.kind} draft</span><small>{materialDraft.generatorVersion}</small></div><label htmlFor="material-title">{materialCopy[materialDraft.kind].title}</label><input id="material-title" value={materialDraft.title} onChange={(event) => setMaterialDraft({ ...materialDraft, title: event.target.value })} maxLength={120} /><label htmlFor="material-detail">{materialCopy[materialDraft.kind].detail}</label><textarea id="material-detail" value={materialDraft.detail} onChange={(event) => setMaterialDraft({ ...materialDraft, detail: event.target.value })} maxLength={200} /><label htmlFor="material-pressure">{materialCopy[materialDraft.kind].pressure}</label><textarea id="material-pressure" value={materialDraft.pressure} onChange={(event) => setMaterialDraft({ ...materialDraft, pressure: event.target.value })} maxLength={280} /><label htmlFor="material-leverage">{materialCopy[materialDraft.kind].leverage}</label><textarea id="material-leverage" value={materialDraft.leverage} onChange={(event) => setMaterialDraft({ ...materialDraft, leverage: event.target.value })} maxLength={400} /><footer><span>{materialDraft.kind === 'consequence' ? 'Kept as a possible consequence, not a world change.' : materialDraft.kind === 'npc' || materialDraft.kind === 'place' ? 'This will join the World immediately.' : 'This will join the campaign as an actionable hook.'}</span><button type="button" className="primary-action" onClick={keepMaterial} disabled={!materialDraft.title.trim() || !materialDraft.detail.trim() || !materialDraft.pressure.trim() || !materialDraft.leverage.trim() || pending === 'keep-material'}>{pending === 'keep-material' ? 'Keeping…' : 'Keep in campaign'}</button></footer></article>}
+            {context.inPlayMaterials.length > 0 && <div className="scene-material-kept"><span>Kept from this scene</span>{context.inPlayMaterials.map((material) => <article key={material.id}><small>{material.kind}</small><strong>{material.title}</strong><p>{material.detail}</p><blockquote>{material.pressure}</blockquote></article>)}</div>}
+          </section>
           <section className="scene-active__preparation"><span className="eyebrow">Behind the screen</span><div className="scene-active__stage"><div><strong>Places in reach</strong>{context.activeScene.locations.map((location) => <p key={location.id}><b>{location.name}</b>{location.description}<small>{location.danger}</small></p>)}</div><div><strong>People in motion</strong>{context.activeScene.npcs.map((npc) => <p key={npc.id}><b>{npc.name}</b>{npc.role}<small>{npc.want}</small></p>)}</div></div><div className="scene-active__possibilities"><div><strong>Discoveries</strong>{context.activeScene.clues.map((item, index) => <p key={index}>{item}</p>)}</div><div><strong>Complications</strong>{context.activeScene.complications.map((item, index) => <p key={index}>{item}</p>)}</div><div><strong>Play to find out</strong>{context.activeScene.sessionQuestions.map((item, index) => <p key={index}>{item}</p>)}</div></div></section>
           <div className="scene-resolution"><span className="eyebrow">When the moment has changed</span><label htmlFor="scene-outcome">What is true because this scene happened?</label><textarea id="scene-outcome" value={outcome} onChange={(event) => setOutcome(event.target.value)} maxLength={2_000} placeholder="The bell cracked, but Iria’s brother answered from beneath the square…" />
             <div className="scene-fallout"><div className="scene-fallout__heading"><div><strong>World fallout</strong><span>Keep concrete changes to people, places, factions, or hooks.</span></div>{consequences.length < 3 && <button type="button" className="folio-button" onClick={() => setConsequences((items) => [...items, { entityType: '', entityId: '', afterState: '', pressure: '' }])}><Plus size={14} />Record fallout</button>}</div>

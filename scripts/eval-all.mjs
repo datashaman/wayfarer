@@ -11,7 +11,7 @@ function argument(name) {
 
 const suites = AI_SURFACES.map((surface) => {
   const model = modelForAiSurface(surface.id)
-  return { name: surface.id, script: `eval-${surface.id.replace('_', '-')}.mjs`, model, version: versionForAiSurface(surface.id, model) }
+  return { name: surface.id, script: `eval-${surface.id.replaceAll('_', '-')}.mjs`, model, version: versionForAiSurface(surface.id, model) }
 })
 
 if (!process.env.OPENAI_API_KEY) {

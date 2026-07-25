@@ -343,6 +343,42 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         return
       }
 
+      const sceneMaterialDraft = request.url?.match(/^\/api\/campaign\/scenes\/([^/]+)\/materials\/draft$/)
+      if (request.method === 'POST' && sceneMaterialDraft) {
+        if (!requestSession) { sendJson(response, 401, { error: 'Session not found.' }); return }
+        if (!hasGmKnowledge) { sendJson(response, 403, { error: 'Only a GM can improvise campaign material.' }); return }
+        if (!campaignIntelligence) { sendJson(response, 503, { error: 'In-play creation is not configured.' }); return }
+        const body = await readJson(request)
+        const kind = ['npc', 'place', 'complication', 'consequence', 'rumour', 'treasure'].includes(body.kind) ? body.kind : null
+        const prompt = cleanCanonText(body.prompt, 500)
+        const context = store.getSceneContext(requestSession.campaign.id)
+        if (!kind || !prompt || context.activeScene?.id !== sceneMaterialDraft[1]) { sendJson(response, 400, { error: 'Choose a material type and describe what the table needs now.' }); return }
+        const world = store.getCampaignWorld(requestSession.campaign.id)
+        const draft = await campaignIntelligence.draftInPlayMaterial({ campaignId: requestSession.campaign.id, kind, prompt, scene: context.activeScene, world })
+        sendJson(response, 200, { draft })
+        return
+      }
+
+      const sceneMaterialKeep = request.url?.match(/^\/api\/campaign\/scenes\/([^/]+)\/materials$/)
+      if (request.method === 'POST' && sceneMaterialKeep) {
+        if (!requestSession) { sendJson(response, 401, { error: 'Session not found.' }); return }
+        if (!hasGmKnowledge) { sendJson(response, 403, { error: 'Only a GM can keep campaign material.' }); return }
+        const body = await readJson(request)
+        const material = {
+          kind: ['npc', 'place', 'complication', 'consequence', 'rumour', 'treasure'].includes(body.kind) ? body.kind : null,
+          title: cleanCanonText(body.title, 120), detail: cleanCanonText(body.detail, 200),
+          pressure: cleanCanonText(body.pressure, 280), leverage: cleanCanonText(body.leverage, 400),
+          generatorVersion: cleanCanonText(body.generatorVersion, 200),
+        }
+        if (Object.values(material).some((value) => !value)) { sendJson(response, 400, { error: 'Complete the draft before keeping it.' }); return }
+        const result = store.keepInPlayMaterial(requestSession.campaign.id, requestSession.player.id, sceneMaterialKeep[1], material)
+        if (result.outcome !== 'kept') { sendJson(response, result.outcome === 'not_found' ? 404 : 400, { error: result.outcome === 'not_found' ? 'Active scene not found.' : 'The draft could not enter this campaign.' }); return }
+        broadcastSceneContext(requestSession.campaign.id, result.context)
+        broadcastCharacters(requestSession.campaign.id)
+        sendJson(response, 201, result)
+        return
+      }
+
       const sceneResolution = request.url?.match(/^\/api\/campaign\/scenes\/([^/]+)\/resolve$/)
       if (request.method === 'POST' && sceneResolution) {
         if (!requestSession) {
@@ -542,6 +578,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
             factions: campaignIntelligence?.version ?? null,
             campaign_seed: campaignIntelligence?.version ?? null,
             character_concepts: campaignIntelligence?.version ?? null,
+            in_play_material: campaignIntelligence?.version ?? null,
           },
         ) })
         return

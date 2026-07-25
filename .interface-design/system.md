@@ -149,6 +149,12 @@ Before the threshold, the Scene folio is a durable GM preparation spine: framing
 
 Use continuous bordered ledger groups rather than a wizard, card dashboard, or AI chat. Repeated preparation lines are inset serif fields with restrained add/remove controls. A sticky footer distinguishes **Save preparation** from **Begin play**: play remains unavailable while changes are unsaved, and crossing the threshold snapshots the complete private folio before consuming the draft. Prepared possibilities remain behind the GM screen and must never be inserted into the player transcript or described as inevitable outcomes.
 
+### In-play margin leaf
+
+Improvisation lives inside the active Scene folio, between the present cast and prepared material, so the GM never leaves play to create content. Six compact type stamps—NPC, place, complication, consequence, rumour, and treasure—lead into one short need prompt. Generation returns exactly one wax-edged private margin leaf with type-specific labels and editable serif fields for identity, detail, pressure, and leverage.
+
+The margin leaf always states where keeping it will place the material. **Keep in campaign** is the only filled action and the only insertion boundary. Kept leaves use a moss hairline and remain tied to the source scene. Possible consequences must explicitly remain possibilities; never style or describe generated output as an event that already happened. Avoid chat turns, suggestion carousels, random tables, toast-only confirmation, and automatic transcript insertion.
+
 ### Character aftermath
 
 Aftermath lives inside the existing character folio, above the editable public face. It is reflection, not advancement machinery: ask what happened to the character, offer only resolved scenes they witnessed, and require the player’s reason before keeping any revision. Do not introduce XP, levels, skill trees, unlocks, rewards, completion meters, or inferred personality changes.

@@ -313,6 +313,17 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         sendJson(response, 200, { dashboard: createEvaluationDashboard(
           store.exportAiFeedback(requestSession.campaign.id),
           store.listAiEvaluationRuns(requestSession.campaign.id, 25),
+          store.listAiInferenceRuns(requestSession.campaign.id, 200),
+          {
+            canon: canonExtractor?.version ?? null,
+            continuity: continuityGenerator?.version ?? null,
+            contradictions: contradictionRadar?.version ?? null,
+            recap: recapGenerator?.version ?? null,
+            knowledge: campaignIntelligence?.version ?? null,
+            intent: campaignIntelligence?.version ?? null,
+            house_rules: campaignIntelligence?.version ?? null,
+            factions: campaignIntelligence?.version ?? null,
+          },
         ) })
         return
       }

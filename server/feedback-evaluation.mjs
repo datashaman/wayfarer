@@ -1,3 +1,5 @@
+import { AI_SURFACES } from './ai-surfaces.mjs'
+
 export const feedbackEvaluationSchemaVersion = 'wayfarer.ai-feedback.v1'
 
 function ratio(numerator, denominator) {
@@ -123,7 +125,12 @@ export function calculateAutomationReadiness(feedback) {
   return { eligible: checks.every((check) => check.passed), mode: 'prepare_only', checks, metrics }
 }
 
-export function createEvaluationDashboard(feedback, evaluationRuns = []) {
+function roundedAverage(values) {
+  const known = values.filter((value) => Number.isFinite(value))
+  return known.length ? Math.round(known.reduce((sum, value) => sum + value, 0) / known.length) : null
+}
+
+export function createEvaluationDashboard(feedback, evaluationRuns = [], inferenceRuns = [], configuredVersions = {}) {
   const readiness = calculateAutomationReadiness(feedback)
   const versions = [
     ...Object.entries(readiness.metrics.byGeneratorVersion.canon).map(([version, metrics]) => ({
@@ -150,5 +157,30 @@ export function createEvaluationDashboard(feedback, evaluationRuns = []) {
   if (readiness.metrics.continuity.secretLeak > 0) alerts.push({ severity: 'critical', message: `${readiness.metrics.continuity.secretLeak} continuity ${readiness.metrics.continuity.secretLeak === 1 ? 'rating reports' : 'ratings report'} a secret leak.` })
   for (const run of runs) if (run.delta != null && run.delta < 0) alerts.push({ severity: 'warning', message: `${run.suite} dropped ${Math.abs(Math.round(run.delta * 100))} points on ${run.model} in ${run.generatorVersion}.` })
 
-  return { readiness, versions, runs, alerts }
+  const surfaces = AI_SURFACES.map((definition) => {
+    const surfaceInferences = inferenceRuns.filter((run) => run.surface === definition.id)
+    const version = configuredVersions[definition.id] ?? surfaceInferences[0]?.generatorVersion ?? runs.find((run) => run.suite === definition.id)?.generatorVersion ?? null
+    const editionInferences = version ? surfaceInferences.filter((run) => run.generatorVersion === version) : surfaceInferences
+    const succeeded = editionInferences.filter((run) => run.status === 'succeeded').length
+    const failed = editionInferences.length - succeeded
+    const liveCheck = runs.find((run) => run.suite === definition.id && (!version || run.generatorVersion === version)) ?? null
+    return {
+      id: definition.id, label: definition.label, authority: definition.authority, version,
+      evaluationCommand: definition.evaluationCommand,
+      liveCheck: liveCheck ? { passed: liveCheck.passed, total: liveCheck.total, passRate: liveCheck.passRate, createdAt: liveCheck.createdAt } : null,
+      runtime: {
+        total: editionInferences.length, succeeded, failed,
+        successRate: editionInferences.length ? Number((succeeded / editionInferences.length).toFixed(4)) : null,
+        averageDurationMs: roundedAverage(editionInferences.map((run) => run.durationMs)),
+        averageInputUnits: roundedAverage(editionInferences.map((run) => run.inputUnits)),
+        averageOutputUnits: roundedAverage(editionInferences.map((run) => run.outputUnits)),
+        lastRunAt: editionInferences[0]?.createdAt ?? null,
+        latestErrorCategory: editionInferences.find((run) => run.status === 'failed')?.errorCategory ?? null,
+      },
+    }
+  })
+  const runtimeFailures = surfaces.filter((surface) => surface.runtime.failed > 0)
+  if (runtimeFailures.length) alerts.push({ severity: 'warning', message: `${runtimeFailures.length} AI ${runtimeFailures.length === 1 ? 'surface has' : 'surfaces have'} failed runtime traces in the current edition.` })
+
+  return { readiness, versions, surfaces, runs, alerts }
 }

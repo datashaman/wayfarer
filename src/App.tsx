@@ -5,7 +5,6 @@ import {
   BookMarked,
   BookUser,
   Check,
-  CircleDot,
   ChevronDown,
   ChevronUp,
   Copy,
@@ -38,7 +37,6 @@ import { readinessRequirement } from './lib/readiness'
 import { CampaignIntelligenceFolio } from './CampaignIntelligenceFolio'
 import { CampaignWorldFolio } from './CampaignWorldFolio'
 import { CharacterFolio } from './CharacterFolio'
-import { SceneFolio } from './SceneFolio'
 import {
   createEvent,
   type ConnectionState,
@@ -65,7 +63,6 @@ import {
   type RoomMessage,
   type RuntimeConfig,
   type SeatEntry,
-  type SceneContext,
   type SessionRecap,
   type SessionRecapRevision,
   type ServerEvent,
@@ -1181,15 +1178,6 @@ function MessageItem({ message, highlighted = false }: { message: RoomMessage; h
   const participant: Participant = { playerId: message.senderId, name: message.senderName, muted: false }
   const time = new Date(message.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
-  if (message.kind === 'scene_start' && message.scene) return <article className="scene-threshold" id={`message-${message.id}`}>
-    <div className="scene-threshold__rule"><span /><CircleDot size={15} /><span /></div>
-    <span className="eyebrow">The scene opens</span><h2>{message.scene.title}</h2><p>{message.scene.framing}</p>
-    <div className="scene-threshold__pressure"><span><small>If nobody acts</small>{message.scene.stakes}</span><span><small>The first choice</small>{message.scene.question}</span></div>
-    <div className="scene-threshold__cast">{message.scene.characters?.map((character) => <span key={character.id}>{character.name}</span>)}</div><time>{time}</time>
-  </article>
-
-  if (message.kind === 'scene_end' && message.scene) return <article className="scene-outcome" id={`message-${message.id}`}><span className="eyebrow">The scene resolves</span><h3>{message.scene.title}</h3><p>{message.scene.outcome}</p><time>{time}</time></article>
-
   return (
     <article className={`message ${highlighted ? 'message--highlighted' : ''}`} id={`message-${message.id}`}>
       <Avatar participant={participant} />
@@ -1515,8 +1503,6 @@ function App() {
   const [campaignWorld, setCampaignWorld] = useState(false)
   const [characterFolio, setCharacterFolio] = useState(false)
   const [characterContext, setCharacterContext] = useState<CharacterCreationContext | null>(null)
-  const [sceneFolio, setSceneFolio] = useState(false)
-  const [sceneContext, setSceneContext] = useState<SceneContext | null>(null)
   const [preparationNotice, setPreparationNotice] = useState<PreparationRun | null>(null)
   const [preparationRetrying, setPreparationRetrying] = useState(false)
   const [campaignCanon, setCampaignCanon] = useState<CanonLedger | null>(null)
@@ -1761,10 +1747,6 @@ function App() {
       }
       if (event.type === 'campaign.characters_updated') {
         setCharacterContext(event.payload)
-        return
-      }
-      if (event.type === 'campaign.scene_updated') {
-        setSceneContext(event.payload)
         return
       }
       if (event.roomId !== activeRoomRef.current) return
@@ -2077,7 +2059,6 @@ function App() {
           <button className="text-button" onClick={() => setSharedNotes(true)}><NotebookPen size={15} />Notes</button>
           <button className="text-button" onClick={() => setCanonLedger(true)}><BookMarked size={15} />Canon</button>
           <button className="text-button" onClick={() => setCharacterFolio(true)}><BookUser size={15} />Character</button>
-          {session.player.knowledgeRole === 'gm' && <button className="text-button" onClick={() => setSceneFolio(true)}><CircleDot size={15} />Scene</button>}
           {session.player.knowledgeRole === 'gm' && <button className="text-button" onClick={() => setCampaignWorld(true)}><BookOpenText size={15} />World</button>}
           <button className="text-button" onClick={() => setCampaignIntelligence(true)}><Compass size={15} />Table tools</button>
           <button className="text-button invite-button" onClick={() => setInvitationSheet(true)}><QrCode size={15} />Invite players</button>
@@ -2138,7 +2119,6 @@ function App() {
       {campaignIntelligence && <CampaignIntelligenceFolio session={session} onClose={() => setCampaignIntelligence(false)} onUseDraft={setDraft} onOpenLedger={(target) => { setCampaignIntelligence(false); setCanonLedgerTarget(target); setCanonLedger(true) }} />}
       {campaignWorld && <CampaignWorldFolio session={session} onClose={() => setCampaignWorld(false)} />}
       {characterFolio && <CharacterFolio session={session} context={characterContext} onContext={setCharacterContext} onClose={() => setCharacterFolio(false)} />}
-      {sceneFolio && <SceneFolio session={session} suppliedContext={sceneContext} onContext={setSceneContext} onOpenRoom={(roomId) => { changeRoom(roomId); setSceneFolio(false) }} onClose={() => setSceneFolio(false)} />}
 
       <div className="voice-dock mobile-only">
         {!joinedVoice ? <button className="primary-action" onClick={joinVoice} disabled={joiningVoice || connection !== 'live' || !voiceConfigReady}><Headphones size={17} />{joiningVoice ? 'Joining…' : voiceConfigReady ? 'Join voice' : 'Preparing voice…'}</button> : <><button className={`dock-mic ${muted ? 'dock-mic--muted' : ''}`} onClick={() => setMuted((current) => !current)} aria-label={muted ? 'Unmute' : 'Mute'}>{muted ? <MicOff size={18} /> : <Mic size={18} />}</button><span>{Object.values(peerConnectionStates).includes('failed') ? 'Voice issue' : Object.values(peerConnectionStates).includes('recovering') ? 'Reconnecting voice…' : muted ? 'Muted' : `${voiceParticipants.length} in voice`}</span><button className="quiet-icon" onClick={() => setMobileTable(true)} aria-label="Voice settings"><PanelRight size={17} /></button></>}

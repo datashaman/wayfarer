@@ -83,39 +83,6 @@ export type RoomMessage = {
   text: string
   sentAt: string
   sequence: number
-  kind: 'chat' | 'scene_start' | 'scene_end'
-  scene: null | {
-    id: Id
-    title: string
-    framing?: string
-    stakes?: string
-    question?: string
-    outcome?: string
-    characters?: Array<{ id: Id; name: string; playerName: string }>
-  }
-}
-
-export type CampaignScene = {
-  id: Id
-  campaignId: Id
-  title: string
-  framing: string
-  stakes: string
-  question: string
-  status: 'active' | 'resolved'
-  outcome: string | null
-  characters: Array<{ id: Id; name: string; playerName: string }>
-  createdByName: string | null
-  resolvedByName: string | null
-  createdAt: string
-  resolvedAt: string | null
-}
-
-export type SceneContext = {
-  openingCrisis: CampaignWorld['openingCrisis'] | null
-  characters: Array<{ id: Id; name: string; playerName: string; concept: string }>
-  activeScene: CampaignScene | null
-  scenes: CampaignScene[]
 }
 
 export type Character = {
@@ -608,7 +575,6 @@ export type ServerEvent =
   | Envelope<'campaign.canon_updated', CanonLedger>
   | Envelope<'campaign.preparation_updated', { run: PreparationRun }>
   | Envelope<'campaign.characters_updated', CharacterCreationContext>
-  | Envelope<'campaign.scene_updated', SceneContext>
   | Envelope<'room.activity', { senderId: Id }>
   | Envelope<'room.snapshot', { participants: Participant[]; voiceParticipants: Participant[]; messages: RoomMessage[]; hasMore: boolean }>
   | Envelope<'presence.snapshot', { participants: Participant[] }>

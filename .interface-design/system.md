@@ -135,14 +135,6 @@ World connections are concrete choice ledgers, not generic dropdowns. Each chara
 
 Optional concept assistance offers exactly three bordered, prose-led lives derived from the established campaign. It must remain visibly optional and editable; selecting a life only fills the folio, and **Take your seat** is the sole creation action. Keep manual entry fully available, avoid classes, stats, species, and rule-system assumptions, and never describe generated material as accepted or saved.
 
-### Scene threshold
-
-The Scene folio is the GM’s crossing point from preparation into actual play. It inherits the saved opening crisis, asks for an immediate first choice, and uses explicit character-presence controls. Only one scene may be active. Avoid session dashboards, scene cards, initiative trackers, or AI narration; the scene is one human-edited moment placed directly in front of the party.
-
-Its signature is the threshold marker inside the `in-character` transcript: paired hairlines and a wax scene glyph, serif framing, two quiet pressure fields for inaction and first choice, and the present cast. It is full-width within the readable transcript measure rather than rendered as a speaker message. Resolution uses a quieter moss-tinted marker stating only the GM-recorded outcome. Both markers retain the exact historical wording even if the world or characters change later.
-
-The active folio reads as framing → pressure → cast → outcome. Resolution requires a concrete statement of what became true; it never disappears on close and never resolves automatically. Beginning or resolving a scene returns the GM to the in-character room so the transcript remains the play surface.
-
 ### Session transcript
 
 Messages are avatar-and-copy rows, never speech bubbles. Sender, timestamp, delivery state, and literary body text form the hierarchy. System events sit between hairline rules. Keep transcript measure near 760px for readability.

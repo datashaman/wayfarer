@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-test('a table creates a character, crosses into the opening scene, and plays', async ({ page }) => {
+test('a player creates a world-grounded character and speaks as them', async ({ page }) => {
   await page.goto('/')
   await page.getByLabel('Campaign name').fill('The Salt Road')
   await page.getByLabel('Your name').fill('Mara')
@@ -28,27 +28,11 @@ test('a table creates a character, crosses into the opening scene, and plays', a
   const partySeat = page.locator('.party-list .player-row')
   await expect(partySeat.getByText('Iria Voss')).toBeVisible()
   await expect(partySeat.getByText('Mara')).toBeVisible()
-
-  await page.getByRole('button', { name: 'Scene', exact: true }).click()
-  const scene = page.getByRole('dialog', { name: 'Scene at the table' })
-  await expect(scene.getByLabel('The moment')).toHaveValue('The first toll')
-  await expect(scene.getByRole('button', { name: /Iria Voss/ })).toHaveAttribute('aria-pressed', 'true')
-  await scene.getByLabel('What demands the first choice?').fill('The rope pulls taut in Iria’s hand. Who cuts it?')
-  await scene.getByRole('button', { name: 'Begin play' }).click()
-  await expect(page.getByRole('heading', { name: 'The first toll' })).toBeVisible()
-  await expect(page.getByText('The scene opens')).toBeVisible()
-  await expect(page.getByText('The rope pulls taut in Iria’s hand. Who cuts it?')).toBeVisible()
+  await page.getByRole('button', { name: /in-character/ }).click()
   await page.getByLabel('Message in-character').fill('The bell is awake.')
   await page.getByRole('button', { name: 'Send message' }).click()
   const message = page.locator('.message').last()
   await expect(message.getByText('Iria Voss')).toBeVisible()
   await expect(message.getByText('Mara')).toBeVisible()
   await expect(message.getByText('The bell is awake.')).toBeVisible()
-
-  await page.getByRole('button', { name: 'Scene', exact: true }).click()
-  const activeScene = page.getByRole('dialog', { name: 'Scene at the table' })
-  await activeScene.getByLabel('What is true because this scene happened?').fill('Iria cuts the rope and the bell cracks.')
-  await activeScene.getByRole('button', { name: 'Resolve this scene' }).click()
-  await expect(page.getByText('The scene resolves')).toBeVisible()
-  await expect(page.getByText('Iria cuts the rope and the bell cracks.')).toBeVisible()
 })

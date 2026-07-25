@@ -27,7 +27,6 @@ npm run test:e2e
 - SQLite-backed rooms and transcripts that survive server restarts
 - Campaign-wide unread activity, transcript search, and revision-safe shared notes
 - Player-owned, world-grounded character folios with sealed secrets and durable campaign connections
-- GM-framed active scenes with immutable opening and resolution markers in the in-character transcript
 - Durable per-player read state, reconnect catch-up, idempotent messages, and paginated transcript history
 - WebSocket text chat between connected players
 - WebRTC peer-to-peer voice with mute, leave, and push-to-talk controls
@@ -58,8 +57,6 @@ Comparable live-model results can be appended with `npm run eval:record`; see `d
 GMs create the campaign itself from the top-level **World** folio. A short premise can become a private, system-neutral opening draft with three setting truths, two factions in conflict, three dangerous locations, five NPCs with wants and leverage, four actionable hooks, and one opening crisis already in motion. Every field remains editable, a blank manual folio is always available, and nothing becomes campaign material until a GM explicitly establishes it. Saved foundations are durable typed content with stable entity identities and optimistic revisions—not chat output—and retain the generator edition that first proposed them. `OPENAI_INTELLIGENCE_MODEL` powers the optional draft; run `npm run eval:campaign-seed` for its bounded live fixture.
 
 Every seat has a top-level **Character** folio. A playable character records their public concept, appearance, immediate drive, capability, complication, possession, and challengeable belief; a sealed secret is readable only by that player and the campaign’s GMs. Characters must carry concrete connections to one saved faction, location, and NPC, with an optional connection to another character once the party exists. Players can write from scratch or request exactly three private, editable concepts grounded only in the saved campaign foundation. Choosing a concept fills the folio but saves nothing until **Take your seat**. Party presence uses the character identity while retaining the player name, and messages in the `in-character` room permanently snapshot the character name used when sent. Run `npm run eval:character-concepts` for the bounded concept fixture.
-
-Once the world and at least one character exist, a GM uses the top-level **Scene** folio to begin actual play. The saved opening crisis pre-fills the moment, framing, and stakes; the GM adds the first choice and selects who is present. **Begin play** creates the campaign’s single active scene and an immutable threshold marker in the `in-character` transcript, then takes the GM directly there. Ordinary character messages continue beneath that framing. Resolving the scene requires a concrete statement of what changed, adds a matching transcript marker, and frees the table to frame the next scene. Scene markers are human-authored campaign records, not AI narration.
 
 Run `npm run eval:canon` with a configured key to check the live extractor against promises, banter, corrections, transcript prompt injection, strict and permissive constitution policies, citation integrity, and GM-only visibility. Deterministic safety checks remain part of `npm test`; the live evaluation is separate because it calls the configured model.
 

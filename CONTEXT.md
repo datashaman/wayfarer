@@ -26,7 +26,8 @@ Wayfarer is a human-kept campaign memory system, not an autonomous storyteller. 
 - **Knowledge lens**: deterministic view of canon readable by one character seat; it is not a model inference.
 - **Session recap**: cited draft split into campaign-safe text and GM-private notes, published only by a GM.
 - **Preparation run**: readiness-gated, campaign-scoped drafting of canon suggestions, continuity, and recaps for one closed session.
-- **House rule**: revisioned table ruling that preserves the source rule, interpretation, final wording, and reason for change.
+- **House-rule proposal**: immutable generated wording, edition, citations, and session awaiting an explicit GM decision.
+- **House rule**: revisioned table ruling created by an unchanged or edited acceptance, preserving the proposal, final wording, and reason; rejection remains evaluation evidence.
 - **Faction clock proposal**: editable counterfactual motion with explicit assumptions; accepting it advances the human-kept clock.
 - **Spotlight report**: message counts for seats that opted in before the counted activity; it is not an assessment of participation quality.
 - **Intent draft**: private, editable phrasing grounded only in that player’s messages and readable canon; it is never sent automatically.

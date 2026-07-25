@@ -39,6 +39,10 @@ Production inference records are appended to `ai_inference_runs` after applicati
 
 Prompts, transcript passages, canon, model output, citations, reasoning, player names, and error messages are never written to the trace table. Failure to record observability must not fail the campaign action. The GM-only AI evaluation ledger groups current-edition traces with the latest comparable live check; an observed success rate describes runtime health, not factual quality or authority.
 
+The local feedback export uses `wayfarer.ai-feedback.v2`. Alongside canon, continuity, and character-knowledge fixtures, it includes decided house-rule proposals grouped by generator edition. Each fixture keeps the original cited proposal and one of three human outcomes: accepted unchanged, accepted with separately preserved edits, or rejected. Pending proposals are excluded because they do not yet express a verdict.
+
+Preparation runs retain the exact artifact IDs produced by each task. Their GM-only trail derives current downstream outcomes from the authoritative records: canon rulings, continuity ratings, and recap publication. Task completion remains operational evidence; these linked human outcomes are product evidence.
+
 Post-session preparation is not eligible until one campaign has all of:
 
 - at least 20 reviewed canon suggestions;

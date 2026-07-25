@@ -3364,6 +3364,13 @@ textarea:focus-visible {
   grid-column: 1 / -1;
 }
 
+.preparation-runs > li > ol small.preparation-task__outcome {
+  padding-left: 8px;
+  border-left: 1px solid var(--border-strong);
+  color: var(--parchment-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .preparation-retry {
   grid-column: 1 / -1;
   justify-self: start;
@@ -3484,6 +3491,132 @@ textarea:focus-visible {
 .rule-compiler > .folio-small-action,
 .rule-compiler > .folio-button {
   justify-self: start;
+}
+
+.rule-proposal-ledger {
+  margin: 10px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-medium);
+  background: var(--soot-900);
+}
+
+.rule-proposal-ledger__heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.rule-proposal-ledger__heading strong {
+  color: var(--parchment-dim);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rule-proposal-ledger__heading span {
+  color: var(--wax);
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rule-proposal-ledger > ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rule-proposal {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.rule-proposal:last-child {
+  border-bottom: 0;
+}
+
+.rule-proposal--accepted {
+  border-left: 2px solid color-mix(in srgb, var(--moss) 55%, transparent);
+}
+
+.rule-proposal--rejected {
+  border-left: 2px solid color-mix(in srgb, var(--danger) 55%, transparent);
+}
+
+.rule-proposal__edition {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--parchment-muted);
+  font-size: 8px;
+}
+
+.rule-proposal__edition > span {
+  color: var(--wax);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rule-proposal--accepted .rule-proposal__edition > span { color: var(--moss); }
+.rule-proposal--rejected .rule-proposal__edition > span { color: var(--danger); }
+
+.rule-proposal h3 {
+  margin: 0;
+  color: var(--parchment-soft);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.rule-proposal > p {
+  margin: 0;
+  color: var(--parchment-dim);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.rule-proposal > .folio-small-action {
+  justify-self: start;
+}
+
+.rule-proposal__decision,
+.rule-form__provenance {
+  display: grid;
+  gap: 3px;
+  padding-left: 9px;
+  border-left: 1px solid var(--border-strong);
+  color: var(--parchment-muted);
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.rule-proposal__decision strong,
+.rule-form__provenance strong {
+  color: var(--parchment-dim);
+  font-size: 9px;
+}
+
+.rule-form--proposal {
+  border-color: color-mix(in srgb, var(--wax) 42%, var(--border));
+}
+
+.rule-form__provenance {
+  grid-column: 1 / -1;
+  margin-bottom: 4px;
+  border-left-color: var(--wax);
+}
+
+.rule-form__provenance > span {
+  color: var(--wax);
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .rule-compiler > ol {

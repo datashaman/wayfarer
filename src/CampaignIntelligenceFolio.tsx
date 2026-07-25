@@ -2,10 +2,17 @@ import { Check, Plus, RefreshCw, X } from 'lucide-react'
 import { FormEvent, useEffect, useState } from 'react'
 import { api } from './lib/api'
 import { readinessRequirement } from './lib/readiness'
-import type { CampaignIntelligenceOverview, CampaignSession, CanonEntry, CanonProposalSource, FactionClock, HouseRule, HouseRuleRevision, SpotlightConsent, SpotlightReport, TableSession } from './types/protocol'
+import type { CampaignIntelligenceOverview, CampaignSession, CanonEntry, CanonProposalSource, FactionClock, HouseRule, HouseRuleProposal, HouseRuleRevision, SpotlightConsent, SpotlightReport, TableSession } from './types/protocol'
 
 const blankRule = { title: '', sourceRule: '', interpretation: '', ruling: '', reason: '' }
 const blankClock = { name: '', goal: '', progress: 0, segments: 6 }
+
+function preparationOutcome(task: CampaignIntelligenceOverview['preparationRuns'][number]['tasks'][number]) {
+  if (!task.outcome) return null
+  if ('awaiting' in task.outcome) return `${task.outcome.accepted} accepted · ${task.outcome.awaiting} awaiting · ${task.outcome.disputed + task.outcome.rejected} declined`
+  if ('rated' in task.outcome) return `${task.outcome.rated}/${task.outcome.total} rated · ${task.outcome.useful} useful · ${task.outcome.issues} flagged`
+  return task.outcome.status === 'published' ? `Published · revision ${task.outcome.revision}` : `Draft · revision ${task.outcome.revision}`
+}
 
 export function CampaignIntelligenceFolio({ session, onClose, onUseDraft, onOpenLedger }: { session: TableSession; onClose: () => void; onUseDraft: (draft: string) => void; onOpenLedger: (target: 'canon' | 'continuity') => void }) {
   const authorization = { authorization: `Bearer ${session.player.token}` }
@@ -24,6 +31,7 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft, onOpen
   const [selectedRuleEvidence, setSelectedRuleEvidence] = useState<string[]>([])
   const [editingRule, setEditingRule] = useState<HouseRule | null>(null)
   const [ruleHistory, setRuleHistory] = useState<Record<string, HouseRuleRevision[]>>({})
+  const [activeRuleProposal, setActiveRuleProposal] = useState<HouseRuleProposal | null>(null)
   const [clockDraft, setClockDraft] = useState(blankClock)
   const [selectedSession, setSelectedSession] = useState('')
   const [spotlight, setSpotlight] = useState<SpotlightReport | null>(null)
@@ -31,12 +39,13 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft, onOpen
   const [error, setError] = useState('')
 
   const refresh = async () => {
-    const [{ rules: nextRules }, { sessions: nextSessions }, consentResult] = await Promise.all([
-      api<{ rules: HouseRule[] }>('/api/campaign/intelligence/rules', { headers: authorization }),
+    const [{ rules: nextRules, proposals }, { sessions: nextSessions }, consentResult] = await Promise.all([
+      api<{ rules: HouseRule[]; proposals: HouseRuleProposal[] }>('/api/campaign/intelligence/rules', { headers: authorization }),
       api<{ sessions: CampaignSession[] }>('/api/campaign/sessions', { headers: authorization }),
       api<{ consent: SpotlightConsent }>('/api/campaign/intelligence/spotlight/consent', { headers: authorization }),
     ])
     setRules(nextRules)
+    setOverview((current) => current ? { ...current, houseRules: nextRules, houseRuleProposals: proposals } : current)
     setSessions(nextSessions)
     setSelectedSession((current) => current || nextSessions.find((item) => item.status === 'closed')?.id || '')
     setConsent(consentResult.consent)
@@ -47,7 +56,7 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft, onOpen
     let active = true
     const headers = { authorization: `Bearer ${session.player.token}` }
     Promise.all([
-      api<{ rules: HouseRule[] }>('/api/campaign/intelligence/rules', { headers }),
+      api<{ rules: HouseRule[]; proposals: HouseRuleProposal[] }>('/api/campaign/intelligence/rules', { headers }),
       api<{ sessions: CampaignSession[] }>('/api/campaign/sessions', { headers }),
       api<{ consent: SpotlightConsent }>('/api/campaign/intelligence/spotlight/consent', { headers }),
       isGm ? api<CampaignIntelligenceOverview>('/api/campaign/intelligence', { headers }) : Promise.resolve(null),
@@ -57,7 +66,7 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft, onOpen
       setSessions(sessionsResult.sessions)
       setSelectedSession(sessionsResult.sessions.find((item) => item.status === 'closed')?.id || '')
       setConsent(consentResult.consent)
-      if (overviewResult) setOverview(overviewResult)
+      if (overviewResult) setOverview({ ...overviewResult, houseRuleProposals: rulesResult.proposals })
     }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : 'Campaign intelligence could not be opened.') })
     return () => { active = false }
   }, [isGm, session.player.token])
@@ -112,14 +121,17 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft, onOpen
     void run('rule', async () => {
       if (editingRule) {
         await api(`/api/campaign/intelligence/rules/${editingRule.id}`, { method: 'PATCH', headers: authorization, body: JSON.stringify({ ...ruleDraft, sources: ruleSources, status: editingRule.status, revision: editingRule.revision }) })
+      } else if (activeRuleProposal) {
+        await api(`/api/campaign/intelligence/rules/proposals/${activeRuleProposal.id}/decision`, { method: 'POST', headers: authorization, body: JSON.stringify({ action: 'accept', ...ruleDraft }) })
       } else {
         await api('/api/campaign/intelligence/rules', { method: 'POST', headers: authorization, body: JSON.stringify({ ...ruleDraft, sources: ruleSources }) })
       }
-      setEditingRule(null); setRuleDraft(blankRule); setRuleSources([]); setRuleEvidence([]); setSelectedRuleEvidence([]); await refresh()
+      setEditingRule(null); setActiveRuleProposal(null); setRuleDraft(blankRule); setRuleSources([]); setRuleEvidence([]); setSelectedRuleEvidence([]); await refresh()
     })
   }
 
   const editRule = (rule: HouseRule) => {
+    setActiveRuleProposal(null)
     setEditingRule(rule)
     setRuleDraft({ title: rule.title, sourceRule: rule.sourceRule, interpretation: rule.interpretation, ruling: rule.ruling, reason: '' })
     setRuleSources(rule.sources)
@@ -132,10 +144,24 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft, onOpen
   })
 
   const compileRule = () => void run('rule-compile', async () => {
-    const result = await api<{ proposal: { title: string; sourceRule: string; interpretation: string; ruling: string; sources: CanonProposalSource[] } }>('/api/campaign/intelligence/rules/compile', { method: 'POST', headers: authorization, body: JSON.stringify({ sessionId: selectedSession, messageIds: selectedRuleEvidence }) })
+    const result = await api<{ proposal: HouseRuleProposal }>('/api/campaign/intelligence/rules/compile', { method: 'POST', headers: authorization, body: JSON.stringify({ sessionId: selectedSession, messageIds: selectedRuleEvidence }) })
     setEditingRule(null)
-    setRuleDraft({ title: result.proposal.title, sourceRule: result.proposal.sourceRule, interpretation: result.proposal.interpretation, ruling: result.proposal.ruling, reason: 'Compiled from selected table discussion.' })
+    setActiveRuleProposal(result.proposal)
+    setRuleDraft({ ...result.proposal.original, reason: '' })
     setRuleSources(result.proposal.sources)
+    setOverview((current) => current ? { ...current, houseRuleProposals: [result.proposal, ...current.houseRuleProposals] } : current)
+  })
+
+  const resumeRuleProposal = (proposal: HouseRuleProposal) => {
+    setEditingRule(null)
+    setActiveRuleProposal(proposal)
+    setRuleDraft({ ...proposal.original, reason: '' })
+    setRuleSources(proposal.sources)
+  }
+
+  const rejectRuleProposal = () => activeRuleProposal && void run('rule-reject', async () => {
+    await api(`/api/campaign/intelligence/rules/proposals/${activeRuleProposal.id}/decision`, { method: 'POST', headers: authorization, body: JSON.stringify({ action: 'reject', reason: ruleDraft.reason }) })
+    setActiveRuleProposal(null); setRuleDraft(blankRule); setRuleSources([]); await refresh()
   })
 
   const retireRule = (rule: HouseRule) => void run(`retire-${rule.id}`, async () => {
@@ -200,13 +226,14 @@ export function CampaignIntelligenceFolio({ session, onClose, onUseDraft, onOpen
           {overview.knowledgeMetrics.length > 0 && <div className="knowledge-editions"><span>Knowledge answer editions</span>{overview.knowledgeMetrics.map((metrics) => <div key={metrics.generatorVersion}><strong>{metrics.generatorVersion}</strong><small>{Math.round((metrics.usefulRate ?? 0) * 100)}% useful · {metrics.total} rated · {metrics.incorrect} incorrect · {metrics.incomplete} incomplete · {metrics.secretLeak} leaks</small></div>)}</div>}
           <div className="preparation-controls"><label><input type="checkbox" checked={overview.settings.autoPrepare} onChange={(event) => setOverview({ ...overview, settings: { ...overview.settings, autoPrepare: event.target.checked } })} disabled={!overview.readiness.eligible} />Prepare after a session closes</label>{(['canon', 'continuity', 'recap'] as const).map((task) => <label key={task}><input type="checkbox" checked={overview.settings.tasks[task]} onChange={(event) => setOverview({ ...overview, settings: { ...overview.settings, tasks: { ...overview.settings.tasks, [task]: event.target.checked } } })} />{task === 'canon' ? 'Canon suggestions' : task === 'continuity' ? 'Continuity brief' : 'Recap draft'}</label>)}<button className="folio-button" onClick={savePreparation} disabled={pending === 'settings'}>Save preparation</button></div>
           <div className="intelligence-inline"><select aria-label="Preparation session" value={selectedSession} onChange={(event) => setSelectedSession(event.target.value)}>{sessions.filter((item) => item.status === 'closed').map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select><button className="folio-button" onClick={prepareSession} disabled={!selectedSession || !overview.readiness.eligible || pending === 'prepare'}>{pending === 'prepare' ? 'Queuing…' : 'Prepare now'}</button></div>
-          {overview.preparationRuns.length > 0 && <ol className="preparation-runs">{overview.preparationRuns.slice(0, 5).map((runItem) => <li key={runItem.id}><span>{sessions.find((item) => item.id === runItem.sessionId)?.title ?? 'Campaign session'}</span><strong>{runItem.status}</strong><ol>{runItem.tasks.map((task) => <li key={task.name}><span>{task.name === 'canon' ? 'Canon suggestions' : task.name === 'continuity' ? 'Continuity brief' : 'Recap draft'}</span><em className={`preparation-task--${task.status}`}>{task.status}{task.attempts > 1 ? ` · attempt ${task.attempts}` : ''}</em>{task.error && <small>{task.error}</small>}</li>)}</ol>{runItem.tasks.some((task) => task.status === 'failed') && <button className="folio-small-action preparation-retry" onClick={() => retryPreparation(runItem.id)} disabled={pending === `retry-${runItem.id}`}><RefreshCw size={12} className={pending === `retry-${runItem.id}` ? 'spinning' : ''} />{pending === `retry-${runItem.id}` ? 'Retrying…' : 'Retry failed work'}</button>}</li>)}</ol>}
+          {overview.preparationRuns.length > 0 && <ol className="preparation-runs">{overview.preparationRuns.slice(0, 5).map((runItem) => <li key={runItem.id}><span>{sessions.find((item) => item.id === runItem.sessionId)?.title ?? 'Campaign session'}</span><strong>{runItem.status}</strong><ol>{runItem.tasks.map((task) => <li key={task.name}><span>{task.name === 'canon' ? 'Canon suggestions' : task.name === 'continuity' ? 'Continuity brief' : 'Recap draft'}</span><em className={`preparation-task--${task.status}`}>{task.status}{task.attempts > 1 ? ` · attempt ${task.attempts}` : ''}</em>{task.error && <small>{task.error}</small>}{preparationOutcome(task) && <small className="preparation-task__outcome">Human outcome · {preparationOutcome(task)}</small>}</li>)}</ol>{runItem.tasks.some((task) => task.status === 'failed') && <button className="folio-small-action preparation-retry" onClick={() => retryPreparation(runItem.id)} disabled={pending === `retry-${runItem.id}`}><RefreshCw size={12} className={pending === `retry-${runItem.id}` ? 'spinning' : ''} />{pending === `retry-${runItem.id}` ? 'Retrying…' : 'Retry failed work'}</button>}</li>)}</ol>}
         </section>
 
         <section className="intelligence-section" aria-labelledby="house-rules-heading">
           <div className="intelligence-section__heading"><span>Negotiated rules</span><h2 id="house-rules-heading">The table’s ruling, with its reasoning intact</h2></div>
-          <div className="rule-compiler"><div><strong>Compile from table discussion</strong><span>Select 1–12 transcript passages. The result fills an editable proposal; it never records itself.</span></div><button className="folio-small-action" onClick={loadRuleEvidence} disabled={!selectedSession || pending === 'rule-evidence'}>{pending === 'rule-evidence' ? 'Reading…' : ruleEvidence.length ? 'Reload passages' : 'Choose passages'}</button>{ruleEvidence.length > 0 && <><ol>{ruleEvidence.map((message) => <li key={message.messageId}><label><input type="checkbox" checked={selectedRuleEvidence.includes(message.messageId)} onChange={(event) => setSelectedRuleEvidence((current) => event.target.checked ? current.length < 12 ? [...current, message.messageId] : current : current.filter((id) => id !== message.messageId))} /><span><strong>{message.senderName} · {message.roomName}</strong><q>{message.text}</q></span></label></li>)}</ol><button className="folio-button" onClick={compileRule} disabled={!selectedRuleEvidence.length || pending === 'rule-compile'}>{pending === 'rule-compile' ? 'Compiling…' : `Compile ${selectedRuleEvidence.length} selected`}</button></>}</div>
-          <form className="intelligence-form rule-form" onSubmit={saveRule}><label htmlFor="rule-title">Title</label><input id="rule-title" value={ruleDraft.title} onChange={(event) => setRuleDraft({ ...ruleDraft, title: event.target.value })} maxLength={120} /><label htmlFor="rule-source">Source rule</label><textarea id="rule-source" value={ruleDraft.sourceRule} onChange={(event) => setRuleDraft({ ...ruleDraft, sourceRule: event.target.value })} maxLength={1_000} /><label htmlFor="rule-interpretation">Interpretation</label><textarea id="rule-interpretation" value={ruleDraft.interpretation} onChange={(event) => setRuleDraft({ ...ruleDraft, interpretation: event.target.value })} maxLength={2_000} /><label htmlFor="rule-ruling">Table ruling</label><textarea id="rule-ruling" value={ruleDraft.ruling} onChange={(event) => setRuleDraft({ ...ruleDraft, ruling: event.target.value })} maxLength={2_000} /><label htmlFor="rule-reason">Reason for this revision</label><input id="rule-reason" value={ruleDraft.reason} onChange={(event) => setRuleDraft({ ...ruleDraft, reason: event.target.value })} maxLength={500} />{ruleSources.length > 0 && <div className="rule-source-chips">{ruleSources.map((source) => <span key={source.messageId}>{source.senderName} · {source.roomName}</span>)}</div>}<div className="intelligence-actions"><button className="primary-action" disabled={pending === 'rule' || Object.values(ruleDraft).some((value) => !String(value).trim())}>{editingRule ? 'Save revision' : 'Record ruling'}</button>{editingRule && <button type="button" className="folio-button" onClick={() => { setEditingRule(null); setRuleDraft(blankRule); setRuleSources([]) }}>Cancel</button>}</div></form>
+          <div className="rule-compiler"><div><strong>Compile from table discussion</strong><span>Select 1–12 transcript passages. The generated wording enters the ruling trail immediately and remains a proposal until you decide it.</span></div><button className="folio-small-action" onClick={loadRuleEvidence} disabled={!selectedSession || pending === 'rule-evidence'}>{pending === 'rule-evidence' ? 'Reading…' : ruleEvidence.length ? 'Reload passages' : 'Choose passages'}</button>{ruleEvidence.length > 0 && <><ol>{ruleEvidence.map((message) => <li key={message.messageId}><label><input type="checkbox" checked={selectedRuleEvidence.includes(message.messageId)} onChange={(event) => setSelectedRuleEvidence((current) => event.target.checked ? current.length < 12 ? [...current, message.messageId] : current : current.filter((id) => id !== message.messageId))} /><span><strong>{message.senderName} · {message.roomName}</strong><q>{message.text}</q></span></label></li>)}</ol><button className="folio-button" onClick={compileRule} disabled={!selectedRuleEvidence.length || pending === 'rule-compile'}>{pending === 'rule-compile' ? 'Compiling…' : `Compile ${selectedRuleEvidence.length} selected`}</button></>}</div>
+          {overview.houseRuleProposals.length > 0 && <div className="rule-proposal-ledger"><div className="rule-proposal-ledger__heading"><strong>Proposal rulings</strong><span>{overview.houseRuleProposals.filter((proposal) => proposal.status === 'proposed').length} awaiting decision</span></div><ol>{overview.houseRuleProposals.slice(0, 8).map((proposal) => <li className={`rule-proposal rule-proposal--${proposal.status}`} key={proposal.id}><div className="rule-proposal__edition"><span>{proposal.status}</span><small>{proposal.generatorVersion}</small></div><h3>{proposal.original.title}</h3><p>{proposal.original.ruling}</p>{proposal.status === 'proposed' ? <button className="folio-small-action" onClick={() => resumeRuleProposal(proposal)}>{activeRuleProposal?.id === proposal.id ? 'Editing below' : 'Review proposal'}</button> : proposal.decision && <div className="rule-proposal__decision"><strong>{proposal.decision.action === 'edit_accept' ? `Accepted with ${proposal.decision.editedFields.length} ${proposal.decision.editedFields.length === 1 ? 'edit' : 'edits'}` : proposal.decision.action === 'accept' ? 'Accepted unchanged' : 'Rejected'}</strong><span>{proposal.decision.reason}</span><small>{proposal.decision.decidedByName} · {new Date(proposal.decision.decidedAt).toLocaleDateString()}</small></div>}</li>)}</ol></div>}
+          <form className={activeRuleProposal ? 'intelligence-form rule-form rule-form--proposal' : 'intelligence-form rule-form'} onSubmit={saveRule}>{activeRuleProposal && <div className="rule-form__provenance"><span>Reviewing generated proposal</span><strong>{activeRuleProposal.generatorVersion}</strong><small>The original wording and citations remain unchanged in the proposal trail.</small></div>}<label htmlFor="rule-title">Title</label><input id="rule-title" value={ruleDraft.title} onChange={(event) => setRuleDraft({ ...ruleDraft, title: event.target.value })} maxLength={120} /><label htmlFor="rule-source">Source rule</label><textarea id="rule-source" value={ruleDraft.sourceRule} onChange={(event) => setRuleDraft({ ...ruleDraft, sourceRule: event.target.value })} maxLength={1_000} /><label htmlFor="rule-interpretation">Interpretation</label><textarea id="rule-interpretation" value={ruleDraft.interpretation} onChange={(event) => setRuleDraft({ ...ruleDraft, interpretation: event.target.value })} maxLength={2_000} /><label htmlFor="rule-ruling">Table ruling</label><textarea id="rule-ruling" value={ruleDraft.ruling} onChange={(event) => setRuleDraft({ ...ruleDraft, ruling: event.target.value })} maxLength={2_000} /><label htmlFor="rule-reason">{activeRuleProposal ? 'Reason for this decision' : 'Reason for this revision'}</label><input id="rule-reason" value={ruleDraft.reason} onChange={(event) => setRuleDraft({ ...ruleDraft, reason: event.target.value })} maxLength={500} />{ruleSources.length > 0 && <div className="rule-source-chips">{ruleSources.map((source) => <span key={source.messageId}>{source.senderName} · {source.roomName}</span>)}</div>}<div className="intelligence-actions"><button className="primary-action" disabled={pending === 'rule' || Object.values(ruleDraft).some((value) => !String(value).trim())}>{editingRule ? 'Save revision' : activeRuleProposal ? 'Accept ruling' : 'Record ruling'}</button>{activeRuleProposal && <><button type="button" className="folio-button folio-button--danger" onClick={rejectRuleProposal} disabled={!ruleDraft.reason.trim() || pending === 'rule-reject'}>{pending === 'rule-reject' ? 'Rejecting…' : 'Reject proposal'}</button><button type="button" className="folio-button" onClick={() => { setActiveRuleProposal(null); setRuleDraft(blankRule); setRuleSources([]) }}>Leave pending</button></>}{editingRule && <button type="button" className="folio-button" onClick={() => { setEditingRule(null); setRuleDraft(blankRule); setRuleSources([]) }}>Cancel</button>}</div></form>
           <ol className="rule-ledger">{rules.map((rule) => <li key={rule.id}><div><span>{rule.status} · revision {rule.revision}</span><h3>{rule.title}</h3></div><dl><dt>Source</dt><dd>{rule.sourceRule}</dd><dt>Interpretation</dt><dd>{rule.interpretation}</dd><dt>Ruling</dt><dd>{rule.ruling}</dd></dl>{rule.sources.length > 0 && <div className="rule-citations">{rule.sources.map((source) => <q key={source.messageId}>{source.senderName} · {source.roomName}: {source.excerpt ?? source.text}</q>)}</div>}<div className="intelligence-actions"><button className="folio-small-action" onClick={() => editRule(rule)}>Revise</button><button className="folio-small-action" onClick={() => toggleRuleHistory(rule)}>{ruleHistory[rule.id] ? 'Hide history' : 'History'}</button>{rule.status === 'active' && <button className="folio-small-action" onClick={() => retireRule(rule)}>Retire</button>}</div>{ruleHistory[rule.id] && <ol className="rule-history">{ruleHistory[rule.id].map((revision) => <li key={revision.id}><div><strong>Revision {revision.revision} · {revision.status}</strong><time dateTime={revision.createdAt}>{new Date(revision.createdAt).toLocaleDateString()}</time></div><p>{revision.ruling}</p>{revision.sources.map((source) => <q key={source.messageId}>{source.senderName}: {source.excerpt ?? source.text}</q>)}<small>{revision.reason} · {revision.playerName}</small></li>)}</ol>}</li>)}</ol>
         </section>
 

@@ -4075,6 +4075,16 @@ textarea:focus-visible {
 .world-aftermath__change small { display: block; margin-bottom: 5px; color: var(--parchment-muted); font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .world-aftermath blockquote { margin: 12px 0 0; padding-left: 12px; border-left: 1px solid var(--moss); color: var(--parchment-soft); font-family: Georgia, "Times New Roman", serif; font-size: 12px; line-height: 1.5; }
 .world-aftermath__resolution { margin: 10px 0 0; color: var(--parchment-muted); font-size: 9px; }
+.world-current-state { display: grid; gap: 9px; margin: -4px -4px 14px; padding: 11px; border: 1px solid color-mix(in srgb, var(--wax) 35%, var(--border-soft)); background: var(--soot-925); }
+.world-current-state > span { color: var(--wax); font-size: 7px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.world-current-state dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.world-current-state dl > div { min-width: 0; }
+.world-current-state dt { margin-bottom: 3px; color: var(--parchment-muted); font-size: 7px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.world-current-state dd { margin: 0; color: var(--parchment-soft); font-family: Georgia, "Times New Roman", serif; font-size: 11px; line-height: 1.45; }
+.world-current-state blockquote { margin: 0; padding-left: 9px; border-left: 1px solid var(--wax); color: var(--parchment-dim); font-family: Georgia, "Times New Roman", serif; font-size: 10px; line-height: 1.45; }
+.world-current-state blockquote small { display: block; margin-bottom: 2px; color: var(--parchment-muted); font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 7px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.world-current-state.is-settled { border-color: color-mix(in srgb, var(--moss) 42%, var(--border-soft)); }
+.world-current-state.is-settled > span { color: var(--moss); }
 .world-discoveries { order: -1; }
 .world-discoveries > ol { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 10px; }
 .world-discoveries > ol > li { padding: 16px; border: 1px solid var(--border-soft); border-left-color: var(--moss); background: var(--soot-925); }
@@ -4309,6 +4319,12 @@ textarea:focus-visible {
 .scene-fallout__targets button:disabled { opacity: .35; }
 .scene-fallout__targets small { color: var(--parchment-muted); font-size: 7px; letter-spacing: .08em; text-transform: uppercase; }
 .scene-fallout textarea { min-height: 72px; }
+.scene-fallout__state { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--border-soft); background: var(--soot-925); }
+.scene-fallout__state textarea { min-height: 60px; }
+.scene-fallout__status-label { color: var(--parchment-muted); font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.scene-fallout__status { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.scene-fallout__status button { padding: 8px; border: 1px solid var(--border-soft); border-radius: var(--radius-small); background: transparent; color: var(--parchment-muted); font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.scene-fallout__status button.is-chosen { border-color: color-mix(in srgb, var(--moss) 60%, transparent); background: color-mix(in srgb, var(--moss) 8%, transparent); color: var(--parchment); }
 .scene-discoveries textarea { min-height: 72px; }
 .scene-discovery-types { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .scene-discovery-types button { padding: 8px; border: 1px solid var(--border-soft); border-radius: var(--radius-small); background: transparent; color: var(--parchment-muted); font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }

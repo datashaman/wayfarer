@@ -43,7 +43,8 @@ function publicCampaign(row, rooms) {
 
 function publicCampaignWorld(row, collections = {}) {
   if (!row) return null
-  const { truths = [], factions = [], locations = [], npcs = [], hooks = [], consequences = [], discoveries = [] } = collections
+  const { truths = [], factions = [], locations = [], npcs = [], hooks = [], consequences = [], discoveries = [], states = [] } = collections
+  const statesByEntity = new Map(states.map((item) => [`${item.entity_type}:${item.entity_id}`, { ...JSON.parse(item.state), pressure: item.pressure, sourceSceneId: item.source_scene_id, updatedAt: item.updated_at }]))
   return {
     campaignId: row.campaign_id,
     title: row.title,
@@ -55,10 +56,10 @@ function publicCampaignWorld(row, collections = {}) {
       stakes: row.opening_crisis_stakes,
     },
     truths: truths.map((item) => ({ id: item.id, text: item.text })),
-    factions: factions.map((item) => ({ id: item.id, name: item.name, goal: item.goal, opposition: item.opposition })),
-    locations: locations.map((item) => ({ id: item.id, name: item.name, description: item.description, danger: item.danger })),
-    npcs: npcs.map((item) => ({ id: item.id, name: item.name, role: item.role, want: item.want, leverage: item.leverage })),
-    hooks: hooks.map((item) => ({ id: item.id, title: item.title, situation: item.situation })),
+    factions: factions.map((item) => ({ id: item.id, name: item.name, goal: item.goal, opposition: item.opposition, state: statesByEntity.get(`faction:${item.id}`) ?? null })),
+    locations: locations.map((item) => ({ id: item.id, name: item.name, description: item.description, danger: item.danger, state: statesByEntity.get(`location:${item.id}`) ?? null })),
+    npcs: npcs.map((item) => ({ id: item.id, name: item.name, role: item.role, want: item.want, leverage: item.leverage, state: statesByEntity.get(`npc:${item.id}`) ?? null })),
+    hooks: hooks.map((item) => ({ id: item.id, title: item.title, situation: item.situation, state: statesByEntity.get(`hook:${item.id}`) ?? null })),
     consequences: consequences.map(publicWorldConsequence),
     discoveries: discoveries.map(publicWorldDiscovery),
     generatorVersion: row.generator_version,
@@ -111,6 +112,8 @@ function publicWorldConsequence(row) {
     entityName: row.entity_name,
     beforeState: row.before_state,
     afterState: row.after_state,
+    before: row.before_snapshot ? JSON.parse(row.before_snapshot) : null,
+    after: row.after_snapshot ? JSON.parse(row.after_snapshot) : null,
     pressure: row.pressure,
     status: row.status,
     resolvedSceneId: row.resolved_scene_id ?? null,
@@ -594,6 +597,17 @@ export function createStore(databasePath) {
       resolved_by_player_id TEXT REFERENCES players(id),
       created_at TEXT NOT NULL,
       resolved_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS world_entity_states (
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      entity_type TEXT NOT NULL CHECK(entity_type IN ('faction', 'location', 'npc', 'hook')),
+      entity_id TEXT NOT NULL,
+      state TEXT NOT NULL,
+      pressure TEXT NOT NULL,
+      source_scene_id TEXT NOT NULL REFERENCES campaign_scenes(id) ON DELETE RESTRICT,
+      updated_by_player_id TEXT NOT NULL REFERENCES players(id),
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (campaign_id, entity_type, entity_id)
     );
     CREATE INDEX IF NOT EXISTS world_consequences_campaign_status ON world_consequences(campaign_id, status, created_at DESC);
     CREATE TABLE IF NOT EXISTS world_discoveries (
@@ -1090,6 +1104,9 @@ export function createStore(databasePath) {
   }
   const worldDiscoveryColumns = database.prepare('PRAGMA table_info(world_discoveries)').all()
   if (!worldDiscoveryColumns.some((column) => column.name === 'material_kind')) database.exec("ALTER TABLE world_discoveries ADD COLUMN material_kind TEXT CHECK(material_kind IS NULL OR material_kind IN ('npc', 'place', 'complication', 'consequence', 'rumour', 'treasure'))")
+  const worldConsequenceColumns = database.prepare('PRAGMA table_info(world_consequences)').all()
+  if (!worldConsequenceColumns.some((column) => column.name === 'before_snapshot')) database.exec('ALTER TABLE world_consequences ADD COLUMN before_snapshot TEXT')
+  if (!worldConsequenceColumns.some((column) => column.name === 'after_snapshot')) database.exec('ALTER TABLE world_consequences ADD COLUMN after_snapshot TEXT')
   database.exec("CREATE UNIQUE INDEX IF NOT EXISTS campaign_scenes_one_active ON campaign_scenes(campaign_id) WHERE status = 'active'")
   const roomColumns = database.prepare('PRAGMA table_info(rooms)').all()
   if (!roomColumns.some((column) => column.name === 'position')) {
@@ -1241,6 +1258,9 @@ export function createStore(databasePath) {
   const campaignWorldLocations = database.prepare('SELECT * FROM campaign_world_locations WHERE campaign_id = ? ORDER BY position')
   const campaignWorldNpcs = database.prepare('SELECT * FROM campaign_world_npcs WHERE campaign_id = ? ORDER BY position')
   const campaignWorldHooks = database.prepare('SELECT * FROM campaign_world_hooks WHERE campaign_id = ? ORDER BY position')
+  const worldEntityStates = database.prepare('SELECT * FROM world_entity_states WHERE campaign_id = ?')
+  const worldEntityState = database.prepare('SELECT * FROM world_entity_states WHERE campaign_id = ? AND entity_type = ? AND entity_id = ?')
+  const upsertWorldEntityState = database.prepare('INSERT INTO world_entity_states (campaign_id, entity_type, entity_id, state, pressure, source_scene_id, updated_by_player_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(campaign_id, entity_type, entity_id) DO UPDATE SET state = excluded.state, pressure = excluded.pressure, source_scene_id = excluded.source_scene_id, updated_by_player_id = excluded.updated_by_player_id, updated_at = excluded.updated_at')
   const insertCampaignWorld = database.prepare(`
     INSERT INTO campaign_worlds (
       campaign_id, title, premise, pitch, opening_crisis_title, opening_crisis_situation,
@@ -1296,7 +1316,7 @@ export function createStore(databasePath) {
   `)
   const activeWorldConsequenceForEntity = database.prepare("SELECT * FROM world_consequences WHERE campaign_id = ? AND entity_type = ? AND entity_id = ? AND status = 'active' ORDER BY rowid DESC LIMIT 1")
   const resolveWorldConsequence = database.prepare("UPDATE world_consequences SET status = 'resolved', resolved_scene_id = ?, resolution = ?, resolved_by_player_id = ?, resolved_at = ? WHERE id = ? AND status = 'active'")
-  const insertWorldConsequence = database.prepare('INSERT INTO world_consequences (id, campaign_id, source_scene_id, entity_type, entity_id, entity_name, before_state, after_state, pressure, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+  const insertWorldConsequence = database.prepare('INSERT INTO world_consequences (id, campaign_id, source_scene_id, entity_type, entity_id, entity_name, before_state, after_state, before_snapshot, after_snapshot, pressure, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
   const characterSelect = `
     SELECT characters.*, players.name AS player_name,
            factions.name AS faction_name, locations.name AS location_name, npcs.name AS npc_name,
@@ -2083,7 +2103,7 @@ export function createStore(databasePath) {
 
     getCampaignWorld(campaignId) {
       const row = campaignWorld.get(campaignId)
-      return publicCampaignWorld(row, row ? { ...campaignWorldCollections(campaignId), consequences: worldConsequences.all(campaignId), discoveries: worldDiscoveries.all(campaignId) } : {})
+      return publicCampaignWorld(row, row ? { ...campaignWorldCollections(campaignId), consequences: worldConsequences.all(campaignId), discoveries: worldDiscoveries.all(campaignId), states: worldEntityStates.all(campaignId) } : {})
     },
 
     getCharacterCreationContext(campaignId, playerId, { includeAllSecrets = false } = {}) {
@@ -2182,10 +2202,10 @@ export function createStore(databasePath) {
       return {
         openingCrisis: world?.openingCrisis ?? null,
         worldEntities: world ? [
-          ...world.factions.map((item) => ({ id: item.id, name: item.name, type: 'faction' })),
-          ...world.locations.map((item) => ({ id: item.id, name: item.name, type: 'location' })),
-          ...world.npcs.map((item) => ({ id: item.id, name: item.name, type: 'npc' })),
-          ...world.hooks.map((item) => ({ id: item.id, name: item.title, type: 'hook' })),
+          ...world.factions.map((item) => ({ id: item.id, name: item.name, type: 'faction', state: item.state ?? { goal: item.goal, relationship: 'Untested by the party.', pressure: '' } })),
+          ...world.locations.map((item) => ({ id: item.id, name: item.name, type: 'location', state: item.state ?? { ownership: 'Unclaimed or undisputed.', danger: item.danger, pressure: '' } })),
+          ...world.npcs.map((item) => ({ id: item.id, name: item.name, type: 'npc', state: item.state ?? { goal: item.want, relationship: 'Untested by the party.', pressure: '' } })),
+          ...world.hooks.map((item) => ({ id: item.id, name: item.title, type: 'hook', state: item.state ?? { situation: item.situation, status: 'open', pressure: '' } })),
         ] : [],
         characters: charactersByCampaign.all(campaignId).map((row) => ({ id: row.id, name: row.name, playerName: row.player_name, concept: row.concept, locationId: row.location_id, npcId: row.npc_id })),
         locations: world?.locations ?? [],
@@ -2279,15 +2299,21 @@ export function createStore(databasePath) {
       const current = activeScene.get(campaignId)
       if (!current || current.id !== sceneId) return { outcome: 'not_found' }
       const consequenceTargets = consequences.map((item) => `${item.entityType}:${item.entityId}`)
-      if (consequences.length > 3 || consequenceTargets.length !== new Set(consequenceTargets).size || consequences.some((item) => !item.afterState?.trim() || !item.pressure?.trim())) return { outcome: 'invalid_consequence' }
+      if (consequences.length > 3 || consequenceTargets.length !== new Set(consequenceTargets).size || consequences.some((item) => !item.state || !item.pressure?.trim())) return { outcome: 'invalid_consequence' }
       const world = this.getCampaignWorld(campaignId)
       const collections = { faction: world?.factions ?? [], location: world?.locations ?? [], npc: world?.npcs ?? [], hook: world?.hooks ?? [] }
       const preparedConsequences = consequences.map((consequence) => {
         const entity = collections[consequence.entityType]?.find((item) => item.id === consequence.entityId)
         if (!entity) return null
         const previous = activeWorldConsequenceForEntity.get(campaignId, consequence.entityType, consequence.entityId)
-        const baseline = consequence.entityType === 'faction' ? `${entity.goal} ${entity.opposition}` : consequence.entityType === 'location' ? `${entity.description} ${entity.danger}` : consequence.entityType === 'npc' ? `${entity.role} ${entity.want} ${entity.leverage}` : entity.situation
-        return { ...consequence, entityName: entity.name ?? entity.title, beforeState: previous?.after_state ?? baseline, previousId: previous?.id ?? null }
+        const currentStateRow = worldEntityState.get(campaignId, consequence.entityType, consequence.entityId)
+        const before = currentStateRow ? JSON.parse(currentStateRow.state) : consequence.entityType === 'faction' ? { goal: entity.goal, relationship: 'Untested by the party.' } : consequence.entityType === 'location' ? { ownership: 'Unclaimed or undisputed.', danger: entity.danger } : consequence.entityType === 'npc' ? { goal: entity.want, relationship: 'Untested by the party.' } : { situation: entity.situation, status: 'open' }
+        const after = consequence.state
+        const fields = consequence.entityType === 'faction' || consequence.entityType === 'npc' ? ['goal', 'relationship'] : consequence.entityType === 'location' ? ['ownership', 'danger'] : ['situation', 'status']
+        if (fields.some((field) => typeof after[field] !== 'string' || !after[field].trim()) || (consequence.entityType === 'hook' && !['open', 'resolved'].includes(after.status))) return null
+        const labels = consequence.entityType === 'location' ? { ownership: 'Ownership', danger: 'Danger' } : consequence.entityType === 'hook' ? { situation: 'Situation', status: 'Status' } : { goal: 'Goal', relationship: 'Relationship' }
+        const format = (state) => fields.map((field) => `${labels[field]}: ${state[field]}`).join(' · ')
+        return { ...consequence, after, before, entityName: entity.name ?? entity.title, beforeState: format(before), afterState: format(after), previousId: previous?.id ?? null }
       })
       if (preparedConsequences.some((item) => !item)) return { outcome: 'invalid_consequence' }
       const discoveryKeys = discoveries.map((item) => `${item.entityType}:${item.name?.trim().toLocaleLowerCase()}`)
@@ -2314,8 +2340,10 @@ export function createStore(databasePath) {
         if (resolveScene.run(outcome, playerId, now, sceneId, campaignId).changes !== 1) throw new Error('scene_conflict')
         for (const consequence of preparedConsequences) {
           if (consequence.previousId) resolveWorldConsequence.run(sceneId, outcome, playerId, now, consequence.previousId)
-          insertWorldConsequence.run(randomUUID(), campaignId, sceneId, consequence.entityType, consequence.entityId, consequence.entityName, consequence.beforeState, consequence.afterState, consequence.pressure, playerId, now)
+          insertWorldConsequence.run(randomUUID(), campaignId, sceneId, consequence.entityType, consequence.entityId, consequence.entityName, consequence.beforeState, consequence.afterState, JSON.stringify(consequence.before), JSON.stringify(consequence.after), consequence.pressure, playerId, now)
+          upsertWorldEntityState.run(campaignId, consequence.entityType, consequence.entityId, JSON.stringify(consequence.after), consequence.pressure, sceneId, playerId, now)
         }
+        if (preparedConsequences.length || preparedDiscoveries.length) touchCampaignWorld.run(playerId, now, campaignId)
         for (const discovery of preparedDiscoveries) {
           const position = nextWorldPositions[discovery.entityType].get(campaignId).position
           if (discovery.entityType === 'faction') insertCampaignWorldFaction.run(discovery.entityId, campaignId, position, discovery.snapshot.name, discovery.snapshot.goal, discovery.snapshot.opposition)

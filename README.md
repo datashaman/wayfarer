@@ -30,6 +30,7 @@ npm run test:e2e
 - Durable first-session preparation with explicit cast, locations, NPCs, discoveries, complications, and open questions
 - Active-scene improvisation drafts for NPCs, places, complications, possible consequences, rumours, and treasure
 - GM-framed active scenes with immutable opening and resolution markers in the in-character transcript
+- Persistent typed World state for goals, relationships, ownership, danger, hook status, and unresolved pressure
 - Scene-linked character aftermath with immutable, player-authored revision history
 - Durable per-player read state, reconnect catch-up, idempotent messages, and paginated transcript history
 - WebSocket text chat between connected players
@@ -60,7 +61,7 @@ Comparable live-model results can be appended with `npm run eval:record`; see `d
 
 GMs create the campaign itself from the top-level **World** folio. A short premise can become a private, system-neutral opening draft with three setting truths, two factions in conflict, three dangerous locations, five NPCs with wants and leverage, four actionable hooks, and one opening crisis already in motion. Every field remains editable, a blank manual folio is always available, and nothing becomes campaign material until a GM explicitly establishes it. Saved foundations are durable typed content with stable entity identities and optimistic revisions—not chat output—and retain the generator edition that first proposed them. `OPENAI_INTELLIGENCE_MODEL` powers the optional draft; run `npm run eval:campaign-seed` for its bounded live fixture.
 
-Resolving a scene may also record concrete **world fallout** against an established faction, location, NPC, or hook. Each consequence preserves the exact before/after state and source scene, keeps unresolved pressure at the front of the World folio, and offers that pressure as explicit framing material for the next scene. A later change to the same entity closes the prior pressure without rewriting history. All fallout is GM-authored; Wayfarer never narrates or mutates campaign truth automatically.
+Resolving a scene may also record concrete **world fallout** against an established faction, location, NPC, or hook. Instead of one generic note, the GM updates the entity in its own terms: faction and NPC goals and relationships, location ownership and danger, or hook situation and open/resolved status, always with any pressure still moving. The latest state appears as a **Current truth** strip on that World entry. Each consequence preserves the exact typed before/after state and source scene, and offers unresolved pressure as explicit framing material for the next scene. A later change to the same entity closes the prior pressure without rewriting history. Wayfarer never infers or applies narrative changes automatically.
 
 When play introduces something genuinely new, the same resolution can establish up to three **world discoveries**: a faction, location, NPC, or hook written by the GM in that entity’s own terms. The original discovery and its source scene remain immutable in **Entered through play**, while the new entity joins the ordinary editable World folio and is immediately available for later fallout and character connections. Saving later World revisions preserves entity identities and existing character ties.
 

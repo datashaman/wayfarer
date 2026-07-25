@@ -43,7 +43,7 @@ function publicCampaign(row, rooms) {
 
 function publicCampaignWorld(row, collections = {}) {
   if (!row) return null
-  const { truths = [], factions = [], locations = [], npcs = [], hooks = [] } = collections
+  const { truths = [], factions = [], locations = [], npcs = [], hooks = [], consequences = [] } = collections
   return {
     campaignId: row.campaign_id,
     title: row.title,
@@ -59,11 +59,33 @@ function publicCampaignWorld(row, collections = {}) {
     locations: locations.map((item) => ({ id: item.id, name: item.name, description: item.description, danger: item.danger })),
     npcs: npcs.map((item) => ({ id: item.id, name: item.name, role: item.role, want: item.want, leverage: item.leverage })),
     hooks: hooks.map((item) => ({ id: item.id, title: item.title, situation: item.situation })),
+    consequences: consequences.map(publicWorldConsequence),
     generatorVersion: row.generator_version,
     revision: row.revision,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     updatedByName: row.updated_by_name ?? null,
+  }
+}
+
+function publicWorldConsequence(row) {
+  return {
+    id: row.id,
+    sourceSceneId: row.source_scene_id,
+    sourceSceneTitle: row.source_scene_title,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    entityName: row.entity_name,
+    beforeState: row.before_state,
+    afterState: row.after_state,
+    pressure: row.pressure,
+    status: row.status,
+    resolvedSceneId: row.resolved_scene_id ?? null,
+    resolvedSceneTitle: row.resolved_scene_title ?? null,
+    resolution: row.resolution ?? null,
+    createdByName: row.created_by_name ?? null,
+    createdAt: row.created_at,
+    resolvedAt: row.resolved_at ?? null,
   }
 }
 
@@ -477,6 +499,25 @@ export function createStore(databasePath) {
       character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE RESTRICT,
       PRIMARY KEY (scene_id, character_id)
     );
+    CREATE TABLE IF NOT EXISTS world_consequences (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      source_scene_id TEXT NOT NULL REFERENCES campaign_scenes(id) ON DELETE RESTRICT,
+      entity_type TEXT NOT NULL CHECK(entity_type IN ('faction', 'location', 'npc', 'hook')),
+      entity_id TEXT NOT NULL,
+      entity_name TEXT NOT NULL,
+      before_state TEXT NOT NULL,
+      after_state TEXT NOT NULL,
+      pressure TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'resolved')),
+      resolved_scene_id TEXT REFERENCES campaign_scenes(id) ON DELETE RESTRICT,
+      resolution TEXT,
+      created_by_player_id TEXT NOT NULL REFERENCES players(id),
+      resolved_by_player_id TEXT REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      resolved_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS world_consequences_campaign_status ON world_consequences(campaign_id, status, created_at DESC);
     CREATE TABLE IF NOT EXISTS character_revisions (
       id TEXT PRIMARY KEY,
       character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
@@ -1109,6 +1150,28 @@ export function createStore(databasePath) {
   const insertCampaignWorldLocation = database.prepare('INSERT INTO campaign_world_locations (id, campaign_id, position, name, description, danger) VALUES (?, ?, ?, ?, ?, ?)')
   const insertCampaignWorldNpc = database.prepare('INSERT INTO campaign_world_npcs (id, campaign_id, position, name, role, want, leverage) VALUES (?, ?, ?, ?, ?, ?, ?)')
   const insertCampaignWorldHook = database.prepare('INSERT INTO campaign_world_hooks (id, campaign_id, position, title, situation) VALUES (?, ?, ?, ?, ?)')
+  const worldConsequences = database.prepare(`
+    SELECT world_consequences.*, source.title AS source_scene_title, resolved.title AS resolved_scene_title,
+      creators.name AS created_by_name
+    FROM world_consequences
+    JOIN campaign_scenes AS source ON source.id = world_consequences.source_scene_id
+    LEFT JOIN campaign_scenes AS resolved ON resolved.id = world_consequences.resolved_scene_id
+    LEFT JOIN players AS creators ON creators.id = world_consequences.created_by_player_id
+    WHERE world_consequences.campaign_id = ?
+    ORDER BY world_consequences.created_at DESC, world_consequences.rowid DESC
+  `)
+  const activeWorldConsequences = database.prepare(`
+    SELECT world_consequences.*, source.title AS source_scene_title, NULL AS resolved_scene_title,
+      creators.name AS created_by_name
+    FROM world_consequences
+    JOIN campaign_scenes AS source ON source.id = world_consequences.source_scene_id
+    LEFT JOIN players AS creators ON creators.id = world_consequences.created_by_player_id
+    WHERE world_consequences.campaign_id = ? AND world_consequences.status = 'active'
+    ORDER BY world_consequences.created_at DESC, world_consequences.rowid DESC
+  `)
+  const activeWorldConsequenceForEntity = database.prepare("SELECT * FROM world_consequences WHERE campaign_id = ? AND entity_type = ? AND entity_id = ? AND status = 'active' ORDER BY rowid DESC LIMIT 1")
+  const resolveWorldConsequence = database.prepare("UPDATE world_consequences SET status = 'resolved', resolved_scene_id = ?, resolution = ?, resolved_by_player_id = ?, resolved_at = ? WHERE id = ? AND status = 'active'")
+  const insertWorldConsequence = database.prepare('INSERT INTO world_consequences (id, campaign_id, source_scene_id, entity_type, entity_id, entity_name, before_state, after_state, pressure, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
   const characterSelect = `
     SELECT characters.*, players.name AS player_name,
            factions.name AS faction_name, locations.name AS location_name, npcs.name AS npc_name,
@@ -1894,7 +1957,7 @@ export function createStore(databasePath) {
 
     getCampaignWorld(campaignId) {
       const row = campaignWorld.get(campaignId)
-      return publicCampaignWorld(row, row ? campaignWorldCollections(campaignId) : {})
+      return publicCampaignWorld(row, row ? { ...campaignWorldCollections(campaignId), consequences: worldConsequences.all(campaignId) } : {})
     },
 
     getCharacterCreationContext(campaignId, playerId, { includeAllSecrets = false } = {}) {
@@ -1992,9 +2055,16 @@ export function createStore(databasePath) {
       const current = activeScene.get(campaignId)
       return {
         openingCrisis: world?.openingCrisis ?? null,
+        worldEntities: world ? [
+          ...world.factions.map((item) => ({ id: item.id, name: item.name, type: 'faction' })),
+          ...world.locations.map((item) => ({ id: item.id, name: item.name, type: 'location' })),
+          ...world.npcs.map((item) => ({ id: item.id, name: item.name, type: 'npc' })),
+          ...world.hooks.map((item) => ({ id: item.id, name: item.title, type: 'hook' })),
+        ] : [],
         characters: charactersByCampaign.all(campaignId).map((row) => ({ id: row.id, name: row.name, playerName: row.player_name, concept: row.concept })),
         activeScene: publicScene(current, current ? sceneCharacters.all(current.id) : []),
         scenes: scenesByCampaign.all(campaignId).map((row) => publicScene(row, sceneCharacters.all(row.id))),
+        worldConsequences: activeWorldConsequences.all(campaignId).map(publicWorldConsequence),
       }
     },
 
@@ -2022,9 +2092,21 @@ export function createStore(databasePath) {
       return { outcome: 'started', roomId: room.id, message: publicMessage(messageByClientId.get(playerId, clientMessageId)), context: this.getSceneContext(campaignId) }
     },
 
-    resolveScene(campaignId, playerId, sceneId, outcome) {
+    resolveScene(campaignId, playerId, sceneId, outcome, consequences = []) {
       const current = activeScene.get(campaignId)
       if (!current || current.id !== sceneId) return { outcome: 'not_found' }
+      const consequenceTargets = consequences.map((item) => `${item.entityType}:${item.entityId}`)
+      if (consequences.length > 3 || consequenceTargets.length !== new Set(consequenceTargets).size || consequences.some((item) => !item.afterState?.trim() || !item.pressure?.trim())) return { outcome: 'invalid_consequence' }
+      const world = this.getCampaignWorld(campaignId)
+      const collections = { faction: world?.factions ?? [], location: world?.locations ?? [], npc: world?.npcs ?? [], hook: world?.hooks ?? [] }
+      const preparedConsequences = consequences.map((consequence) => {
+        const entity = collections[consequence.entityType]?.find((item) => item.id === consequence.entityId)
+        if (!entity) return null
+        const previous = activeWorldConsequenceForEntity.get(campaignId, consequence.entityType, consequence.entityId)
+        const baseline = consequence.entityType === 'faction' ? `${entity.goal} ${entity.opposition}` : consequence.entityType === 'location' ? `${entity.description} ${entity.danger}` : consequence.entityType === 'npc' ? `${entity.role} ${entity.want} ${entity.leverage}` : entity.situation
+        return { ...consequence, entityName: entity.name ?? entity.title, beforeState: previous?.after_state ?? baseline, previousId: previous?.id ?? null }
+      })
+      if (preparedConsequences.some((item) => !item)) return { outcome: 'invalid_consequence' }
       const room = inCharacterRoom.get(campaignId)
       const messageId = randomUUID()
       const clientMessageId = `scene:${sceneId}:end`
@@ -2033,6 +2115,10 @@ export function createStore(databasePath) {
       database.exec('BEGIN IMMEDIATE')
       try {
         if (resolveScene.run(outcome, playerId, now, sceneId, campaignId).changes !== 1) throw new Error('scene_conflict')
+        for (const consequence of preparedConsequences) {
+          if (consequence.previousId) resolveWorldConsequence.run(sceneId, outcome, playerId, now, consequence.previousId)
+          insertWorldConsequence.run(randomUUID(), campaignId, sceneId, consequence.entityType, consequence.entityId, consequence.entityName, consequence.beforeState, consequence.afterState, consequence.pressure, playerId, now)
+        }
         insertMessage.run(messageId, room.id, playerId, clientMessageId, outcome, null, 'scene_end', JSON.stringify(metadata), now)
         database.exec('COMMIT')
       } catch (error) {

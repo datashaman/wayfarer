@@ -21,7 +21,8 @@ function clean(value, maximum) {
 }
 
 function cleanWorldItems(value, length, fields) {
-  if (!Array.isArray(value) || value.length !== length) return null
+  const validLength = typeof length === 'number' ? value?.length === length : value?.length >= length.minimum && value?.length <= length.maximum
+  if (!Array.isArray(value) || !validLength) return null
   const items = value.map((item) => ({
     ...(typeof item?.id === 'string' && item.id.length <= 100 ? { id: item.id } : {}),
     ...Object.fromEntries(Object.entries(fields).map(([field, maximum]) => [field, clean(item?.[field], maximum)])),
@@ -35,10 +36,10 @@ function cleanCampaignWorld(body, { updating = false } = {}) {
   const pitch = clean(body?.pitch, 1_000)
   const openingCrisis = cleanWorldItems([body?.openingCrisis], 1, { title: 120, situation: 1_200, stakes: 800 })?.[0]
   const truths = cleanWorldItems(body?.truths, 3, { text: 500 })
-  const factions = cleanWorldItems(body?.factions, 2, { name: 120, goal: 500, opposition: 500 })
-  const locations = cleanWorldItems(body?.locations, 3, { name: 120, description: 1_000, danger: 500 })
-  const npcs = cleanWorldItems(body?.npcs, 5, { name: 120, role: 200, want: 500, leverage: 500 })
-  const hooks = cleanWorldItems(body?.hooks, 4, { title: 120, situation: 500 })
+  const factions = cleanWorldItems(body?.factions, updating ? { minimum: 2, maximum: 100 } : 2, { name: 120, goal: 500, opposition: 500 })
+  const locations = cleanWorldItems(body?.locations, updating ? { minimum: 3, maximum: 100 } : 3, { name: 120, description: 1_000, danger: 500 })
+  const npcs = cleanWorldItems(body?.npcs, updating ? { minimum: 5, maximum: 100 } : 5, { name: 120, role: 200, want: 500, leverage: 500 })
+  const hooks = cleanWorldItems(body?.hooks, updating ? { minimum: 4, maximum: 100 } : 4, { title: 120, situation: 500 })
   const generatorVersion = updating ? null : clean(body?.generatorVersion, 200)
   const expectedRevision = updating && Number.isInteger(body?.expectedRevision) && body.expectedRevision >= 0 ? body.expectedRevision : null
   if (!title || !premise || !pitch || !openingCrisis || !truths || !factions || !locations || !npcs || !hooks || (!updating && !generatorVersion) || (updating && expectedRevision == null)) return null

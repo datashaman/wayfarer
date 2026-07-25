@@ -2,19 +2,17 @@ import process from 'node:process'
 import { spawn } from 'node:child_process'
 import { join, resolve } from 'node:path'
 import { createStore } from '../server/store.mjs'
+import { AI_SURFACES, modelForAiSurface, versionForAiSurface } from '../server/ai-surfaces.mjs'
 
 function argument(name) {
   const index = process.argv.indexOf(name)
   return index === -1 ? null : process.argv[index + 1]
 }
 
-const canonModel = process.env.OPENAI_CANON_MODEL || 'gpt-5.6-luna'
-const suites = [
-  { name: 'canon', script: 'eval-canon.mjs', model: canonModel, version: `openai:${canonModel}:canon-v2` },
-  { name: 'continuity', script: 'eval-continuity.mjs', model: process.env.OPENAI_CONTINUITY_MODEL || canonModel, version: `openai:${process.env.OPENAI_CONTINUITY_MODEL || canonModel}:continuity-v1` },
-  { name: 'contradictions', script: 'eval-contradictions.mjs', model: process.env.OPENAI_CONTRADICTION_MODEL || canonModel, version: `openai:${process.env.OPENAI_CONTRADICTION_MODEL || canonModel}:contradiction-v1` },
-  { name: 'recap', script: 'eval-recap.mjs', model: process.env.OPENAI_RECAP_MODEL || canonModel, version: `openai:${process.env.OPENAI_RECAP_MODEL || canonModel}:recap-v1` },
-]
+const suites = AI_SURFACES.map((surface) => {
+  const model = modelForAiSurface(surface.id)
+  return { name: surface.id, script: `eval-${surface.id.replace('_', '-')}.mjs`, model, version: versionForAiSurface(surface.id, model) }
+})
 
 if (!process.env.OPENAI_API_KEY) {
   console.error('OPENAI_API_KEY is required for the live evaluation suite.')

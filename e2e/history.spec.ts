@@ -9,7 +9,7 @@ test('a player can read beyond the latest hundred transcript entries', async ({ 
   await expect(page.getByLabel('Message fireside')).toBeEnabled()
 
   const writer = await page.evaluate(async () => {
-    const ownerToken = localStorage.getItem('wayfarer-token') ?? ''
+    const ownerToken = JSON.parse(localStorage.getItem('wayfarer-saved-seats') ?? '[]')[0]?.token ?? ''
     const restored = await fetch('http://127.0.0.1:8792/api/session', { headers: { authorization: `Bearer ${ownerToken}` } }).then((response) => response.json())
     const joined = await fetch(`http://127.0.0.1:8792/api/invitations/${restored.campaign.inviteCode}/join`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ playerName: 'Scribe' }),

@@ -14,6 +14,7 @@ import {
   MicOff,
   NotebookPen,
   PanelRight,
+  Plus,
   QrCode,
   Radio,
   RefreshCw,
@@ -55,8 +56,66 @@ import {
 
 const avatarPalette = ['#b96b4b', '#7f9364', '#8b7fa4', '#ad8754', '#6d8794', '#a87955']
 const pendingSeatEntryKey = 'wayfarer-pending-seat-entry'
+const savedSeatsKey = 'wayfarer-saved-seats'
+const activeCampaignKey = 'wayfarer-active-campaign'
 
 type RecoverySeed = { playerName: string; recoveryCode: string }
+type SavedSeat = {
+  campaignId: string
+  campaignName: string
+  inviteCode: string
+  playerId: string
+  playerName: string
+  role: 'owner' | 'member'
+  token: string
+}
+
+function readSavedSeats(): SavedSeat[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(savedSeatsKey) ?? '[]') as Partial<SavedSeat>[]
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((seat): seat is SavedSeat =>
+      typeof seat.campaignId === 'string'
+      && typeof seat.campaignName === 'string'
+      && typeof seat.inviteCode === 'string'
+      && typeof seat.playerId === 'string'
+      && typeof seat.playerName === 'string'
+      && (seat.role === 'owner' || seat.role === 'member')
+      && typeof seat.token === 'string')
+  } catch {
+    return []
+  }
+}
+
+function saveSeat(session: TableSession) {
+  const seat: SavedSeat = {
+    campaignId: session.campaign.id,
+    campaignName: session.campaign.name,
+    inviteCode: session.campaign.inviteCode,
+    playerId: session.player.id,
+    playerName: session.player.name,
+    role: session.player.role,
+    token: session.player.token,
+  }
+  const seats = [seat, ...readSavedSeats().filter((saved) => saved.campaignId !== seat.campaignId)]
+  localStorage.setItem(savedSeatsKey, JSON.stringify(seats))
+  localStorage.setItem(activeCampaignKey, seat.campaignId)
+  return seats
+}
+
+function forgetSeat(campaignId: string) {
+  const seats = readSavedSeats().filter((seat) => seat.campaignId !== campaignId)
+  localStorage.setItem(savedSeatsKey, JSON.stringify(seats))
+  if (localStorage.getItem(activeCampaignKey) === campaignId) localStorage.removeItem(activeCampaignKey)
+  return seats
+}
+
+function seatToRestore(inviteCode: string | null) {
+  const seats = readSavedSeats()
+  if (inviteCode) return seats.find((seat) => seat.inviteCode === inviteCode) ?? null
+  const activeCampaignId = localStorage.getItem(activeCampaignKey)
+  return seats.find((seat) => seat.campaignId === activeCampaignId) ?? null
+}
 
 function readPendingSeatEntry(): SeatEntry | null {
   try {
@@ -642,7 +701,7 @@ function Avatar({ participant, size = 'regular' }: { participant: Participant; s
   )
 }
 
-function EntryGate({ inviteCode, recoverySeed, pendingEntry, notice, onEnter }: { inviteCode: string | null; recoverySeed: RecoverySeed | null; pendingEntry: SeatEntry | null; notice?: string; onEnter: (session: TableSession) => void }) {
+function EntryGate({ inviteCode, recoverySeed, pendingEntry, savedSeats, switchingCampaign, notice, onEnter, onSelectSaved }: { inviteCode: string | null; recoverySeed: RecoverySeed | null; pendingEntry: SeatEntry | null; savedSeats: SavedSeat[]; switchingCampaign: string; notice?: string; onEnter: (session: TableSession) => void; onSelectSaved: (seat: SavedSeat) => void }) {
   const [playerName, setPlayerName] = useState(recoverySeed?.playerName ?? '')
   const [campaignName, setCampaignName] = useState('')
   const [recoveryCode, setRecoveryCode] = useState(recoverySeed?.recoveryCode ?? '')
@@ -663,7 +722,6 @@ function EntryGate({ inviteCode, recoverySeed, pendingEntry, notice, onEnter }: 
         body: JSON.stringify(recovering ? { playerName, recoveryCode } : inviteCode ? { playerName } : { campaignName, playerName }),
       })
       sessionStorage.setItem(pendingSeatEntryKey, JSON.stringify(session))
-      localStorage.setItem('wayfarer-token', session.player.token)
       setIssuedEntry(session)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to enter the table.')
@@ -707,6 +765,13 @@ function EntryGate({ inviteCode, recoverySeed, pendingEntry, notice, onEnter }: 
           </button>
           {inviteCode && <button className="entry-switch" type="button" onClick={() => { setRecovering((current) => !current); setError('') }}>{recovering ? 'Join with a new name' : 'Recover an existing seat'}</button>}
         </form>
+        {!inviteCode && savedSeats.length > 0 && <div className="saved-seat-list">
+          <span>Or return to a saved campaign</span>
+          {savedSeats.map((seat) => <button key={seat.campaignId} type="button" onClick={() => onSelectSaved(seat)} disabled={Boolean(switchingCampaign)}>
+            <span><strong>{seat.campaignName}</strong><small>{seat.playerName}{seat.role === 'owner' ? ' · Owner' : ''}</small></span>
+            {switchingCampaign === seat.campaignId ? <RefreshCw className="spinning" size={14} /> : <BookOpen size={14} />}
+          </button>)}
+        </div>}
       </div>
     </main>
   )
@@ -1061,9 +1126,13 @@ function App() {
   const [inviteCode, setInviteCode] = useState(readInvitationCode)
   const [recoverySeed] = useState(readRecoverySeed)
   const [pendingSeatEntry] = useState(readPendingSeatEntry)
+  const [savedSeats, setSavedSeats] = useState(readSavedSeats)
   const [session, setSession] = useState<TableSession | null>(null)
   const [entryNotice, setEntryNotice] = useState('')
-  const [restoringSession, setRestoringSession] = useState(() => !recoverySeed && !pendingSeatEntry && Boolean(localStorage.getItem('wayfarer-token')))
+  const [restoringSession, setRestoringSession] = useState(() => !recoverySeed && !pendingSeatEntry && Boolean(seatToRestore(readInvitationCode())))
+  const [campaignMenu, setCampaignMenu] = useState(false)
+  const [switchingCampaign, setSwitchingCampaign] = useState('')
+  const [campaignSwitchError, setCampaignSwitchError] = useState('')
   const [activeRoom, setActiveRoom] = useState('')
   const activeRoomRef = useRef(activeRoom)
   const [unreadRooms, setUnreadRooms] = useState<Record<string, number>>({})
@@ -1120,20 +1189,21 @@ function App() {
   }, [realtimePlayer])
 
   useEffect(() => {
-    if (recoverySeed || pendingSeatEntry) return
-    const token = localStorage.getItem('wayfarer-token')
-    if (!token) return
-    void api<TableSession>('/api/session', { headers: { authorization: `Bearer ${token}` } })
+    if (session || recoverySeed || pendingSeatEntry) return
+    const savedSeat = seatToRestore(inviteCode)
+    if (!savedSeat) return
+    void api<TableSession>('/api/session', { headers: { authorization: `Bearer ${savedSeat.token}` } })
       .then((restored) => {
         if (inviteCode && restored.campaign.inviteCode !== inviteCode) return
         const roomId = restored.campaign.rooms[0]?.id ?? ''
         activeRoomRef.current = roomId
         setActiveRoom(roomId)
         setSession(restored)
+        setSavedSeats(saveSeat(restored))
       })
-      .catch(() => localStorage.removeItem('wayfarer-token'))
+      .catch(() => setSavedSeats(forgetSeat(savedSeat.campaignId)))
       .finally(() => setRestoringSession(false))
-  }, [inviteCode, recoverySeed, pendingSeatEntry])
+  }, [inviteCode, recoverySeed, pendingSeatEntry, session])
 
   useEffect(() => { localStorage.setItem('wayfarer-draft', draft) }, [draft])
   useEffect(() => {
@@ -1270,7 +1340,7 @@ function App() {
 
     const handleEvent = async (event: ServerEvent) => {
       if (event.type === 'session.revoked') {
-        localStorage.removeItem('wayfarer-token')
+        setSavedSeats(forgetSeat(realtimePlayer.campaignId))
         client.close()
         setEntryNotice(event.payload.reason === 'recovered' ? 'This seat was recovered in another browser.' : 'Your seat was removed from this campaign.')
         setSession(null)
@@ -1285,6 +1355,7 @@ function App() {
         setUnreadRooms((current) => Object.fromEntries(Object.entries(current).filter(([roomId]) => campaign.rooms.some((room) => room.id === roomId))))
         showInvitationInUrl(campaign.inviteCode)
         setInviteCode(campaign.inviteCode)
+        setSavedSeats(saveSeat({ campaign, player: realtimePlayer }))
         if (!campaign.rooms.some((room) => room.id === activeRoomRef.current)) {
           const roomId = campaign.rooms[0]?.id ?? ''
           activeRoomRef.current = roomId
@@ -1403,7 +1474,7 @@ function App() {
   }, [joinedVoice, pushToTalk])
 
   const enterTable = (entered: TableSession) => {
-    localStorage.setItem('wayfarer-token', entered.player.token)
+    setSavedSeats(saveSeat(entered))
     const roomId = entered.campaign.rooms[0]?.id ?? ''
     activeRoomRef.current = roomId
     setActiveRoom(roomId)
@@ -1415,8 +1486,55 @@ function App() {
 
   const updateCampaign = (campaign: Campaign) => {
     setSession((current) => current ? { ...current, campaign } : current)
+    if (session) setSavedSeats(saveSeat({ ...session, campaign }))
     showInvitationInUrl(campaign.inviteCode)
     setInviteCode(campaign.inviteCode)
+  }
+
+  const switchCampaign = async (seat: SavedSeat) => {
+    if (seat.campaignId === session?.campaign.id || switchingCampaign) { setCampaignMenu(false); return }
+    setSwitchingCampaign(seat.campaignId)
+    setCampaignSwitchError('')
+    setEntryNotice('')
+    try {
+      const restored = await api<TableSession>('/api/session', { headers: { authorization: `Bearer ${seat.token}` } })
+      setMessages([])
+      setHasOlderMessages(false)
+      setHistoryError('')
+      setParticipants([])
+      setVoiceParticipants([])
+      setPeerConnectionStates({})
+      setCampaignNote(null)
+      setCampaignCanon(null)
+      setJoinedVoice(false)
+      enterTable(restored)
+      setCampaignMenu(false)
+    } catch {
+      setSavedSeats(forgetSeat(seat.campaignId))
+      const notice = `The saved seat for ${seat.campaignName} is no longer available.`
+      setCampaignSwitchError(notice)
+      setEntryNotice(notice)
+    } finally {
+      setSwitchingCampaign('')
+    }
+  }
+
+  const openNewCampaign = () => {
+    localStorage.removeItem(activeCampaignKey)
+    setCampaignMenu(false)
+    setSession(null)
+    setActiveRoom('')
+    activeRoomRef.current = ''
+    setMessages([])
+    setParticipants([])
+    setVoiceParticipants([])
+    setUnreadRooms({})
+    setJoinedVoice(false)
+    setInviteCode(null)
+    const url = new URL(location.href)
+    url.searchParams.delete('invite')
+    url.hash = ''
+    history.replaceState({}, '', url)
   }
 
   const leaveVoice = () => {
@@ -1529,7 +1647,7 @@ function App() {
   }
 
   if (restoringSession) return <main className="entry-gate"><span className="entry-wait">Returning to the table…</span></main>
-  if (!session) return <EntryGate inviteCode={inviteCode} recoverySeed={recoverySeed} pendingEntry={pendingSeatEntry} notice={entryNotice} onEnter={enterTable} />
+  if (!session) return <EntryGate inviteCode={inviteCode} recoverySeed={recoverySeed} pendingEntry={pendingSeatEntry} savedSeats={savedSeats} switchingCampaign={switchingCampaign} notice={entryNotice} onEnter={enterTable} onSelectSaved={(seat) => void switchCampaign(seat)} />
   if (!activeRoomData) return null
 
   return (
@@ -1538,7 +1656,21 @@ function App() {
         <div className="campaign-identity">
           <button className="icon-button mobile-only" onClick={() => setMobileLedger(true)} aria-label="Open campaign navigation"><Menu size={19} /></button>
           <div className="campaign-sigil" aria-hidden="true"><BookOpen size={18} /></div>
-          <div><span className="campaign-kicker">Wayfarer's Table</span><span className="campaign-title">{session.campaign.name}</span></div>
+          <div className="campaign-switcher">
+            <span className="campaign-kicker">Wayfarer's Table</span>
+            <button className="campaign-title" onClick={() => setCampaignMenu((open) => !open)} aria-expanded={campaignMenu} aria-haspopup="menu" aria-label="Switch campaign">
+              <span>{session.campaign.name}</span><ChevronDown size={13} />
+            </button>
+            {campaignMenu && <div className="campaign-menu" role="menu" aria-label="Saved campaigns">
+              <span className="campaign-menu-label">Your campaigns</span>
+              {campaignSwitchError && <span className="campaign-menu-error" role="alert">{campaignSwitchError}</span>}
+              {savedSeats.map((seat) => <button key={seat.campaignId} type="button" role="menuitem" className="campaign-menu-seat" onClick={() => void switchCampaign(seat)} disabled={Boolean(switchingCampaign)}>
+                <span><strong>{seat.campaignName}</strong><small>{seat.playerName}{seat.role === 'owner' ? ' · Owner' : ''}</small></span>
+                {seat.campaignId === session.campaign.id ? <Check size={15} /> : switchingCampaign === seat.campaignId ? <RefreshCw className="spinning" size={14} /> : null}
+              </button>)}
+              <button type="button" role="menuitem" className="campaign-menu-new" onClick={openNewCampaign}><Plus size={15} />Open new campaign</button>
+            </div>}
+          </div>
         </div>
         <div className="campaign-actions">
           {connection !== 'live' && <span className="connection-state"><i />{connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span>}

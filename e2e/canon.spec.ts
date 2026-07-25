@@ -12,7 +12,7 @@ test('the owner reviews a cited canon proposal and returns to its source', async
   await expect(page.getByText('The lighthouse keeper is called Ilyra.', { exact: true })).toBeVisible()
 
   await page.evaluate(async () => {
-    const token = localStorage.getItem('wayfarer-token') ?? ''
+    const token = JSON.parse(localStorage.getItem('wayfarer-saved-seats') ?? '[]')[0]?.token ?? ''
     const authorization = { authorization: `Bearer ${token}` }
     const search = await fetch('http://127.0.0.1:8792/api/campaign/search?q=lighthouse', { headers: authorization }).then((response) => response.json())
     await fetch('http://127.0.0.1:8792/api/campaign/canon/proposals', {

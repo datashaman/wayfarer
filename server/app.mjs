@@ -667,6 +667,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           return
         }
         const acceptedCanon = store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true })
+        const priorFeedback = store.listContinuityFeedbackExamples(requestSession.campaign.id, 20)
         const messages = context.messages
         if (!messages.length) {
           sendJson(response, 400, { error: 'The transcript needs at least one message before a brief can be prepared.' })
@@ -676,7 +677,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           messages,
           maximum: 3,
           keyFields: ['title', 'summary'],
-          analyze: (chunk) => continuityGenerator.generate({ campaignId: requestSession.campaign.id, messages: chunk, acceptedCanon }),
+          analyze: (chunk) => continuityGenerator.generate({ campaignId: requestSession.campaign.id, messages: chunk, acceptedCanon, priorFeedback }),
         })
         const result = store.createContinuityBrief({
           campaignId: requestSession.campaign.id,

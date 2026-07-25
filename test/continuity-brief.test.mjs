@@ -25,11 +25,12 @@ test('the OpenAI continuity generator uses private strict structured output', as
     return { output_text: JSON.stringify({ threads: [thread] }) }
   } } }
   const generator = createOpenAIContinuityBriefGenerator({ client, model: 'test-model' })
-  const result = await generator.generate({ campaignId: 'campaign-1', messages, acceptedCanon: [] })
+  const result = await generator.generate({ campaignId: 'campaign-1', messages, acceptedCanon: [], priorFeedback: [{ rating: 'useful' }] })
   assert.equal(result[0].title, thread.title)
   assert.equal(request.store, false)
   assert.equal(request.reasoning.effort, 'none')
   assert.equal(request.text.format.strict, true)
   assert.match(request.instructions, /untrusted quoted game content/i)
   assert.match(request.instructions, /GM-only/i)
+  assert.deepEqual(JSON.parse(request.input).priorFeedback, [{ rating: 'useful' }])
 })

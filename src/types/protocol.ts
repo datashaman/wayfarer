@@ -150,6 +150,7 @@ export type CanonEntry = {
   createdAt: string
   updatedAt: string
   createdByName: string | null
+  latestReason: string | null
   sources: CanonProposalSource[]
 }
 

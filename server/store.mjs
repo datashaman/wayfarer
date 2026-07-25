@@ -106,6 +106,7 @@ function publicCanonEntry(row, sources = [], audiences = []) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     createdByName: row.created_by_name ?? null,
+    latestReason: row.latest_reason ?? null,
     sources: sources.map((source) => ({
       messageId: source.message_id,
       roomId: source.room_id,
@@ -803,13 +804,15 @@ export function createStore(databasePath) {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, ?, ?)
   `)
   const canonEntryById = database.prepare(`
-    SELECT canon_entries.*, players.name AS created_by_name
+    SELECT canon_entries.*, players.name AS created_by_name,
+           (SELECT reason FROM canon_entry_revisions WHERE entry_id = canon_entries.id ORDER BY revision DESC LIMIT 1) AS latest_reason
     FROM canon_entries
     JOIN players ON players.id = canon_entries.created_by_player_id
     WHERE canon_entries.id = ? AND canon_entries.campaign_id = ?
   `)
   const canonEntriesForCampaign = database.prepare(`
-    SELECT canon_entries.*, players.name AS created_by_name
+    SELECT canon_entries.*, players.name AS created_by_name,
+           (SELECT reason FROM canon_entry_revisions WHERE entry_id = canon_entries.id ORDER BY revision DESC LIMIT 1) AS latest_reason
     FROM canon_entries
     JOIN players ON players.id = canon_entries.created_by_player_id
     WHERE canon_entries.campaign_id = ? AND canon_entries.status = 'active'
@@ -1453,6 +1456,14 @@ export function createStore(databasePath) {
         feedback: { rating: row.rating, ratedAt: row.rated_at },
       }))
       return { canon, continuity, deduplication: this.getCanonProposalMatchMetrics(campaignId) }
+    },
+
+    listContinuityFeedbackExamples(campaignId, limit = 20) {
+      return continuityFeedbackForExport.all(campaignId, campaignId).slice(-limit).map((row) => ({
+        thread: { title: row.title, summary: row.summary, whyItMatters: row.why_it_matters },
+        rating: row.rating,
+        generatorVersion: row.generator_version,
+      }))
     },
 
     listCanonEntries(campaignId, { includeGmOnly = false, viewerPlayerId = null } = {}) {

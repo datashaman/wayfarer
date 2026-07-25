@@ -89,6 +89,18 @@ Owner-only campaign administration opens as a right-side folio so play remains t
 
 Left rail containing rooms, online party members, characters, and the local profile. Active rooms use a soot surface, subtle border, and wax hash icon. Unread state uses a compact wax counter.
 
+### AI evaluation ledger
+
+Treat AI quality as a human-kept campaign ruling trail, never as model-confidence analytics. Lead with verdict strips for outcomes the table has actually judged, then show release gates, generator editions, and campaign-scoped live checks in that order. Publication and preparation eligibility remain human decisions.
+
+- Verdict strips pair one large tabular percentage with the judged sample count, a thin semantic outcome bar, and explicit category totals. Use an em dash when no judgment exists rather than implying a zero score.
+- Release gates form the main scan path. Each row states the threshold and its current evidence; use moss checks only for passed gates and wax marks for evidence still being gathered.
+- Generator editions are compact ledger rows with surface, exact version, success rate, sample size, and a restrained `Learning`, `Steady`, or `Watch` state. A version is evidence, not a product badge.
+- Recorded checks show date, suite, model, generator version, pass count, and change from the prior comparable run. Empty states explain how to record campaign-scoped evidence.
+- Secret leaks and material regressions are explicit alerts above the verdicts. Never expose this owner-private evaluation surface to ordinary campaign members.
+
+Use the established borders-only depth, soot/parchment/wax/moss palette, serif narrative copy, sans structural labels, and 8px spacing system. Verdict strips may sit in two columns when space permits and must stack into a single uninterrupted reading order on narrow screens.
+
 ### Session transcript
 
 Messages are avatar-and-copy rows, never speech bubbles. Sender, timestamp, delivery state, and literary body text form the hierarchy. System events sit between hairline rules. Keep transcript measure near 760px for readability.

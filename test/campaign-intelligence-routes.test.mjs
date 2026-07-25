@@ -19,6 +19,7 @@ test('campaign intelligence keeps preparation, memory, rules, factions, spotligh
     async draftIntent() { return ['I lift the brass lantern.', 'Let the old light answer us.'] },
     async proposeFaction({ clock, messages }) { return { summary: 'The Moth Court finds another route.', assumptions: 'The western gate remains open.', proposedProgress: Math.min(clock.segments, clock.progress + 1), citations: [messages[0].id] } },
     async compileHouseRule({ messages }) { return { title: 'Gate test', sourceRule: 'Core test rule.', interpretation: 'The open gate grants leverage.', ruling: 'Gate searches gain advantage.', citations: [messages[0].id] } },
+    async draftCharacterConcepts({ world }) { return Array.from({ length: 3 }, (_, index) => ({ name: `Wayfarer ${index + 1}`, concept: 'A ferryman who hears the drowned.', appearance: 'A salt-white coat.', drive: 'Find a lost sibling.', capability: 'Knows hidden crossings.', complication: 'The bell knows their oath.', possession: 'A wet iron key.', belief: 'No debt survives truth.', secret: 'They rang the bell before.', factionId: world.factions[0].id, factionConnection: 'They paid for silence.', locationId: world.locations[0].id, locationConnection: 'They drowned there.', npcId: world.npcs[0].id, npcConnection: 'The Witness knows what they did.', generatorVersion: this.version })) },
     async draftCampaignSeed({ premise }) { return { title: 'The Drowned Bell', premise, pitch: 'A drowned town returns for seven nights.', truths: [{ text: 'The bell remembers every oath.' }, { text: 'The streets flood at dawn.' }, { text: 'No map agrees.' }], factions: [{ name: 'Salvagers', goal: 'Raise the bell.', opposition: 'Their oaths will surface.' }, { name: 'Tidebound', goal: 'Sink the town.', opposition: 'The town frees their enemies.' }], locations: [{ name: 'Bell Square', description: 'A flooded plaza.', danger: 'The bell punishes lies.' }, { name: 'Tilted Inn', description: 'A leaning refuge.', danger: 'The foundations move.' }, { name: 'Salt Archive', description: 'A library of salt.', danger: 'Names wake their owners.' }], npcs: Array.from({ length: 5 }, (_, index) => ({ name: `Witness ${index + 1}`, role: 'Keeper', want: 'A true name.', leverage: 'A safe route.' })), hooks: Array.from({ length: 4 }, (_, index) => ({ title: `Trouble ${index + 1}`, situation: 'A dangerous bargain.' })), openingCrisis: { title: 'The first toll', situation: 'The bell rings untouched.', stakes: 'The town sinks at the seventh toll.' }, generatorVersion: this.version } },
   }
   const canonExtractor = { version: 'fixture:canon-v1', async extract({ messages }) { return [{ kind: 'fact', title: 'Prepared fact', claim: 'The western gate is open.', visibility: 'gm_only', confidence: 0.9, sources: [{ messageId: messages[0].id, excerpt: 'western gate' }] }] } }
@@ -42,6 +43,17 @@ test('campaign intelligence keeps preparation, memory, rules, factions, spotligh
   const savedWorld = await json(`${origin}/api/campaign/world`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify(worldDraft.body.draft) })
   assert.equal(savedWorld.status, 201)
   assert.equal(savedWorld.body.world.openingCrisis.title, 'The first toll')
+  const characterContext = await json(`${origin}/api/campaign/characters`, { headers: guestHeaders })
+  assert.equal(characterContext.status, 200)
+  assert.equal(characterContext.body.world.factions[0].opposition, undefined)
+  const concepts = await json(`${origin}/api/campaign/characters/concepts`, { method: 'POST', headers: guestHeaders })
+  assert.equal(concepts.status, 200)
+  assert.equal(concepts.body.concepts.length, 3)
+  const savedCharacter = await json(`${origin}/api/campaign/characters/mine`, { method: 'POST', headers: guestHeaders, body: JSON.stringify(concepts.body.concepts[0]) })
+  assert.equal(savedCharacter.status, 201)
+  assert.equal(savedCharacter.body.character.secret, 'They rang the bell before.')
+  const ownerCharacterView = await json(`${origin}/api/campaign/characters`, { headers: ownerHeaders })
+  assert.equal(ownerCharacterView.body.characters[0].secret, 'They rang the bell before.')
   const revisedWorld = await json(`${origin}/api/campaign/world`, { method: 'PUT', headers: ownerHeaders, body: JSON.stringify({ ...savedWorld.body.world, pitch: 'The seventh toll is tonight.', expectedRevision: 0 }) })
   assert.equal(revisedWorld.status, 200)
   assert.equal(revisedWorld.body.world.revision, 1)

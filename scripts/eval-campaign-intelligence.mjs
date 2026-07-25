@@ -7,6 +7,24 @@ const message = (id, text, senderName = 'Mara') => ({ id, roomId: 'fireside', ro
 const canon = (id, title, claim) => ({ id, kind: 'fact', title, claim, visibility: 'campaign', sources: [] })
 
 const evaluators = {
+  async character_concepts(intelligence) {
+    const world = {
+      title: 'The Drowned Bell', premise: 'A drowned town returns.', pitch: 'Every oath comes due.',
+      truths: [{ id: 'truth-1', text: 'The bell remembers every oath.' }],
+      factions: [{ id: 'faction-1', name: 'Salvagers', goal: 'Raise the bell.' }, { id: 'faction-2', name: 'Tidebound', goal: 'Sink the town.' }],
+      locations: [{ id: 'place-1', name: 'Bell Square', description: 'A flooded plaza.' }],
+      npcs: [{ id: 'npc-1', name: 'The Witness', role: 'Keeper of lost oaths' }],
+    }
+    const concepts = await intelligence.draftCharacterConcepts({ campaignId: 'evaluation-character-concepts', world })
+    const searchable = JSON.stringify(concepts).toLowerCase()
+    report('offers three editable lives grounded only in the supplied world',
+      concepts.length === 3
+      && concepts.every((item) => world.factions.some(({ id }) => id === item.factionId))
+      && concepts.every((item) => world.locations.some(({ id }) => id === item.locationId))
+      && concepts.every((item) => world.npcs.some(({ id }) => id === item.npcId))
+      && !searchable.includes('shopping application'),
+      `${concepts.length} concepts`)
+  },
   async campaign_seed(intelligence) {
     const draft = await intelligence.draftCampaignSeed({
       campaignId: 'evaluation-campaign-seed',

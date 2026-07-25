@@ -19,6 +19,7 @@
     "eval:house-rules": "node --env-file-if-exists=.env.local scripts/eval-house-rules.mjs",
     "eval:factions": "node --env-file-if-exists=.env.local scripts/eval-factions.mjs",
     "eval:campaign-seed": "node --env-file-if-exists=.env.local scripts/eval-campaign-seed.mjs",
+    "eval:character-concepts": "node --env-file-if-exists=.env.local scripts/eval-character-concepts.mjs",
     "eval:all": "node --env-file-if-exists=.env.local scripts/eval-all.mjs",
     "eval:feedback": "node --env-file-if-exists=.env.local scripts/eval-feedback.mjs",
     "eval:record": "node --env-file-if-exists=.env.local scripts/record-evaluation.mjs",

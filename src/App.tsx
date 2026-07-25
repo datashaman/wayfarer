@@ -33,7 +33,7 @@ import {
   createEvent,
   type ConnectionState,
   type Campaign,
-  type AiReadiness,
+  type AiEvaluationDashboard,
   type CanonLedger,
   type CanonAudience,
   type CanonConstitution,
@@ -480,6 +480,29 @@ function SharedNotes({ session, note, onNote, onClose }: { session: TableSession
   )
 }
 
+function evaluationPercent(rate: number | null) {
+  return rate === null ? '—' : `${Math.round(rate * 100)}%`
+}
+
+function EvaluationLedger({ dashboard }: { dashboard: AiEvaluationDashboard }) {
+  const { readiness, versions, runs, alerts } = dashboard
+  const { canon, continuity } = readiness.metrics
+  const canonTotal = Math.max(canon.total, 1)
+  const continuityTotal = Math.max(continuity.total, 1)
+  return <section className="canon-section evaluation-ledger" aria-labelledby="ai-evaluation-heading">
+    <div className="canon-section-title"><h3 id="ai-evaluation-heading">AI evaluation ledger</h3><span className={readiness.eligible ? 'evaluation-state evaluation-state--ready' : 'evaluation-state'}>{readiness.eligible ? 'Preparation eligible' : 'Gathering evidence'}</span></div>
+    <p className="canon-coverage">Human rulings and recorded live checks—not model confidence—decide whether draft preparation is trustworthy. Publication always remains human.</p>
+    {alerts.length > 0 && <div className="evaluation-alerts" aria-label="Evaluation warnings">{alerts.map((alert) => <p className={`evaluation-alert evaluation-alert--${alert.severity}`} key={alert.message}>{alert.message}</p>)}</div>}
+    <div className="evaluation-verdicts">
+      <article className="evaluation-verdict"><div><span>Canon rulings</span><strong>{evaluationPercent(canon.acceptanceRate)}</strong><small>accepted or edited · {canon.total} judged</small></div><div className="evaluation-bar" aria-label={`${canon.accepted} accepted, ${canon.edited} edited, ${canon.disputed} disputed, ${canon.rejected} rejected`}><span className="evaluation-bar__accepted" style={{ width: `${canon.accepted / canonTotal * 100}%` }} /><span className="evaluation-bar__edited" style={{ width: `${canon.edited / canonTotal * 100}%` }} /><span className="evaluation-bar__disputed" style={{ width: `${canon.disputed / canonTotal * 100}%` }} /><span className="evaluation-bar__rejected" style={{ width: `${canon.rejected / canonTotal * 100}%` }} /></div><div className="evaluation-key"><span>Accepted {canon.accepted}</span><span>Edited {canon.edited}</span><span>Disputed {canon.disputed}</span><span>Rejected {canon.rejected}</span></div></article>
+      <article className="evaluation-verdict"><div><span>Continuity verdicts</span><strong>{evaluationPercent(continuity.usefulRate)}</strong><small>useful · {continuity.total} rated</small></div><div className="evaluation-bar" aria-label={`${continuity.useful} useful, ${continuity.incorrect} incorrect, ${continuity.secretLeak} secret leaks, ${continuity.notUseful} not useful`}><span className="evaluation-bar__accepted" style={{ width: `${continuity.useful / continuityTotal * 100}%` }} /><span className="evaluation-bar__disputed" style={{ width: `${continuity.notUseful / continuityTotal * 100}%` }} /><span className="evaluation-bar__rejected" style={{ width: `${continuity.incorrect / continuityTotal * 100}%` }} /><span className="evaluation-bar__leak" style={{ width: `${continuity.secretLeak / continuityTotal * 100}%` }} /></div><div className="evaluation-key"><span>Useful {continuity.useful}</span><span>Not useful {continuity.notUseful}</span><span>Incorrect {continuity.incorrect}</span><span>Leaks {continuity.secretLeak}</span></div></article>
+    </div>
+    <div className="evaluation-subsection"><h4>Release gates</h4><ol className="evaluation-gates">{readiness.checks.map((check) => <li className={check.passed ? 'evaluation-gate evaluation-gate--passed' : 'evaluation-gate'} key={check.id}><span aria-hidden="true">{check.passed ? '✓' : '·'}</span><div><strong>{check.label}</strong><small>Current: {check.value === null ? 'no rulings yet' : check.id.includes('precision') || check.id.includes('useful') ? evaluationPercent(check.value) : check.value}</small></div></li>)}</ol></div>
+    <div className="evaluation-subsection"><h4>Generator editions</h4>{versions.length === 0 ? <p className="evaluation-empty">No judged generator output yet. Decisions will appear here by version.</p> : <div className="evaluation-versions">{versions.map((version) => { const watch = version.secretLeakRate !== null && version.secretLeakRate > 0 || version.errorRate !== null && version.errorRate > 0.2; return <article className="evaluation-version" key={`${version.surface}:${version.version}`}><div><span>{version.surface}</span><strong>{version.version}</strong></div><div><strong>{evaluationPercent(version.successRate)}</strong><small>{version.sampleSize} judged</small></div><span className={watch ? 'evaluation-version__state evaluation-version__state--watch' : 'evaluation-version__state'}>{version.sampleSize < 5 ? 'Learning' : watch ? 'Watch' : 'Steady'}</span></article> })}</div>}</div>
+    <div className="evaluation-subsection"><h4>Recorded live checks</h4>{runs.length === 0 ? <p className="evaluation-empty">No campaign-scoped live checks recorded. Use <code>npm run eval:record</code> with this campaign ID.</p> : <ol className="evaluation-runs">{runs.map((run) => <li key={run.id}><time dateTime={run.createdAt}>{new Date(run.createdAt).toLocaleDateString()}</time><div><strong>{run.suite} · {run.model}</strong><small>{run.generatorVersion}{run.notes ? ` · ${run.notes}` : ''}</small></div><span>{run.passed}/{run.total}{run.delta === null ? '' : ` · ${run.delta >= 0 ? '+' : ''}${Math.round(run.delta * 100)} pts`}</span></li>)}</ol>}</div>
+  </section>
+}
+
 function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: { session: TableSession; ledger: CanonLedger | null; onLedger: (ledger: CanonLedger) => void; onClose: () => void; onOpenSource: (source: CanonProposalSource) => void }) {
   const [pending, setPending] = useState('')
   const [extracting, setExtracting] = useState(false)
@@ -518,7 +541,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
   const [recapPublicDraft, setRecapPublicDraft] = useState('')
   const [recapGmDraft, setRecapGmDraft] = useState('')
   const [recapHistory, setRecapHistory] = useState<SessionRecapRevision[] | null>(null)
-  const [aiReadiness, setAiReadiness] = useState<AiReadiness | null>(null)
+  const [aiDashboard, setAiDashboard] = useState<AiEvaluationDashboard | null>(null)
   const [error, setError] = useState('')
   const authorization = { authorization: `Bearer ${session.player.token}` }
   const isGm = session.player.knowledgeRole === 'gm'
@@ -531,10 +554,10 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
 
   useEffect(() => {
     if (!isGm) return
-    void api<{ readiness: AiReadiness }>('/api/campaign/ai/readiness', { headers: { authorization: `Bearer ${session.player.token}` } })
-      .then(({ readiness }) => setAiReadiness(readiness))
-      .catch((reason) => setError(reason instanceof Error ? reason.message : 'AI readiness could not be loaded.'))
-  }, [isGm, ledger, session.player.token])
+    void api<{ dashboard: AiEvaluationDashboard }>('/api/campaign/ai/evaluation', { headers: { authorization: `Bearer ${session.player.token}` } })
+      .then(({ dashboard }) => setAiDashboard(dashboard))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'AI evaluation could not be loaded.'))
+  }, [continuityBrief, isGm, ledger, session.player.token])
 
   useEffect(() => {
     if (!isGm) return
@@ -913,7 +936,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
                   {recapHistory && <ol className="canon-history">{recapHistory.map((revision) => <li key={revision.id}><span>Revision {revision.revision}</span><strong>{revision.publicSummary}</strong><p>{revision.gmNotes}</p><small>{revision.createdByName} · {new Date(revision.createdAt).toLocaleString()}</small></li>)}</ol>}
                 </article>}
               </section>
-              {isGm && aiReadiness && <section className="canon-section" aria-labelledby="ai-readiness-heading"><div className="canon-section-title"><h3 id="ai-readiness-heading">Automation readiness</h3><span>{aiReadiness.eligible ? 'Eligible' : 'Not ready'}</span></div><p className="canon-coverage">Even when eligible, automation may prepare drafts only. A GM always publishes.</p><ol className="canon-history">{aiReadiness.checks.map((check) => <li key={check.id}><span>{check.passed ? 'Passed' : 'Waiting'}</span><strong>{check.label}</strong><small>Current value: {check.value ?? 'no data'}</small></li>)}</ol></section>}
+              {isGm && aiDashboard && <EvaluationLedger dashboard={aiDashboard} />}
               {isGm && <section className="canon-section" aria-labelledby="canon-proposals-heading">
                 <div className="canon-section-title"><h3 id="canon-proposals-heading">Awaiting review</h3><div><span>{pendingProposals.length}</span><button className="folio-small-action" onClick={() => void extractCanon()} disabled={extracting || !coverage?.unscannedCount}>{extracting ? 'Reading…' : coverage?.unscannedCount ? 'Find passages' : 'Up to date'}</button></div></div>
                 {coverage && <p className="canon-coverage">{coverage.unscannedCount > 0 ? `${coverage.unscannedCount} new transcript ${coverage.unscannedCount === 1 ? 'message' : 'messages'} ready to scan.` : coverage.latestSequence > 0 ? 'The transcript is scanned through its latest message.' : 'The transcript has no messages to scan yet.'}</p>}

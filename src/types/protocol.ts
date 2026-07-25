@@ -264,6 +264,65 @@ export type AiReadiness = {
   eligible: boolean
   mode: 'prepare_only'
   checks: Array<{ id: string; label: string; passed: boolean; value: number | null }>
+  metrics: AiFeedbackMetrics
+}
+
+export type CanonFeedbackMetrics = {
+  total: number
+  accepted: number
+  edited: number
+  disputed: number
+  rejected: number
+  acceptanceRate: number | null
+  editRate: number | null
+  disputeRate: number | null
+  rejectionRate: number | null
+}
+
+export type ContinuityFeedbackMetrics = {
+  total: number
+  useful: number
+  incorrect: number
+  secretLeak: number
+  notUseful: number
+  usefulRate: number | null
+  incorrectRate: number | null
+  secretLeakRate: number | null
+  notUsefulRate: number | null
+}
+
+export type AiFeedbackMetrics = {
+  canon: CanonFeedbackMetrics
+  continuity: ContinuityFeedbackMetrics
+  byGeneratorVersion: {
+    canon: Record<string, CanonFeedbackMetrics>
+    continuity: Record<string, ContinuityFeedbackMetrics>
+  }
+}
+
+export type AiEvaluationDashboard = {
+  readiness: AiReadiness
+  versions: Array<{
+    surface: 'canon' | 'continuity'
+    version: string
+    sampleSize: number
+    successRate: number | null
+    errorRate: number | null
+    secretLeakRate: number | null
+  }>
+  runs: Array<{
+    id: Id
+    suite: string
+    model: string
+    generatorVersion: string
+    passed: number
+    total: number
+    notes: string | null
+    createdAt: string
+    passRate: number
+    delta: number | null
+  }>
+  alerts: Array<{ severity: 'critical' | 'warning'; message: string }>
 }
 
 export type ClientVoiceSignal = Envelope<

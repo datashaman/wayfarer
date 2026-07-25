@@ -54,6 +54,7 @@ import {
   type RuntimeConfig,
   type SeatEntry,
   type SessionRecap,
+  type SessionRecapRevision,
   type ServerEvent,
   type TableSession,
   type TranscriptSearchResult,
@@ -499,6 +500,9 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
   const [continuityBrief, setContinuityBrief] = useState<ContinuityBrief | null>(null)
   const [continuityLoaded, setContinuityLoaded] = useState(false)
   const [continuityPending, setContinuityPending] = useState(false)
+  const [lifecycleEditingId, setLifecycleEditingId] = useState('')
+  const [lifecycleStatus, setLifecycleStatus] = useState<'open' | 'dormant' | 'resolved'>('open')
+  const [lifecycleReason, setLifecycleReason] = useState('')
   const [contradictionReport, setContradictionReport] = useState<ContradictionReport | null>(null)
   const [contradictionsLoaded, setContradictionsLoaded] = useState(false)
   const [contradictionsPending, setContradictionsPending] = useState(false)
@@ -510,6 +514,10 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
   const [sessionTitle, setSessionTitle] = useState('')
   const [sessionRecap, setSessionRecap] = useState<SessionRecap | null>(null)
   const [recapPending, setRecapPending] = useState(false)
+  const [recapEditing, setRecapEditing] = useState(false)
+  const [recapPublicDraft, setRecapPublicDraft] = useState('')
+  const [recapGmDraft, setRecapGmDraft] = useState('')
+  const [recapHistory, setRecapHistory] = useState<SessionRecapRevision[] | null>(null)
   const [aiReadiness, setAiReadiness] = useState<AiReadiness | null>(null)
   const [error, setError] = useState('')
   const authorization = { authorization: `Bearer ${session.player.token}` }
@@ -750,6 +758,8 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     try {
       const { recap } = await api<{ recap: SessionRecap }>('/api/campaign/recaps/extract', { method: 'POST', headers: authorization, body: JSON.stringify({ sessionId: selectedSessionId }) })
       setSessionRecap(recap)
+      setRecapEditing(false)
+      setRecapHistory(null)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The session recap could not be prepared.')
     } finally {
@@ -768,6 +778,46 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
       setError(reason instanceof Error ? reason.message : 'The session recap could not be published.')
     } finally {
       setRecapPending(false)
+    }
+  }
+
+  const beginRecapEdit = () => {
+    if (!sessionRecap?.gmNotes) return
+    setRecapPublicDraft(sessionRecap.publicSummary)
+    setRecapGmDraft(sessionRecap.gmNotes)
+    setRecapEditing(true)
+  }
+
+  const saveRecapDraft = async () => {
+    if (!sessionRecap) return
+    setRecapPending(true)
+    setError('')
+    try {
+      const { recap } = await api<{ recap: SessionRecap }>(`/api/campaign/recaps/${sessionRecap.id}`, {
+        method: 'PATCH', headers: authorization,
+        body: JSON.stringify({ publicSummary: recapPublicDraft, gmNotes: recapGmDraft, revision: sessionRecap.revision }),
+      })
+      setSessionRecap(recap)
+      setRecapEditing(false)
+      setRecapHistory(null)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The recap draft could not be saved.')
+    } finally {
+      setRecapPending(false)
+    }
+  }
+
+  const toggleRecapHistory = async () => {
+    if (!sessionRecap) return
+    if (recapHistory) {
+      setRecapHistory(null)
+      return
+    }
+    try {
+      const { revisions } = await api<{ revisions: SessionRecapRevision[] }>(`/api/campaign/recaps/${sessionRecap.id}/history`, { headers: authorization })
+      setRecapHistory(revisions)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Recap history could not be loaded.')
     }
   }
 
@@ -799,16 +849,23 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     }
   }
 
-  const transitionContinuityThread = async (thread: ContinuityBrief['threads'][number], status: 'open' | 'dormant' | 'resolved') => {
-    const reason = window.prompt(`${status === 'open' ? 'Reopen' : status === 'dormant' ? 'Mark dormant' : 'Resolve'} “${thread.title}” — why?`)
-    if (!reason?.trim()) return
+  const beginLifecycleEdit = (thread: ContinuityBrief['threads'][number], status: 'open' | 'dormant' | 'resolved') => {
+    setLifecycleEditingId(thread.id)
+    setLifecycleStatus(status)
+    setLifecycleReason('')
+  }
+
+  const transitionContinuityThread = async (thread: ContinuityBrief['threads'][number]) => {
+    if (!lifecycleReason.trim()) return
     setPending(thread.id)
     setError('')
     try {
       const result = await api<{ brief: ContinuityBrief }>(`/api/campaign/continuity/threads/${thread.id}/lifecycle`, {
-        method: 'POST', headers: authorization, body: JSON.stringify({ status, reason }),
+        method: 'POST', headers: authorization, body: JSON.stringify({ status: lifecycleStatus, reason: lifecycleReason }),
       })
       setContinuityBrief(result.brief)
+      setLifecycleEditingId('')
+      setLifecycleReason('')
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The continuity status could not be changed.')
     } finally {
@@ -846,7 +903,16 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
                   <div className="canon-actions"><button className="primary-action" onClick={() => void saveConstitution()} disabled={pending === 'constitution'}>{pending === 'constitution' ? 'Saving…' : 'Save constitution'}</button><button className="folio-button" onClick={() => { setEditingConstitution(false); setConstitutionDraft(null) }}>Cancel</button></div>
                 </div> : <div className="canon-constitution-summary"><p>{constitution.canonThreshold === 'explicit_only' ? 'Explicit statements, commitments, and rulings can become canon.' : constitution.canonThreshold === 'table_consensus' ? 'Clear table consensus can become canon.' : 'Facts established through play can become canon.'}</p><span>World declarations: {constitution.playerDeclarations === 'require_confirmation' ? 'confirmation required' : 'stand unless challenged'} · OOC: {constitution.oocPolicy === 'exclude' ? 'excluded' : 'corrections only'} · Corrections: {constitution.correctionPolicy === 'latest_explicit' ? 'latest wins' : 'flag conflicts'}</span>{constitution.guidance && <q>{constitution.guidance}</q>}<small>Revision {constitution.revision}{constitution.updatedByName ? ` · ${constitution.updatedByName}` : ''}</small></div>}
               </section>}
-              <section className="canon-section" aria-labelledby="session-recap-heading"><div className="canon-section-title"><h3 id="session-recap-heading">Session recap</h3>{isGm && <button className="folio-small-action" onClick={() => void prepareSessionRecap()} disabled={recapPending || !selectedSessionId}>{recapPending ? 'Preparing…' : sessionRecap ? 'Prepare another' : 'Prepare draft'}</button>}</div>{!sessionRecap ? <div className="canon-empty"><BookOpen size={18} /><span>{isGm ? 'No recap draft has been prepared.' : 'No session recap has been published.'}</span></div> : <article className="canon-entry"><div className="canon-card-meta"><span>{sessionRecap.status}</span><span>{sessionRecap.contextSession.title}</span><span>Messages {sessionRecap.contextSession.startSequence}–{sessionRecap.contextSession.endSequence}</span></div><h4>For the table</h4><p>{sessionRecap.publicSummary}</p>{isGm && sessionRecap.gmNotes && <><strong>Private GM notes</strong><p>{sessionRecap.gmNotes}</p></>}<div className="canon-citations">{sessionRecap.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span></button>)}</div>{isGm && sessionRecap.status === 'draft' && <div className="canon-actions"><button className="primary-action" disabled={recapPending} onClick={() => void publishSessionRecap()}>{recapPending ? 'Publishing…' : 'Publish recap to campaign'}</button><span className="continuity-feedback">Drafts are never published automatically.</span></div>}</article>}</section>
+              <section className="canon-section" aria-labelledby="session-recap-heading">
+                <div className="canon-section-title"><h3 id="session-recap-heading">Session recap</h3>{isGm && <button className="folio-small-action" onClick={() => void prepareSessionRecap()} disabled={recapPending || !selectedSessionId}>{recapPending ? 'Preparing…' : sessionRecap ? 'Prepare another' : 'Prepare draft'}</button>}</div>
+                {!sessionRecap ? <div className="canon-empty"><BookOpen size={18} /><span>{isGm ? 'No recap draft has been prepared.' : 'No session recap has been published.'}</span></div> : <article className="canon-entry">
+                  <div className="canon-card-meta"><span>{sessionRecap.status}</span><span>{sessionRecap.contextSession.title}</span><span>Revision {sessionRecap.revision}</span><span>Messages {sessionRecap.contextSession.startSequence}–{sessionRecap.contextSession.endSequence}</span></div>
+                  {recapEditing ? <div className="canon-edit"><label htmlFor="recap-public-summary">For the table</label><textarea id="recap-public-summary" value={recapPublicDraft} onChange={(event) => setRecapPublicDraft(event.target.value)} maxLength={5_000} /><label htmlFor="recap-gm-notes">Private GM notes</label><textarea id="recap-gm-notes" value={recapGmDraft} onChange={(event) => setRecapGmDraft(event.target.value)} maxLength={5_000} /><div className="canon-actions"><button className="primary-action" disabled={recapPending || !recapPublicDraft.trim() || !recapGmDraft.trim()} onClick={() => void saveRecapDraft()}>{recapPending ? 'Saving…' : 'Save draft revision'}</button><button className="folio-button" onClick={() => setRecapEditing(false)}>Cancel</button></div></div> : <><h4>For the table</h4><p>{sessionRecap.publicSummary}</p>{isGm && sessionRecap.gmNotes && <><strong>Private GM notes</strong><p>{sessionRecap.gmNotes}</p></>}</>}
+                  <div className="canon-citations">{sessionRecap.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span></button>)}</div>
+                  {isGm && <div className="canon-actions"><button className="folio-button" onClick={() => void toggleRecapHistory()}>{recapHistory ? 'Hide history' : 'History'}</button>{sessionRecap.status === 'draft' && <><button className="folio-button" onClick={beginRecapEdit}>Edit draft</button><button className="primary-action" disabled={recapPending || recapEditing} onClick={() => void publishSessionRecap()}>{recapPending ? 'Publishing…' : 'Publish recap to campaign'}</button><span className="continuity-feedback">Drafts are never published automatically.</span></>}</div>}
+                  {recapHistory && <ol className="canon-history">{recapHistory.map((revision) => <li key={revision.id}><span>Revision {revision.revision}</span><strong>{revision.publicSummary}</strong><p>{revision.gmNotes}</p><small>{revision.createdByName} · {new Date(revision.createdAt).toLocaleString()}</small></li>)}</ol>}
+                </article>}
+              </section>
               {isGm && aiReadiness && <section className="canon-section" aria-labelledby="ai-readiness-heading"><div className="canon-section-title"><h3 id="ai-readiness-heading">Automation readiness</h3><span>{aiReadiness.eligible ? 'Eligible' : 'Not ready'}</span></div><p className="canon-coverage">Even when eligible, automation may prepare drafts only. A GM always publishes.</p><ol className="canon-history">{aiReadiness.checks.map((check) => <li key={check.id}><span>{check.passed ? 'Passed' : 'Waiting'}</span><strong>{check.label}</strong><small>Current value: {check.value ?? 'no data'}</small></li>)}</ol></section>}
               {isGm && <section className="canon-section" aria-labelledby="canon-proposals-heading">
                 <div className="canon-section-title"><h3 id="canon-proposals-heading">Awaiting review</h3><div><span>{pendingProposals.length}</span><button className="folio-small-action" onClick={() => void extractCanon()} disabled={extracting || !coverage?.unscannedCount}>{extracting ? 'Reading…' : coverage?.unscannedCount ? 'Find passages' : 'Up to date'}</button></div></div>
@@ -882,6 +948,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
                     <div className="canon-actions"><button className={entryMode.action === 'retract' ? 'folio-button folio-button--danger' : 'primary-action'} disabled={pending === entry.id || !entryTitle.trim() || !entryClaim.trim() || (entryVisibility === 'characters' && !audiencePlayerIds.length) || (entryMode.action !== 'revise' && !entryReason.trim())} onClick={() => void saveEntryAction()}>{pending === entry.id ? 'Recording…' : entryMode.action === 'retract' ? 'Confirm retraction' : entryMode.action === 'supersede' ? 'Record new version' : 'Save revision'}</button><button className="folio-button" onClick={() => setEntryMode(null)}>Cancel</button></div>
                   </div> : <><h4>{entry.title}</h4><p>{entry.claim}</p>{entry.latestReason && <p className="continuity-note">Latest change: {entry.latestReason}</p>}</>}
                   <div className="canon-citations">{entry.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span></button>)}</div>
+                  {entry.evidenceBasis === 'gm_confirmed' && <p className="continuity-note">GM-confirmed knowledge · source evidence was not witnessed at this seat.</p>}
                   <small>Accepted by {entry.createdByName ?? 'a GM'}</small>
                   <div className="canon-actions"><button className="folio-button" onClick={() => void toggleHistory(entry)}>{entryHistory[entry.id] ? 'Hide history' : 'History'}</button>{isGm && <><button className="folio-button" onClick={() => beginEntryAction(entry, 'revise')}>Edit</button><button className="folio-button" onClick={() => beginEntryAction(entry, 'supersede')}>Supersede</button><button className="folio-button" onClick={() => beginEntryAction(entry, 'retract')}>Retract</button></>}</div>
                   {entryHistory[entry.id] && <ol className="canon-history">{entryHistory[entry.id].map((revision, index, revisions) => { const previous = revisions[index + 1]; const changes = previous ? [revision.title !== previous.title && 'title', revision.claim !== previous.claim && 'wording', revision.visibility !== previous.visibility && 'audience'].filter(Boolean) : []; return <li key={revision.id}><span>Revision {revision.revision} · {revision.action}{changes.length ? ` · changed ${changes.join(', ')}` : ''}</span><strong>{revision.title}</strong><p>{revision.claim}</p><small>{revision.createdByName}{revision.reason ? ` · ${revision.reason}` : ''}</small></li> })}</ol>}
@@ -902,7 +969,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
                 {continuityBrief && <><p className="continuity-note">Private to GMs · prepared {new Date(continuityBrief.createdAt).toLocaleString()}{continuityBrief.contextSession ? ` · ${continuityBrief.contextSession.title} · messages ${continuityBrief.contextSession.startSequence}–${continuityBrief.contextSession.endSequence}` : ''}</p>{!continuityBrief.threads.length && <div className="canon-empty"><Check size={18} /><span>No well-supported loose threads were found.</span></div>}{continuityBrief.threads.map((thread) => <article className="continuity-card" key={thread.id}>
                   <div className="canon-card-meta"><span>GM only</span><span>{thread.lifecycle.status}</span></div><h4>{thread.title}</h4><p>{thread.summary}</p><strong>Why it matters</strong><p>{thread.whyItMatters}</p>
                   <div className="canon-citations">{thread.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open continuity citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span><q>{source.excerpt ?? source.text}</q></button>)}</div>
-                  <div className="canon-actions" aria-label={`Lifecycle for ${thread.title}`}>{thread.lifecycle.status !== 'open' && <button className="folio-button" disabled={pending === thread.id} onClick={() => void transitionContinuityThread(thread, 'open')}>Reopen</button>}{thread.lifecycle.status !== 'dormant' && <button className="folio-button" disabled={pending === thread.id} onClick={() => void transitionContinuityThread(thread, 'dormant')}>Mark dormant</button>}{thread.lifecycle.status !== 'resolved' && <button className="folio-button" disabled={pending === thread.id} onClick={() => void transitionContinuityThread(thread, 'resolved')}>Resolve</button>}</div>
+                  {lifecycleEditingId === thread.id ? <div className="canon-edit continuity-lifecycle-editor"><label htmlFor={`continuity-status-${thread.id}`}>New status</label><select id={`continuity-status-${thread.id}`} value={lifecycleStatus} onChange={(event) => setLifecycleStatus(event.target.value as 'open' | 'dormant' | 'resolved')}><option value="open">Open</option><option value="dormant">Dormant</option><option value="resolved">Resolved</option></select><label htmlFor={`continuity-reason-${thread.id}`}>Reason</label><input id={`continuity-reason-${thread.id}`} value={lifecycleReason} onChange={(event) => setLifecycleReason(event.target.value)} maxLength={500} placeholder="What changed at the table?" autoFocus /><div className="canon-actions"><button className="primary-action" disabled={pending === thread.id || !lifecycleReason.trim()} onClick={() => void transitionContinuityThread(thread)}>{pending === thread.id ? 'Recording…' : 'Record status'}</button><button className="folio-button" onClick={() => setLifecycleEditingId('')}>Cancel</button></div></div> : <div className="canon-actions" aria-label={`Lifecycle for ${thread.title}`}>{thread.lifecycle.status !== 'open' && <button className="folio-button" disabled={pending === thread.id} onClick={() => beginLifecycleEdit(thread, 'open')}>Reopen</button>}{thread.lifecycle.status !== 'dormant' && <button className="folio-button" disabled={pending === thread.id} onClick={() => beginLifecycleEdit(thread, 'dormant')}>Mark dormant</button>}{thread.lifecycle.status !== 'resolved' && <button className="folio-button" disabled={pending === thread.id} onClick={() => beginLifecycleEdit(thread, 'resolved')}>Resolve</button>}</div>}
                   {thread.lifecycle.reason && <p className="continuity-note">{thread.lifecycle.createdByName}: {thread.lifecycle.reason}</p>}
                   <div className="canon-actions" aria-label={`Feedback for ${thread.title}`}><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'useful')}>Useful</button><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'incorrect')}>Incorrect</button><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'secret_leak')}>Secret leak</button><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'not_useful')}>Not useful</button>{thread.feedback && <span className="continuity-feedback">Recorded: {thread.feedback.rating.replace('_', ' ')}</span>}</div>
                 </article>)}</>}

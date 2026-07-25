@@ -1386,6 +1386,53 @@ test('continuity briefs are owner-private, canon-aware, cited, and rateable', as
   assert.equal((await json(`${origin}/api/campaign/continuity/threads/${generated.body.brief.threads[0].id}/lifecycle`, { method: 'POST', headers: memberAuthorization, body: JSON.stringify({ status: 'open', reason: 'No.' }) })).status, 403)
 })
 
+test('recap drafts are editable by GMs, versioned, and immutable after publication', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-recap-workflow-'))
+  const recapGenerator = {
+    version: 'fixture-recap-v1',
+    async generate({ messages }) {
+      return { publicSummary: 'The party reached the old gate.', gmNotes: 'The gate remains sealed.', sources: [{ messageId: messages[0].id, excerpt: 'old gate' }] }
+    },
+  }
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite'), recapGenerator })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+  let ownerSocket
+  t.after(async () => {
+    ownerSocket?.close()
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+  const created = await json(`${origin}/api/campaigns`, { method: 'POST', body: JSON.stringify({ campaignName: 'The Old Road', playerName: 'Mara' }) })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, { method: 'POST', body: JSON.stringify({ playerName: 'Theo' }) })
+  const ownerAuthorization = { authorization: `Bearer ${created.body.player.token}` }
+  const memberAuthorization = { authorization: `Bearer ${joined.body.player.token}` }
+  const roomId = created.body.campaign.rooms[0].id
+  ownerSocket = await openSocket(`ws://127.0.0.1:${port}/ws?token=${created.body.player.token}`)
+  const snapshot = nextEvent(ownerSocket, 'room.snapshot')
+  ownerSocket.send(JSON.stringify({ type: 'room.subscribe', id: crypto.randomUUID(), roomId, sentAt: new Date().toISOString(), payload: {} }))
+  await snapshot
+  const messageEvent = nextEvent(ownerSocket, 'chat.message')
+  ownerSocket.send(JSON.stringify({ type: 'chat.send', id: crypto.randomUUID(), roomId, sentAt: new Date().toISOString(), payload: { clientMessageId: crypto.randomUUID(), text: 'The party reached the old gate.' } }))
+  await messageEvent
+  const closed = await json(`${origin}/api/campaign/sessions/close`, { method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ title: 'The old gate' }) })
+  const prepared = await json(`${origin}/api/campaign/recaps/extract`, { method: 'POST', headers: ownerAuthorization, body: JSON.stringify({ sessionId: closed.body.sessions[0].id }) })
+  assert.equal(prepared.status, 201)
+  assert.equal(prepared.body.recap.revision, 0)
+  assert.equal((await json(`${origin}/api/campaign/recaps/latest`, { headers: memberAuthorization })).body.recap, null)
+  assert.equal((await json(`${origin}/api/campaign/recaps/${prepared.body.recap.id}`, { method: 'PATCH', headers: memberAuthorization, body: JSON.stringify({ publicSummary: 'No', gmNotes: 'No', revision: 0 }) })).status, 403)
+  const revised = await json(`${origin}/api/campaign/recaps/${prepared.body.recap.id}`, { method: 'PATCH', headers: ownerAuthorization, body: JSON.stringify({ publicSummary: 'The party opened the old gate.', gmNotes: 'The road beyond is watched.', revision: 0 }) })
+  assert.equal(revised.status, 200)
+  assert.equal(revised.body.recap.revision, 1)
+  const history = await json(`${origin}/api/campaign/recaps/${prepared.body.recap.id}/history`, { headers: ownerAuthorization })
+  assert.deepEqual(history.body.revisions.map((revision) => revision.revision), [1, 0])
+  assert.equal((await json(`${origin}/api/campaign/recaps/${prepared.body.recap.id}/publish`, { method: 'POST', headers: ownerAuthorization })).status, 200)
+  const publicRecap = await json(`${origin}/api/campaign/recaps/latest`, { headers: memberAuthorization })
+  assert.equal(publicRecap.body.recap.publicSummary, 'The party opened the old gate.')
+  assert.equal(publicRecap.body.recap.gmNotes, null)
+  assert.equal((await json(`${origin}/api/campaign/recaps/${prepared.body.recap.id}`, { method: 'PATCH', headers: ownerAuthorization, body: JSON.stringify({ publicSummary: 'Changed', gmNotes: 'Changed', revision: 1 }) })).status, 409)
+})
+
 test('room transcript survives a server restart', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-history-'))
   const databasePath = join(directory, 'table.sqlite')

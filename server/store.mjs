@@ -90,7 +90,7 @@ function publicCanonProposal(row, sources = []) {
   }
 }
 
-function publicCanonEntry(row, sources = [], audiences = []) {
+function publicCanonEntry(row, sources = [], audiences = [], evidenceBasis = 'full') {
   return {
     id: row.id,
     proposalId: row.proposal_id,
@@ -101,6 +101,7 @@ function publicCanonEntry(row, sources = [], audiences = []) {
     visibility: audiences.length ? 'characters' : row.visibility,
     audiencePlayerIds: audiences.map((audience) => audience.id),
     audienceNames: audiences.map((audience) => audience.name),
+    evidenceBasis,
     revision: row.revision,
     status: row.status === 'active' ? 'active' : row.retired_reason ?? 'superseded',
     createdAt: row.created_at,
@@ -193,6 +194,7 @@ function publicSessionRecap(row, sources = [], { includeGmNotes = false } = {}) 
     campaignId: row.campaign_id,
     generatorVersion: row.generator_version,
     status: row.status,
+    revision: row.revision,
     publicSummary: row.public_summary,
     gmNotes: includeGmNotes ? row.gm_notes : null,
     contextSession: {
@@ -200,6 +202,8 @@ function publicSessionRecap(row, sources = [], { includeGmNotes = false } = {}) 
       startSequence: row.session_start_sequence, endSequence: row.session_end_sequence,
     },
     createdAt: row.created_at,
+    updatedAt: row.updated_at ?? row.created_at,
+    updatedByName: row.updated_by_name ?? null,
     publishedAt: row.published_at,
     sources,
   }
@@ -443,6 +447,7 @@ export function createStore(databasePath) {
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
       generator_version TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'published')),
+      revision INTEGER NOT NULL DEFAULT 0,
       public_summary TEXT NOT NULL,
       gm_notes TEXT NOT NULL,
       session_id TEXT NOT NULL,
@@ -452,6 +457,8 @@ export function createStore(databasePath) {
       session_end_sequence INTEGER NOT NULL,
       created_by_player_id TEXT NOT NULL REFERENCES players(id),
       created_at TEXT NOT NULL,
+      updated_by_player_id TEXT REFERENCES players(id),
+      updated_at TEXT,
       published_by_player_id TEXT REFERENCES players(id),
       published_at TEXT
     );
@@ -460,6 +467,16 @@ export function createStore(databasePath) {
       message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
       excerpt TEXT,
       PRIMARY KEY (recap_id, message_id)
+    );
+    CREATE TABLE IF NOT EXISTS session_recap_revisions (
+      id TEXT PRIMARY KEY,
+      recap_id TEXT NOT NULL REFERENCES session_recaps(id) ON DELETE CASCADE,
+      revision INTEGER NOT NULL,
+      public_summary TEXT NOT NULL,
+      gm_notes TEXT NOT NULL,
+      player_id TEXT NOT NULL REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      UNIQUE(recap_id, revision)
     );
     CREATE TABLE IF NOT EXISTS ai_evaluation_runs (
       id TEXT PRIMARY KEY,
@@ -512,6 +529,14 @@ export function createStore(databasePath) {
     if (!columns.some((column) => column.name === 'session_start_sequence')) database.exec(`ALTER TABLE ${table} ADD COLUMN session_start_sequence INTEGER`)
     if (!columns.some((column) => column.name === 'session_end_sequence')) database.exec(`ALTER TABLE ${table} ADD COLUMN session_end_sequence INTEGER`)
   }
+  const recapColumns = database.prepare('PRAGMA table_info(session_recaps)').all()
+  if (!recapColumns.some((column) => column.name === 'revision')) database.exec('ALTER TABLE session_recaps ADD COLUMN revision INTEGER NOT NULL DEFAULT 0')
+  if (!recapColumns.some((column) => column.name === 'updated_by_player_id')) database.exec('ALTER TABLE session_recaps ADD COLUMN updated_by_player_id TEXT REFERENCES players(id)')
+  if (!recapColumns.some((column) => column.name === 'updated_at')) database.exec('ALTER TABLE session_recaps ADD COLUMN updated_at TEXT')
+  database.exec(`
+    INSERT OR IGNORE INTO session_recap_revisions (id, recap_id, revision, public_summary, gm_notes, player_id, created_at)
+    SELECT lower(hex(randomblob(16))), id, revision, public_summary, gm_notes, created_by_player_id, created_at FROM session_recaps
+  `)
   database.exec(`
     INSERT OR IGNORE INTO canon_entry_revisions (
       id, entry_id, revision, action, title, claim, visibility, reason, player_id, created_at
@@ -1025,13 +1050,17 @@ export function createStore(databasePath) {
   const insertSessionRecap = database.prepare(`
     INSERT INTO session_recaps (
       id, campaign_id, generator_version, public_summary, gm_notes, session_id, session_title,
-      session_status, session_start_sequence, session_end_sequence, created_by_player_id, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      session_status, session_start_sequence, session_end_sequence, created_by_player_id, created_at,
+      updated_by_player_id, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
+  const insertSessionRecapRevision = database.prepare(`INSERT INTO session_recap_revisions (id, recap_id, revision, public_summary, gm_notes, player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
   const insertSessionRecapSource = database.prepare('INSERT INTO session_recap_sources (recap_id, message_id, excerpt) VALUES (?, ?, ?)')
-  const latestSessionRecap = database.prepare(`SELECT * FROM session_recaps WHERE campaign_id = ? ORDER BY rowid DESC LIMIT 1`)
-  const latestPublishedSessionRecap = database.prepare(`SELECT * FROM session_recaps WHERE campaign_id = ? AND status = 'published' ORDER BY rowid DESC LIMIT 1`)
+  const latestSessionRecap = database.prepare(`SELECT session_recaps.*, players.name AS updated_by_name FROM session_recaps LEFT JOIN players ON players.id = session_recaps.updated_by_player_id WHERE session_recaps.campaign_id = ? ORDER BY session_recaps.rowid DESC LIMIT 1`)
+  const latestPublishedSessionRecap = database.prepare(`SELECT session_recaps.*, players.name AS updated_by_name FROM session_recaps LEFT JOIN players ON players.id = session_recaps.updated_by_player_id WHERE session_recaps.campaign_id = ? AND session_recaps.status = 'published' ORDER BY session_recaps.rowid DESC LIMIT 1`)
   const sessionRecapById = database.prepare('SELECT * FROM session_recaps WHERE id = ? AND campaign_id = ?')
+  const updateSessionRecap = database.prepare("UPDATE session_recaps SET public_summary = ?, gm_notes = ?, revision = revision + 1, updated_by_player_id = ?, updated_at = ? WHERE id = ? AND campaign_id = ? AND status = 'draft' AND revision = ?")
+  const sessionRecapRevisions = database.prepare(`SELECT session_recap_revisions.*, players.name AS created_by_name FROM session_recap_revisions JOIN players ON players.id = session_recap_revisions.player_id WHERE recap_id = ? ORDER BY revision DESC`)
   const publishSessionRecap = database.prepare("UPDATE session_recaps SET status = 'published', published_by_player_id = ?, published_at = ? WHERE id = ? AND campaign_id = ? AND status = 'draft'")
   const sessionRecapSources = database.prepare(`
     SELECT session_recap_sources.message_id, session_recap_sources.excerpt, messages.text, messages.sent_at, messages.rowid AS sequence,
@@ -1538,18 +1567,35 @@ export function createStore(databasePath) {
       }))
     },
 
-    listCanonEntries(campaignId, { includeGmOnly = false, viewerPlayerId = null } = {}) {
+    listCanonEntries(campaignId, { includeGmOnly = false, viewerPlayerId = null, redactForViewer = !includeGmOnly } = {}) {
+      const sessions = redactForViewer && viewerPlayerId ? this.listCampaignSessions(campaignId) : []
+      const witnessed = (sequence) => sessions.some((session) => sequence >= session.startSequence
+        && sequence <= session.endSequence
+        && session.participants.some((participant) => participant.id === viewerPlayerId))
       return canonEntriesForCampaign.all(campaignId)
         .map((row) => ({ row, audiences: canonAudiencesForEntry.all(row.id) }))
         .filter(({ row, audiences }) => includeGmOnly || row.visibility === 'campaign' || audiences.some((audience) => audience.id === viewerPlayerId))
-        .map(({ row, audiences }) => publicCanonEntry(row, canonSourcesForEntry.all(row.id), audiences))
+        .map(({ row, audiences }) => {
+          const sources = canonSourcesForEntry.all(row.id)
+          const targetedForViewer = redactForViewer && audiences.some((audience) => audience.id === viewerPlayerId)
+          if (!targetedForViewer) return publicCanonEntry(row, sources, audiences, includeGmOnly ? 'gm_review' : 'full')
+          const witnessedSources = sources.filter((source) => witnessed(source.sequence))
+          return publicCanonEntry(row, witnessedSources, audiences, witnessedSources.length ? 'witnessed' : 'gm_confirmed')
+        })
     },
 
-    getCanonEntry(campaignId, entryId, { includeGmOnly = false, viewerPlayerId = null } = {}) {
+    getCanonEntry(campaignId, entryId, { includeGmOnly = false, viewerPlayerId = null, redactForViewer = !includeGmOnly } = {}) {
       const row = canonEntryById.get(entryId, campaignId)
       const audiences = row ? canonAudiencesForEntry.all(entryId) : []
       if (!row || (!includeGmOnly && row.visibility !== 'campaign' && !audiences.some((audience) => audience.id === viewerPlayerId))) return null
-      return publicCanonEntry(row, canonSourcesForEntry.all(entryId), audiences)
+      const sources = canonSourcesForEntry.all(entryId)
+      const targetedForViewer = redactForViewer && audiences.some((audience) => audience.id === viewerPlayerId)
+      if (!targetedForViewer) return publicCanonEntry(row, sources, audiences, includeGmOnly ? 'gm_review' : 'full')
+      const sessions = this.listCampaignSessions(campaignId)
+      const witnessedSources = sources.filter((source) => sessions.some((session) => source.sequence >= session.startSequence
+        && source.sequence <= session.endSequence
+        && session.participants.some((participant) => participant.id === viewerPlayerId)))
+      return publicCanonEntry(row, witnessedSources, audiences, witnessedSources.length ? 'witnessed' : 'gm_confirmed')
     },
 
     reviseCanonEntry(campaignId, playerId, entryId, { action, title, claim, visibility, audiencePlayerIds = [], reason = null, expectedRevision }) {
@@ -1608,7 +1654,7 @@ export function createStore(databasePath) {
       if (!player) return null
       return {
         player: publicPlayer(player),
-        entries: this.listCanonEntries(campaignId, { viewerPlayerId: playerId }),
+        entries: this.listCanonEntries(campaignId, { viewerPlayerId: playerId, redactForViewer: true }),
         sessions: this.listCampaignSessions(campaignId).filter((session) => session.participants.some((participant) => participant.id === playerId)),
       }
     },
@@ -1749,7 +1795,8 @@ export function createStore(databasePath) {
       const createdAt = new Date().toISOString()
       database.exec('BEGIN IMMEDIATE')
       try {
-        insertSessionRecap.run(id, campaignId, generatorVersion, publicSummary, gmNotes, session.id, session.title, session.status, session.startSequence, session.endSequence, playerId, createdAt)
+        insertSessionRecap.run(id, campaignId, generatorVersion, publicSummary, gmNotes, session.id, session.title, session.status, session.startSequence, session.endSequence, playerId, createdAt, playerId, createdAt)
+        insertSessionRecapRevision.run(randomUUID(), id, 0, publicSummary, gmNotes, playerId, createdAt)
         for (const source of resolved) insertSessionRecapSource.run(id, source.messageId, source.excerpt ?? null)
         database.exec('COMMIT')
       } catch (error) {
@@ -1776,6 +1823,32 @@ export function createStore(databasePath) {
       if (current.status === 'published') return { outcome: 'already_published', recap: this.getLatestSessionRecap(campaignId, { includeDrafts: true, includeGmNotes: true }) }
       publishSessionRecap.run(playerId, new Date().toISOString(), recapId, campaignId)
       return { outcome: 'published', recap: this.getLatestSessionRecap(campaignId, { includeDrafts: true, includeGmNotes: true }) }
+    },
+
+    reviseSessionRecap(campaignId, playerId, recapId, { publicSummary, gmNotes, expectedRevision }) {
+      const current = sessionRecapById.get(recapId, campaignId)
+      if (!current) return { outcome: 'not_found' }
+      if (current.status !== 'draft') return { outcome: 'published' }
+      if (current.revision !== expectedRevision) return { outcome: 'conflict', recap: this.getLatestSessionRecap(campaignId, { includeDrafts: true, includeGmNotes: true }) }
+      const now = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        if (updateSessionRecap.run(publicSummary, gmNotes, playerId, now, recapId, campaignId, expectedRevision).changes !== 1) throw new Error('session_recap_conflict')
+        insertSessionRecapRevision.run(randomUUID(), recapId, expectedRevision + 1, publicSummary, gmNotes, playerId, now)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return { outcome: 'revised', recap: this.getLatestSessionRecap(campaignId, { includeDrafts: true, includeGmNotes: true }) }
+    },
+
+    listSessionRecapHistory(campaignId, recapId) {
+      if (!sessionRecapById.get(recapId, campaignId)) return null
+      return sessionRecapRevisions.all(recapId).map((revision) => ({
+        id: revision.id, revision: revision.revision, publicSummary: revision.public_summary,
+        gmNotes: revision.gm_notes, createdAt: revision.created_at, createdByName: revision.created_by_name,
+      }))
     },
 
     recordAiEvaluationRun({ campaignId = null, suite, model, generatorVersion, passed, total, notes = null }) {

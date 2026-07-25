@@ -325,6 +325,74 @@ export type AiEvaluationDashboard = {
   alerts: Array<{ severity: 'critical' | 'warning'; message: string }>
 }
 
+export type IntelligenceSettings = {
+  autoPrepare: boolean
+  tasks: { canon: boolean; continuity: boolean; recap: boolean }
+  updatedAt: string | null
+}
+
+export type PreparationRun = {
+  id: Id
+  sessionId: Id
+  status: 'queued' | 'running' | 'complete' | 'failed'
+  tasks: IntelligenceSettings['tasks']
+  result: Record<string, unknown> | null
+  error: string | null
+  createdAt: string
+  completedAt: string | null
+}
+
+export type HouseRule = {
+  id: Id
+  title: string
+  sourceRule: string
+  interpretation: string
+  ruling: string
+  status: 'active' | 'retired'
+  revision: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type FactionProposal = {
+  id: Id
+  summary: string
+  assumptions: string
+  proposedProgress: number
+  status: 'proposed' | 'accepted' | 'rejected'
+  generatorVersion: string
+  createdAt: string
+  decidedAt: string | null
+}
+
+export type FactionClock = {
+  id: Id
+  name: string
+  goal: string
+  progress: number
+  segments: number
+  revision: number
+  createdAt: string
+  updatedAt: string
+  proposals: FactionProposal[]
+}
+
+export type CampaignIntelligenceOverview = {
+  settings: IntelligenceSettings
+  readiness: AiReadiness
+  preparationRuns: PreparationRun[]
+  houseRules: HouseRule[]
+  factionClocks: FactionClock[]
+  spotlightParticipants: Array<{ id: Id; name: string; enabled: boolean }>
+}
+
+export type SpotlightReport = {
+  session: CampaignSession
+  basis: 'opted_in_text_messages'
+  participants: Array<{ id: Id; name: string; messages: number; share: number }>
+  totalMessages: number
+}
+
 export type ClientVoiceSignal = Envelope<
   'voice.offer' | 'voice.answer',
   { targetPlayerId: Id; sdp: RTCSessionDescriptionInit }

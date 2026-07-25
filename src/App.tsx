@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Compass,
   Hash,
   Headphones,
   KeyRound,
@@ -29,6 +30,8 @@ import {
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { RealtimeClient } from './lib/realtime'
+import { api } from './lib/api'
+import { CampaignIntelligenceFolio } from './CampaignIntelligenceFolio'
 import {
   createEvent,
   type ConnectionState,
@@ -161,11 +164,6 @@ function avatarColor(id: string) {
   return avatarPalette[hash % avatarPalette.length]
 }
 
-function serverOrigin() {
-  if (import.meta.env.VITE_SERVER_URL) return String(import.meta.env.VITE_SERVER_URL)
-  return import.meta.env.DEV ? `${location.protocol}//${location.hostname}:8787` : location.origin
-}
-
 function websocketUrl(token: string) {
   if (import.meta.env.VITE_WS_URL) {
     const custom = new URL(String(import.meta.env.VITE_WS_URL))
@@ -175,16 +173,6 @@ function websocketUrl(token: string) {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const host = import.meta.env.DEV ? `${location.hostname}:8787` : location.host
   return `${protocol}//${host}/ws?token=${encodeURIComponent(token)}`
-}
-
-async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${serverOrigin()}${path}`, {
-    ...options,
-    headers: { 'content-type': 'application/json', ...options.headers },
-  })
-  const body = await response.json()
-  if (!response.ok) throw new Error(body.error ?? 'Unable to reach the table.')
-  return body as T
 }
 
 async function copyText(value: string) {
@@ -1487,6 +1475,7 @@ function App() {
   const [transcriptSearch, setTranscriptSearch] = useState(false)
   const [sharedNotes, setSharedNotes] = useState(false)
   const [canonLedger, setCanonLedger] = useState(false)
+  const [campaignIntelligence, setCampaignIntelligence] = useState(false)
   const [campaignCanon, setCampaignCanon] = useState<CanonLedger | null>(null)
   const [targetMessageId, setTargetMessageId] = useState('')
   const [campaignNote, setCampaignNote] = useState<CampaignNote | null>(null)
@@ -1683,6 +1672,7 @@ function App() {
         setSession((current) => current ? { ...current, player: event.payload.player } : current)
         setCampaignCanon(null)
         setCanonLedger(false)
+        setCampaignIntelligence(false)
         return
       }
       if (event.type === 'campaign.updated') {
@@ -2013,6 +2003,7 @@ function App() {
           <button className="text-button" onClick={() => setTranscriptSearch(true)}><Search size={15} />Search</button>
           <button className="text-button" onClick={() => setSharedNotes(true)}><NotebookPen size={15} />Notes</button>
           <button className="text-button" onClick={() => setCanonLedger(true)}><BookMarked size={15} />Canon</button>
+          <button className="text-button" onClick={() => setCampaignIntelligence(true)}><Compass size={15} />Table tools</button>
           <button className="text-button invite-button" onClick={() => setInvitationSheet(true)}><QrCode size={15} />Invite players</button>
           {session.player.role === 'owner' && <button className="icon-button" onClick={() => setCampaignFolio(true)} aria-label="Open campaign folio"><Settings size={18} /></button>}
           <button className="icon-button mobile-only" onClick={() => setMobileTable(true)} aria-label="Open voice table"><Users size={19} /></button>
@@ -2059,6 +2050,7 @@ function App() {
       {transcriptSearch && <TranscriptSearch session={session} onClose={() => setTranscriptSearch(false)} onOpenRoom={changeRoom} />}
       {sharedNotes && <SharedNotes session={session} note={campaignNote} onNote={setCampaignNote} onClose={() => setSharedNotes(false)} />}
       {canonLedger && <CanonLedgerSheet session={session} ledger={campaignCanon} onLedger={setCampaignCanon} onClose={() => setCanonLedger(false)} onOpenSource={openCanonSource} />}
+      {campaignIntelligence && <CampaignIntelligenceFolio session={session} onClose={() => setCampaignIntelligence(false)} onUseDraft={setDraft} />}
 
       <div className="voice-dock mobile-only">
         {!joinedVoice ? <button className="primary-action" onClick={joinVoice} disabled={joiningVoice || connection !== 'live' || !voiceConfigReady}><Headphones size={17} />{joiningVoice ? 'Joining…' : voiceConfigReady ? 'Join voice' : 'Preparing voice…'}</button> : <><button className={`dock-mic ${muted ? 'dock-mic--muted' : ''}`} onClick={() => setMuted((current) => !current)} aria-label={muted ? 'Unmute' : 'Mute'}>{muted ? <MicOff size={18} /> : <Mic size={18} />}</button><span>{Object.values(peerConnectionStates).includes('failed') ? 'Voice issue' : Object.values(peerConnectionStates).includes('recovering') ? 'Reconnecting voice…' : muted ? 'Muted' : `${voiceParticipants.length} in voice`}</span><button className="quiet-icon" onClick={() => setMobileTable(true)} aria-label="Voice settings"><PanelRight size={17} /></button></>}

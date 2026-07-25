@@ -13,7 +13,13 @@ const recapGenerator = {
     return { publicSummary: 'The party crossed the old gate.', gmNotes: 'The road beyond remains unexplored.', sources: [{ messageId: messages[0].id, excerpt: null }] }
   },
 }
-const app = createRoomServer({ databasePath: ':memory:', dev: true, continuityGenerator, recapGenerator })
+const campaignIntelligence = {
+  version: 'e2e:intelligence-v1',
+  async answerKnowledge({ canon }) { return { answer: 'Ilyra is the lighthouse keeper.', citations: [canon[0].id] } },
+  async draftIntent() { return ['I raise the lantern and call the party onward.', 'Let the lighthouse guide us.'] },
+  async proposeFaction({ clock }) { return { summary: 'The watchers move toward the old gate.', assumptions: 'The road remains open.', proposedProgress: Math.min(clock.segments, clock.progress + 1) } },
+}
+const app = createRoomServer({ databasePath: ':memory:', dev: true, continuityGenerator, recapGenerator, campaignIntelligence })
 await app.listen(Number(process.env.PORT ?? 8792))
 
 async function shutdown() {

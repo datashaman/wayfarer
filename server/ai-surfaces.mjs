@@ -9,6 +9,7 @@ const definitions = [
   { id: 'factions', label: 'Faction clock', modelEnvironmentKey: 'OPENAI_INTELLIGENCE_MODEL', versionTag: 'campaign-intelligence-v1', evaluationCommand: 'npm run eval:factions', authority: 'proposal' },
   { id: 'campaign_seed', label: 'Campaign opening', modelEnvironmentKey: 'OPENAI_INTELLIGENCE_MODEL', versionTag: 'campaign-intelligence-v1', evaluationCommand: 'npm run eval:campaign-seed', authority: 'draft' },
   { id: 'character_concepts', label: 'Character concepts', modelEnvironmentKey: 'OPENAI_INTELLIGENCE_MODEL', versionTag: 'campaign-intelligence-v1', evaluationCommand: 'npm run eval:character-concepts', authority: 'draft' },
+  { id: 'in_play_material', label: 'In-play material', modelEnvironmentKey: 'OPENAI_INTELLIGENCE_MODEL', versionTag: 'campaign-intelligence-v1', evaluationCommand: 'npm run eval:in-play-material', authority: 'draft' },
 ]
 
 export const AI_SURFACES = Object.freeze(definitions.map((surface) => Object.freeze(surface)))

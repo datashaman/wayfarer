@@ -19,8 +19,8 @@ function objectList(value, length, fields) {
   return items.some((item) => Object.values(item).some((value) => !value)) ? null : items
 }
 
-export function createCampaignIntelligence({ version, generateKnowledgeAnswer, generateIntentDrafts, generateFactionProposal, generateHouseRule, generateCampaignSeed, generateCharacterConcepts, onInference = null }) {
-  if (!version || !generateKnowledgeAnswer || !generateIntentDrafts || !generateFactionProposal || !generateHouseRule || !generateCampaignSeed || !generateCharacterConcepts) throw new Error('Campaign intelligence requires every generator.')
+export function createCampaignIntelligence({ version, generateKnowledgeAnswer, generateIntentDrafts, generateFactionProposal, generateHouseRule, generateCampaignSeed, generateCharacterConcepts, generateInPlayMaterial, onInference = null }) {
+  if (!version || !generateKnowledgeAnswer || !generateIntentDrafts || !generateFactionProposal || !generateHouseRule || !generateCampaignSeed || !generateCharacterConcepts || !generateInPlayMaterial) throw new Error('Campaign intelligence requires every generator.')
   return {
     version,
     async draftCampaignSeed({ campaignId = null, premise }) {
@@ -56,6 +56,23 @@ export function createCampaignIntelligence({ version, generateKnowledgeAnswer, g
           throw new CampaignIntelligenceError('invalid_character_concepts', 'The character concepts were not grounded in this campaign.')
         }
         return concepts.map((item) => ({ ...item, generatorVersion: version }))
+      })
+    },
+    async draftInPlayMaterial({ campaignId = null, kind, prompt, scene, world }) {
+      return observeAiInference({ campaignId, surface: 'in_play_material', generatorVersion: version, onInference }, async (recordUsage) => {
+        const output = await generateInPlayMaterial({ campaignId, kind, prompt, scene, world, recordUsage })
+        const draft = {
+          kind,
+          title: text(output?.title, 120),
+          detail: text(output?.detail, 200),
+          pressure: text(output?.pressure, 280),
+          leverage: text(output?.leverage, 400),
+          generatorVersion: version,
+        }
+        if (!['npc', 'place', 'complication', 'consequence', 'rumour', 'treasure'].includes(kind) || Object.values(draft).some((value) => !value)) {
+          throw new CampaignIntelligenceError('invalid_in_play_material', 'The improvisation draft was incomplete.')
+        }
+        return draft
       })
     },
     async answerKnowledge({ campaignId = null, question, canon, priorFeedback = [] }) {

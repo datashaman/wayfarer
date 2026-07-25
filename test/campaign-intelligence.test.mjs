@@ -38,6 +38,7 @@ test('campaign intelligence validates citations, private voice drafts, and clock
     generateHouseRule: async () => ({ title: 'Lantern test', sourceRule: 'Core test rule.', interpretation: 'Bright light helps.', ruling: 'Gain advantage.', citations: ['message-1'] }),
     generateCampaignSeed: async () => campaignSeed,
     generateCharacterConcepts: async () => ({ concepts: [concept(), concept({ name: 'Sera' }), concept({ name: 'Tovin' })] }),
+    generateInPlayMaterial: async () => ({ title: 'Sister Corda', detail: 'Keeper of the drowned archive.', pressure: 'She needs her stolen name before the tide turns.', leverage: 'She knows a dry road beneath the town.' }),
   })
   assert.deepEqual(await intelligence.answerKnowledge({ question: 'Who keeps the light?', canon: [{ id: 'canon-1' }] }), { answer: 'Ilyra keeps the light.', citations: ['canon-1'] })
   assert.equal((await intelligence.draftIntent({ intent: 'signal', messages: [], canon: [] })).length, 2)
@@ -45,6 +46,7 @@ test('campaign intelligence validates citations, private voice drafts, and clock
   assert.equal((await intelligence.compileHouseRule({ messages: [{ id: 'message-1' }] })).citations[0], 'message-1')
   assert.equal((await intelligence.draftCampaignSeed({ premise: 'A drowned town returns.' })).npcs.length, 5)
   assert.equal((await intelligence.draftCharacterConcepts({ world: conceptWorld })).length, 3)
+  assert.equal((await intelligence.draftInPlayMaterial({ kind: 'npc', prompt: 'Someone in the archive', scene: {}, world: {} })).title, 'Sister Corda')
 
   const leaking = createCampaignIntelligence({
     version: 'fixture-v1',
@@ -54,6 +56,7 @@ test('campaign intelligence validates citations, private voice drafts, and clock
     generateHouseRule: async () => ({ title: 'Hidden', sourceRule: 'Rule', interpretation: 'Guess', ruling: 'Do it', citations: ['hidden'] }),
     generateCampaignSeed: async () => ({ ...campaignSeed, hooks: [] }),
     generateCharacterConcepts: async () => ({ concepts: [concept({ factionId: 'invented' }), concept(), concept()] }),
+    generateInPlayMaterial: async () => ({ title: 'Incomplete' }),
   })
   await assert.rejects(() => leaking.answerKnowledge({ question: 'Secret?', canon: [{ id: 'visible' }] }), (error) => error instanceof CampaignIntelligenceError && error.code === 'invalid_knowledge_answer')
   await assert.rejects(() => leaking.draftIntent({ intent: 'speak', messages: [], canon: [] }), /invalid drafts/i)
@@ -61,6 +64,7 @@ test('campaign intelligence validates citations, private voice drafts, and clock
   await assert.rejects(() => leaking.compileHouseRule({ messages: [{ id: 'visible' }] }), /selected transcript/i)
   await assert.rejects(() => leaking.draftCampaignSeed({ premise: 'Anything.' }), /complete playable opening/i)
   await assert.rejects(() => leaking.draftCharacterConcepts({ world: conceptWorld }), /not grounded/i)
+  await assert.rejects(() => leaking.draftInPlayMaterial({ kind: 'treasure', prompt: 'A reward', scene: {}, world: {} }), /incomplete/i)
 })
 
 test('campaign intelligence records reversible rulings, proposals, consent, and preparation', () => {

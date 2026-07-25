@@ -56,11 +56,29 @@ export type WorldDiscovery = {
   sourceSceneId: Id
   sourceSceneTitle: string
   entityType: 'faction' | 'location' | 'npc' | 'hook'
+  materialKind: InPlayMaterialKind | null
   entityId: Id
   name: string
   snapshot: Record<string, string>
   createdByName: string | null
   createdAt: string
+}
+
+export type InPlayMaterialKind = 'npc' | 'place' | 'complication' | 'consequence' | 'rumour' | 'treasure'
+
+export type InPlayMaterial = {
+  id?: Id
+  sceneId?: Id
+  kind: InPlayMaterialKind
+  entityType?: 'npc' | 'location' | 'hook'
+  entityId?: Id
+  title: string
+  detail: string
+  pressure: string
+  leverage: string
+  generatorVersion: string
+  keptByName?: string | null
+  keptAt?: string
 }
 
 export type WorldConsequence = {
@@ -178,6 +196,7 @@ export type SceneContext = {
   npcs: CampaignWorld['npcs']
   preparation: ScenePreparation | null
   activeScene: CampaignScene | null
+  inPlayMaterials: InPlayMaterial[]
   scenes: CampaignScene[]
   worldConsequences: WorldConsequence[]
 }

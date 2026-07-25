@@ -29,6 +29,7 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
       readiness: calculateAutomationReadiness(store.exportAiFeedback(campaignId)),
       preparationRuns: store.listPreparationRuns(campaignId),
       houseRules: store.listHouseRules(campaignId),
+      houseRuleProposals: store.listHouseRuleProposals(campaignId),
       factionClocks: store.listFactionClocks(campaignId),
       knowledgeMetrics: store.getKnowledgeFeedbackMetrics(campaignId),
       spotlightParticipants: store.getSpotlightParticipants(campaignId),
@@ -168,11 +169,27 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
         const context = sessionId ? store.getCampaignSessionMessages(campaignId, sessionId, 5_000) : null
         const selected = context?.messages.filter((message) => messageIds.includes(message.id)) ?? []
         if (!context || context.truncated || messageIds.length < 1 || messageIds.length > 12 || selected.length !== messageIds.length) { sendJson(response, 400, { error: 'Select between 1 and 12 passages from one campaign session.' }); return true }
-        const proposal = await intelligence.compileHouseRule({ campaignId, messages: selected })
-        sendJson(response, 200, { proposal: { ...proposal, sources: proposal.citations.map((id) => { const { id: messageId, ...message } = selected.find((item) => item.id === id); return { ...message, messageId } }) }, generatorVersion: intelligence.version }); return true
+        const generated = await intelligence.compileHouseRule({ campaignId, messages: selected })
+        const sources = generated.citations.map((messageId) => ({ messageId }))
+        const proposal = store.createHouseRuleProposal(campaignId, playerId, { sessionId, generatorVersion: intelligence.version, ...generated, sources })
+        sendJson(response, proposal ? 201 : 400, proposal ? { proposal } : { error: 'The generated proposal cited evidence outside the selected session.' }); return true
       }
       if (request.method === 'GET' && request.url === '/api/campaign/intelligence/rules') {
-        sendJson(response, 200, { rules: store.listHouseRules(campaignId) }); return true
+        sendJson(response, 200, { rules: store.listHouseRules(campaignId), proposals: isGm ? store.listHouseRuleProposals(campaignId) : [] }); return true
+      }
+      const ruleProposalDecision = request.url.match(/^\/api\/campaign\/intelligence\/rules\/proposals\/([^/]+)\/decision$/)
+      if (request.method === 'POST' && ruleProposalDecision) {
+        if (!isGm) { sendJson(response, 403, { error: 'Only a GM can decide a house-rule proposal.' }); return true }
+        const body = await readJson(request)
+        const action = ['accept', 'reject'].includes(body.action) ? body.action : null
+        const fields = {
+          action, reason: clean(body.reason, 500), title: clean(body.title, 120),
+          sourceRule: clean(body.sourceRule, 1_000), interpretation: clean(body.interpretation, 2_000), ruling: clean(body.ruling, 2_000),
+        }
+        if (!fields.action || !fields.reason || (action === 'accept' && [fields.title, fields.sourceRule, fields.interpretation, fields.ruling].some((value) => !value))) { sendJson(response, 400, { error: 'A proposal decision and reason are required.' }); return true }
+        const result = store.decideHouseRuleProposal(campaignId, playerId, ruleProposalDecision[1], fields)
+        const status = result.outcome === 'not_found' ? 404 : result.outcome === 'conflict' ? 409 : result.outcome === 'invalid' ? 400 : 200
+        sendJson(response, status, ['accepted', 'rejected'].includes(result.outcome) ? result : { error: result.outcome === 'conflict' ? 'This proposal was already decided.' : result.outcome === 'not_found' ? 'House-rule proposal not found.' : 'The proposal decision is invalid.', ...result }); return true
       }
       if (request.method === 'POST' && request.url === '/api/campaign/intelligence/rules') {
         if (!isGm) { sendJson(response, 403, { error: 'Only a GM can record a house rule.' }); return true }

@@ -359,6 +359,10 @@ export type PreparationRun = {
     status: 'queued' | 'running' | 'complete' | 'failed'
     attempts: number
     result: Record<string, unknown> | null
+    outcome: null
+      | { total: number; awaiting: number; accepted: number; disputed: number; rejected: number }
+      | { total: number; rated: number; useful: number; issues: number }
+      | { status: 'draft' | 'published'; revision: number }
     error: string | null
     startedAt: string | null
     completedAt: string | null
@@ -386,6 +390,29 @@ export type HouseRuleRevision = Omit<HouseRule, 'id' | 'createdAt' | 'updatedAt'
   reason: string
   playerName: string
   createdAt: string
+}
+
+export type HouseRuleProposal = {
+  id: Id
+  sessionId: Id
+  generatorVersion: string
+  status: 'proposed' | 'accepted' | 'rejected'
+  original: Pick<HouseRule, 'title' | 'sourceRule' | 'interpretation' | 'ruling'>
+  decision: null | {
+    action: 'accept' | 'edit_accept' | 'reject'
+    reason: string
+    title: string | null
+    sourceRule: string | null
+    interpretation: string | null
+    ruling: string | null
+    decidedByName: string
+    decidedAt: string
+    editedFields: Array<'title' | 'sourceRule' | 'interpretation' | 'ruling'>
+  }
+  acceptedRuleId: Id | null
+  createdByName: string
+  createdAt: string
+  sources: CanonProposalSource[]
 }
 
 export type FactionProposal = {
@@ -421,6 +448,7 @@ export type CampaignIntelligenceOverview = {
   readiness: AiReadiness
   preparationRuns: PreparationRun[]
   houseRules: HouseRule[]
+  houseRuleProposals: HouseRuleProposal[]
   factionClocks: FactionClock[]
   knowledgeMetrics: Array<{
     generatorVersion: string

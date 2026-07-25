@@ -594,6 +594,34 @@ export function createStore(databasePath) {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS house_rule_proposals (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES campaign_sessions(id) ON DELETE RESTRICT,
+      generator_version TEXT NOT NULL,
+      title TEXT NOT NULL,
+      source_rule TEXT NOT NULL,
+      interpretation TEXT NOT NULL,
+      ruling TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'proposed' CHECK(status IN ('proposed', 'accepted', 'rejected')),
+      decision_action TEXT CHECK(decision_action IS NULL OR decision_action IN ('accept', 'edit_accept', 'reject')),
+      decision_reason TEXT,
+      decided_title TEXT,
+      decided_source_rule TEXT,
+      decided_interpretation TEXT,
+      decided_ruling TEXT,
+      accepted_rule_id TEXT REFERENCES house_rules(id) ON DELETE SET NULL,
+      created_by_player_id TEXT NOT NULL REFERENCES players(id),
+      decided_by_player_id TEXT REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      decided_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS house_rule_proposal_sources (
+      proposal_id TEXT NOT NULL REFERENCES house_rule_proposals(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
+      excerpt TEXT,
+      PRIMARY KEY (proposal_id, message_id)
+    );
     CREATE TABLE IF NOT EXISTS house_rule_revisions (
       id TEXT PRIMARY KEY,
       rule_id TEXT NOT NULL REFERENCES house_rules(id) ON DELETE CASCADE,
@@ -1291,6 +1319,13 @@ export function createStore(databasePath) {
   const resetRunningPreparationTasks = database.prepare("UPDATE preparation_run_tasks SET status = 'queued', started_at = NULL WHERE status = 'running'")
   const resetFailedPreparationTasks = database.prepare("UPDATE preparation_run_tasks SET status = 'queued', error = NULL, started_at = NULL, completed_at = NULL WHERE run_id = ? AND status = 'failed'")
   const updatePreparationRunState = database.prepare('UPDATE preparation_runs SET status = ?, error = ?, completed_at = ? WHERE id = ?')
+  const continuityOutcomeForBrief = database.prepare(`
+    SELECT COUNT(*) AS total,
+      SUM(CASE WHEN (SELECT rating FROM continuity_feedback WHERE thread_id = continuity_threads.id ORDER BY rowid DESC LIMIT 1) IS NOT NULL THEN 1 ELSE 0 END) AS rated,
+      SUM(CASE WHEN (SELECT rating FROM continuity_feedback WHERE thread_id = continuity_threads.id ORDER BY rowid DESC LIMIT 1) = 'useful' THEN 1 ELSE 0 END) AS useful,
+      SUM(CASE WHEN (SELECT rating FROM continuity_feedback WHERE thread_id = continuity_threads.id ORDER BY rowid DESC LIMIT 1) IN ('incorrect', 'secret_leak', 'not_useful') THEN 1 ELSE 0 END) AS issues
+    FROM continuity_threads WHERE brief_id = ?
+  `)
   const insertKnowledgeAnswer = database.prepare('INSERT INTO knowledge_answers (id, campaign_id, subject_player_id, requested_by_player_id, question, answer, generator_version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
   const insertKnowledgeAnswerSource = database.prepare('INSERT INTO knowledge_answer_sources (answer_id, canon_entry_id) VALUES (?, ?)')
   const knowledgeAnswerForRequester = database.prepare('SELECT * FROM knowledge_answers WHERE id = ? AND campaign_id = ? AND requested_by_player_id = ?')
@@ -1316,6 +1351,20 @@ export function createStore(databasePath) {
   const insertHouseRuleRevision = database.prepare(`INSERT INTO house_rule_revisions (id, rule_id, revision, title, source_rule, interpretation, ruling, status, reason, player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   const houseRules = database.prepare('SELECT * FROM house_rules WHERE campaign_id = ? ORDER BY status, title COLLATE NOCASE')
   const houseRuleForCampaign = database.prepare('SELECT * FROM house_rules WHERE id = ? AND campaign_id = ?')
+  const insertHouseRuleProposal = database.prepare(`INSERT INTO house_rule_proposals (id, campaign_id, session_id, generator_version, title, source_rule, interpretation, ruling, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  const insertHouseRuleProposalSource = database.prepare('INSERT INTO house_rule_proposal_sources (proposal_id, message_id, excerpt) VALUES (?, ?, ?)')
+  const houseRuleProposals = database.prepare(`SELECT house_rule_proposals.*, creators.name AS created_by_name, deciders.name AS decided_by_name FROM house_rule_proposals JOIN players AS creators ON creators.id = house_rule_proposals.created_by_player_id LEFT JOIN players AS deciders ON deciders.id = house_rule_proposals.decided_by_player_id WHERE house_rule_proposals.campaign_id = ? ORDER BY house_rule_proposals.rowid DESC`)
+  const houseRuleProposalsForExport = database.prepare(`SELECT * FROM house_rule_proposals WHERE status != 'proposed' AND (? IS NULL OR campaign_id = ?) ORDER BY campaign_id, rowid`)
+  const houseRuleProposalForCampaign = database.prepare('SELECT * FROM house_rule_proposals WHERE id = ? AND campaign_id = ?')
+  const houseRuleProposalSources = database.prepare(`
+    SELECT house_rule_proposal_sources.message_id, house_rule_proposal_sources.excerpt,
+           messages.text, messages.sent_at, messages.rowid AS sequence,
+           rooms.id AS room_id, rooms.name AS room_name, players.name AS sender_name
+    FROM house_rule_proposal_sources JOIN messages ON messages.id = house_rule_proposal_sources.message_id
+    JOIN rooms ON rooms.id = messages.room_id JOIN players ON players.id = messages.player_id
+    WHERE house_rule_proposal_sources.proposal_id = ? ORDER BY messages.rowid
+  `)
+  const decideHouseRuleProposal = database.prepare(`UPDATE house_rule_proposals SET status = ?, decision_action = ?, decision_reason = ?, decided_title = ?, decided_source_rule = ?, decided_interpretation = ?, decided_ruling = ?, accepted_rule_id = ?, decided_by_player_id = ?, decided_at = ? WHERE id = ? AND campaign_id = ? AND status = 'proposed'`)
   const houseRuleRevisions = database.prepare(`SELECT house_rule_revisions.*, players.name AS player_name FROM house_rule_revisions JOIN players ON players.id = house_rule_revisions.player_id WHERE rule_id = ? ORDER BY revision DESC`)
   const insertHouseRuleRevisionSource = database.prepare('INSERT INTO house_rule_revision_sources (revision_id, message_id, excerpt) VALUES (?, ?, ?)')
   const houseRuleRevisionSources = database.prepare(`
@@ -1374,6 +1423,29 @@ export function createStore(databasePath) {
       session: { id: row.session_id, title: row.session_title, status: 'closed', startSequence: row.session_start_sequence, endSequence: row.session_end_sequence },
       basis: 'opted_in_text_messages', participants, totalMessages: row.total_messages,
       createdAt: row.created_at,
+    }
+  }
+
+  function preparationRunWithOutcomes(row) {
+    const run = publicPreparationRun(row, preparationTasks.all(row.id))
+    return {
+      ...run,
+      tasks: run.tasks.map((task) => {
+        const result = task.result
+        if (task.name === 'canon' && Array.isArray(result?.artifactIds)) {
+          const statuses = result.artifactIds.map((id) => canonProposalById.get(id, row.campaign_id)?.status).filter(Boolean)
+          return { ...task, outcome: { total: statuses.length, awaiting: statuses.filter((status) => status === 'proposed').length, accepted: statuses.filter((status) => status === 'accepted').length, disputed: statuses.filter((status) => status === 'disputed').length, rejected: statuses.filter((status) => status === 'rejected').length } }
+        }
+        if (task.name === 'continuity' && typeof result?.id === 'string') {
+          const outcome = continuityOutcomeForBrief.get(result.id)
+          return { ...task, outcome: { total: outcome.total, rated: outcome.rated, useful: outcome.useful, issues: outcome.issues } }
+        }
+        if (task.name === 'recap' && typeof result?.id === 'string') {
+          const recap = sessionRecapById.get(result.id, row.campaign_id)
+          return { ...task, outcome: recap ? { status: recap.status, revision: recap.revision } : null }
+        }
+        return { ...task, outcome: null }
+      }),
     }
   }
 
@@ -1872,7 +1944,22 @@ export function createStore(databasePath) {
         citationIds: knowledgeAnswerSources.all(row.answer_id).map((source) => source.canon_entry_id),
         feedback: { rating: row.rating, ratedAt: row.rated_at },
       }))
-      return { canon, continuity, knowledge, deduplication: this.getCanonProposalMatchMetrics(campaignId) }
+      const houseRules = houseRuleProposalsForExport.all(campaignId, campaignId).map((row) => ({
+        fixtureId: `house-rule:${row.id}`,
+        campaignRef: row.campaign_id,
+        generatorVersion: row.generator_version,
+        generatedAt: row.created_at,
+        proposal: {
+          title: row.title, sourceRule: row.source_rule, interpretation: row.interpretation, ruling: row.ruling,
+          sources: houseRuleProposalSources.all(row.id).map((source) => ({ messageId: source.message_id, roomId: source.room_id, text: source.text, excerpt: source.excerpt, sentAt: source.sent_at, sequence: source.sequence })),
+        },
+        decision: {
+          action: row.decision_action, reason: row.decision_reason,
+          accepted: row.decision_action === 'reject' ? null : { title: row.decided_title, sourceRule: row.decided_source_rule, interpretation: row.decided_interpretation, ruling: row.decided_ruling },
+          decidedAt: row.decided_at,
+        },
+      }))
+      return { canon, continuity, knowledge, houseRules, deduplication: this.getCanonProposalMatchMetrics(campaignId) }
     },
 
     listContinuityFeedbackExamples(campaignId, limit = 20) {
@@ -2269,16 +2356,16 @@ export function createStore(databasePath) {
         throw error
       }
       const row = preparationRunForSession.get(campaignId, sessionId)
-      return publicPreparationRun(row, preparationTasks.all(row.id))
+      return preparationRunWithOutcomes(row)
     },
 
     getPreparationRun(campaignId, runId) {
       const row = preparationRunById.get(runId, campaignId)
-      return row ? publicPreparationRun(row, preparationTasks.all(row.id)) : null
+      return row ? preparationRunWithOutcomes(row) : null
     },
 
     listResumablePreparationRuns() {
-      return resumablePreparationRuns.all().map((row) => publicPreparationRun(row, preparationTasks.all(row.id)))
+      return resumablePreparationRuns.all().map((row) => preparationRunWithOutcomes(row))
     },
 
     recoverPreparationRuns() {
@@ -2317,7 +2404,7 @@ export function createStore(databasePath) {
     },
 
     listPreparationRuns(campaignId, limit = 20) {
-      return preparationRuns.all(campaignId, limit).map((row) => publicPreparationRun(row, preparationTasks.all(row.id)))
+      return preparationRuns.all(campaignId, limit).map((row) => preparationRunWithOutcomes(row))
     },
 
     listHouseRules(campaignId) {
@@ -2331,6 +2418,83 @@ export function createStore(databasePath) {
           sentAt: source.sent_at, sequence: source.sequence,
         })),
       }))
+    },
+
+    listHouseRuleProposals(campaignId) {
+      return houseRuleProposals.all(campaignId).map((row) => {
+        const original = { title: row.title, sourceRule: row.source_rule, interpretation: row.interpretation, ruling: row.ruling }
+        const decision = row.decision_action ? {
+          action: row.decision_action,
+          reason: row.decision_reason,
+          title: row.decided_title,
+          sourceRule: row.decided_source_rule,
+          interpretation: row.decided_interpretation,
+          ruling: row.decided_ruling,
+          decidedByName: row.decided_by_name,
+          decidedAt: row.decided_at,
+          editedFields: ['title', 'sourceRule', 'interpretation', 'ruling'].filter((field) => row.decision_action !== 'reject' && original[field] !== ({ title: row.decided_title, sourceRule: row.decided_source_rule, interpretation: row.decided_interpretation, ruling: row.decided_ruling })[field]),
+        } : null
+        return {
+          id: row.id, sessionId: row.session_id, generatorVersion: row.generator_version,
+          status: row.status, original, decision, acceptedRuleId: row.accepted_rule_id,
+          createdByName: row.created_by_name, createdAt: row.created_at,
+          sources: houseRuleProposalSources.all(row.id).map((source) => ({
+            messageId: source.message_id, roomId: source.room_id, roomName: source.room_name,
+            senderName: source.sender_name, text: source.text, excerpt: source.excerpt,
+            sentAt: source.sent_at, sequence: source.sequence,
+          })),
+        }
+      })
+    },
+
+    createHouseRuleProposal(campaignId, playerId, { sessionId, generatorVersion, title, sourceRule, interpretation, ruling, sources = [] }) {
+      const context = this.getCampaignSessionMessages(campaignId, sessionId, 5_000)
+      const allowed = new Set(context?.messages.map((message) => message.id) ?? [])
+      const resolved = sources.map((source) => ({ ...source, row: messageForCampaign.get(source.messageId, campaignId) }))
+      if (!context || context.truncated || !sources.length || resolved.some((source) => !source.row || !allowed.has(source.messageId))) return null
+      const id = randomUUID()
+      const now = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        insertHouseRuleProposal.run(id, campaignId, sessionId, generatorVersion, title, sourceRule, interpretation, ruling, playerId, now)
+        for (const source of resolved) insertHouseRuleProposalSource.run(id, source.messageId, source.excerpt ?? null)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return this.listHouseRuleProposals(campaignId).find((proposal) => proposal.id === id)
+    },
+
+    decideHouseRuleProposal(campaignId, playerId, proposalId, { action, reason, title = null, sourceRule = null, interpretation = null, ruling = null }) {
+      const proposal = houseRuleProposalForCampaign.get(proposalId, campaignId)
+      if (!proposal) return { outcome: 'not_found' }
+      if (proposal.status !== 'proposed') return { outcome: 'conflict', proposal: this.listHouseRuleProposals(campaignId).find((item) => item.id === proposalId) }
+      const rejected = action === 'reject'
+      const next = rejected ? null : { title, sourceRule, interpretation, ruling }
+      if (!['accept', 'reject'].includes(action) || !reason || (!rejected && Object.values(next).some((value) => !value))) return { outcome: 'invalid' }
+      const decisionAction = rejected ? 'reject' : Object.entries(next).some(([field, value]) => value !== ({ title: proposal.title, sourceRule: proposal.source_rule, interpretation: proposal.interpretation, ruling: proposal.ruling })[field]) ? 'edit_accept' : 'accept'
+      const ruleId = rejected ? null : randomUUID()
+      const now = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        if (!rejected) {
+          const revisionId = randomUUID()
+          insertHouseRule.run(ruleId, campaignId, next.title, next.sourceRule, next.interpretation, next.ruling, playerId, now, now)
+          insertHouseRuleRevision.run(revisionId, ruleId, 0, next.title, next.sourceRule, next.interpretation, next.ruling, 'active', reason, playerId, now)
+          for (const source of houseRuleProposalSources.all(proposalId)) insertHouseRuleRevisionSource.run(revisionId, source.message_id, source.excerpt)
+        }
+        if (decideHouseRuleProposal.run(rejected ? 'rejected' : 'accepted', decisionAction, reason, next?.title ?? null, next?.sourceRule ?? null, next?.interpretation ?? null, next?.ruling ?? null, ruleId, playerId, now, proposalId, campaignId).changes !== 1) throw new Error('house_rule_proposal_conflict')
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return {
+        outcome: rejected ? 'rejected' : 'accepted',
+        proposal: this.listHouseRuleProposals(campaignId).find((item) => item.id === proposalId),
+        rule: ruleId ? this.listHouseRules(campaignId).find((item) => item.id === ruleId) : null,
+      }
     },
 
     createHouseRule(campaignId, playerId, { title, sourceRule, interpretation, ruling, reason, sources = [] }) {

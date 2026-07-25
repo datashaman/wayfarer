@@ -56,3 +56,40 @@ test('preparation resumes interrupted tasks and retries only failures without du
   assert.equal(current.tasks.find((task) => task.name === 'continuity').result.threads, 1)
   await worker.close()
 })
+
+test('preparation runs derive downstream human outcomes from their exact artifacts', (t) => {
+  const store = createStore(':memory:')
+  t.after(() => store.close())
+  const owner = store.createCampaign('The Glass Road', 'Mara')
+  const roomId = owner.campaign.rooms[0].id
+  const message = store.addMessage({ roomId, playerId: owner.player.id, clientMessageId: 'outcome-evidence', text: 'The glass gate opens at moonrise.' }).message
+  const session = store.closeCampaignSession(owner.campaign.id, owner.player.id, 'The glass gate').sessions[0]
+  const run = store.queuePreparationRun(owner.campaign.id, session.id, owner.player.id, { canon: true, continuity: true, recap: true })
+
+  const canon = store.createCanonProposal({ campaignId: owner.campaign.id, playerId: owner.player.id, kind: 'fact', title: 'Glass gate', claim: 'The glass gate opens at moonrise.', visibility: 'gm_only', confidence: 0.9, extractorVersion: 'fixture-v1', sources: [{ messageId: message.id }] }).proposal
+  store.startPreparationTask(owner.campaign.id, run.id, 'canon')
+  store.finishPreparationTask(owner.campaign.id, run.id, 'canon', { status: 'complete', result: { proposed: 1, artifactIds: [canon.id] } })
+
+  const brief = store.createContinuityBrief({ campaignId: owner.campaign.id, playerId: owner.player.id, generatorVersion: 'fixture-v1', preparationRunId: run.id, session, threads: [{ title: 'Moonrise gate', summary: 'The gate is due to open.', whyItMatters: 'The party is waiting.', confidence: 0.8, sources: [{ messageId: message.id }] }] }).brief
+  store.startPreparationTask(owner.campaign.id, run.id, 'continuity')
+  store.finishPreparationTask(owner.campaign.id, run.id, 'continuity', { status: 'complete', result: { id: brief.id, threads: 1 } })
+
+  const recap = store.createSessionRecap({ campaignId: owner.campaign.id, playerId: owner.player.id, generatorVersion: 'fixture-v1', preparationRunId: run.id, session, publicSummary: 'The glass gate opened.', gmNotes: 'Moonrise matters.', sources: [{ messageId: message.id }] }).recap
+  store.startPreparationTask(owner.campaign.id, run.id, 'recap')
+  store.finishPreparationTask(owner.campaign.id, run.id, 'recap', { status: 'complete', result: { id: recap.id } })
+
+  let outcomes = store.getPreparationRun(owner.campaign.id, run.id).tasks.map((task) => task.outcome)
+  assert.deepEqual(outcomes, [
+    { total: 1, awaiting: 1, accepted: 0, disputed: 0, rejected: 0 },
+    { total: 1, rated: 0, useful: 0, issues: 0 },
+    { status: 'draft', revision: 0 },
+  ])
+
+  store.decideCanonProposal(owner.campaign.id, owner.player.id, canon.id, { action: 'accept', reason: 'Confirmed.', visibility: 'gm_only' })
+  store.recordContinuityFeedback(owner.campaign.id, owner.player.id, brief.threads[0].id, 'useful')
+  store.publishSessionRecap(owner.campaign.id, owner.player.id, recap.id)
+  outcomes = store.getPreparationRun(owner.campaign.id, run.id).tasks.map((task) => task.outcome)
+  assert.equal(outcomes[0].accepted, 1)
+  assert.deepEqual(outcomes[1], { total: 1, rated: 1, useful: 1, issues: 0 })
+  assert.equal(outcomes[2].status, 'published')
+})

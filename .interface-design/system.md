@@ -110,10 +110,10 @@ Personal and GM-assisted campaign tools share one right-side folio so the transc
 - Knowledge answers end in readable-canon citations. Intent drafts offer a direct `Use in composer` handoff but never send.
 - Consent is a standalone bordered section with plain scope language. An enabled state uses moss; disabled consent must never be implied by silence.
 - Preparation leads with its release-gate status and private-draft boundary before scheduling controls.
-- Preparation runs are task trails: show canon, continuity, and recap independently with attempt count, error, and retry. Terminal work may raise one compact bordered notice with direct links to its ledger artifacts; never use celebratory toasts.
+- Preparation runs are task trails: show canon, continuity, and recap independently with attempt count, error, retry, and a quiet `Human outcome` line derived from the exact artifacts produced. Terminal work may raise one compact bordered notice with direct links to its ledger artifacts; never use celebratory toasts.
 - Release gates must state the exact evidence remaining and link to the relevant ruling surface. A threshold without an acquisition path is incomplete.
 - Knowledge answers place compact verdict controls after their citations. Selected verdicts use a restrained moss boundary, and exact generator editions remain visible as ledger metadata.
-- House rules read as source → interpretation → ruling, with revision and retirement actions kept beside the record. A compiler begins with explicitly selected transcript passages, visually separates evidence from the editable proposal, and carries source chips into the recorded revision.
+- House rules read as source → interpretation → ruling, with revision and retirement actions kept beside the record. A compiler begins with explicitly selected transcript passages and immediately creates an immutable proposal ledger row. Review happens in an inset form that keeps the edition and citations visible; accept, edited accept, rejection, and decision reason remain in the trail. Never let closing the form silently discard a proposal.
 - Faction clocks use segmented wax tracks as their signature. Counterfactual proposals sit inset beneath the clock with cited assumptions, an exact before → after diff, and durable proposed/accepted/rejected state.
 - Spotlight output is a quiet text-count ledger. Consent history and reports that included the current player are visible beside the control. Never use competitive charts, rankings, celebratory color, or language that implies participation quality.
 

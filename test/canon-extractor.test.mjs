@@ -19,10 +19,11 @@ const validDraft = {
 test('the extraction boundary returns only constrained, cited proposal drafts', async () => {
   const extractor = createCanonExtractor({
     version: 'fixture-v1',
-    generate: async ({ campaignId, existingCanon, priorDecisions }) => {
+    generate: async ({ campaignId, existingCanon, priorDecisions, constitution }) => {
       assert.equal(campaignId, 'campaign-1')
       assert.deepEqual(existingCanon, [])
       assert.deepEqual(priorDecisions, [])
+      assert.equal(constitution, null)
       return [validDraft]
     },
   })

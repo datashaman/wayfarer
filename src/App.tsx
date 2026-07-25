@@ -34,6 +34,7 @@ import {
   type ConnectionState,
   type Campaign,
   type CanonLedger,
+  type CanonConstitution,
   type CanonEntry,
   type CanonEntryRevision,
   type CanonProposal,
@@ -493,9 +494,19 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
   const [contradictionReport, setContradictionReport] = useState<ContradictionReport | null>(null)
   const [contradictionsLoaded, setContradictionsLoaded] = useState(false)
   const [contradictionsPending, setContradictionsPending] = useState(false)
+  const [constitution, setConstitution] = useState<CanonConstitution | null>(null)
+  const [constitutionDraft, setConstitutionDraft] = useState<CanonConstitution | null>(null)
+  const [editingConstitution, setEditingConstitution] = useState(false)
   const [error, setError] = useState('')
   const authorization = { authorization: `Bearer ${session.player.token}` }
   const isGm = session.player.knowledgeRole === 'gm'
+
+  useEffect(() => {
+    if (!isGm) return
+    void api<{ constitution: CanonConstitution }>('/api/campaign/canon/constitution', { headers: { authorization: `Bearer ${session.player.token}` } })
+      .then(({ constitution: loaded }) => setConstitution(loaded))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'The canon constitution could not be opened.'))
+  }, [isGm, session.player.token])
 
   useEffect(() => {
     void api<CanonLedger>('/api/campaign/canon', { headers: { authorization: `Bearer ${session.player.token}` } })
@@ -551,7 +562,32 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     setEditing(proposal)
     setEditTitle(proposal.title)
     setEditClaim(proposal.claim)
-    setEditVisibility('gm_only')
+    setEditVisibility(constitution?.defaultVisibility ?? 'gm_only')
+  }
+
+  const beginConstitutionEdit = () => {
+    if (!constitution) return
+    setConstitutionDraft({ ...constitution })
+    setEditingConstitution(true)
+  }
+
+  const saveConstitution = async () => {
+    if (!constitutionDraft) return
+    setPending('constitution')
+    setError('')
+    try {
+      const result = await api<{ constitution: CanonConstitution }>('/api/campaign/canon/constitution', {
+        method: 'PUT', headers: authorization, body: JSON.stringify(constitutionDraft),
+      })
+      setConstitution(result.constitution)
+      setConstitutionDraft(null)
+      setEditingConstitution(false)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The canon constitution could not be saved.')
+      void api<{ constitution: CanonConstitution }>('/api/campaign/canon/constitution', { headers: authorization }).then(({ constitution: latest }) => setConstitution(latest))
+    } finally {
+      setPending('')
+    }
   }
 
   const extractCanon = async () => {
@@ -673,6 +709,18 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
           {error && <div className="entry-error" role="alert">{error}</div>}
           {!ledger ? <span className="folio-loading">Reading the canon ledger…</span> : (
             <>
+              {isGm && <section className="canon-section" aria-labelledby="canon-constitution-heading">
+                <div className="canon-section-title"><h3 id="canon-constitution-heading">Table constitution</h3>{!editingConstitution && <button className="folio-small-action" onClick={beginConstitutionEdit} disabled={!constitution}>Revise policy</button>}</div>
+                {!constitution ? <span className="folio-loading">Reading the table’s canon policy…</span> : editingConstitution && constitutionDraft ? <div className="canon-constitution canon-edit">
+                  <label htmlFor="constitution-threshold">What counts as canon?</label><select id="constitution-threshold" value={constitutionDraft.canonThreshold} onChange={(event) => setConstitutionDraft({ ...constitutionDraft, canonThreshold: event.target.value as CanonConstitution['canonThreshold'] })}><option value="explicit_only">Explicit statements and rulings only</option><option value="table_consensus">Clear table consensus</option><option value="played_as_true">Facts established through play</option></select>
+                  <label htmlFor="constitution-declarations">Player declarations</label><select id="constitution-declarations" value={constitutionDraft.playerDeclarations} onChange={(event) => setConstitutionDraft({ ...constitutionDraft, playerDeclarations: event.target.value as CanonConstitution['playerDeclarations'] })}><option value="require_confirmation">Require confirmation</option><option value="stand_unless_challenged">Stand unless challenged</option></select>
+                  <label htmlFor="constitution-ooc">Out-of-character talk</label><select id="constitution-ooc" value={constitutionDraft.oocPolicy} onChange={(event) => setConstitutionDraft({ ...constitutionDraft, oocPolicy: event.target.value as CanonConstitution['oocPolicy'] })}><option value="exclude">Exclude all OOC talk</option><option value="explicit_corrections_only">Allow explicit OOC corrections only</option></select>
+                  <label htmlFor="constitution-corrections">Conflicting corrections</label><select id="constitution-corrections" value={constitutionDraft.correctionPolicy} onChange={(event) => setConstitutionDraft({ ...constitutionDraft, correctionPolicy: event.target.value as CanonConstitution['correctionPolicy'] })}><option value="latest_explicit">Latest explicit correction wins</option><option value="flag_conflicts">Keep conflicts for review</option></select>
+                  <label htmlFor="constitution-visibility">Review default</label><select id="constitution-visibility" value={constitutionDraft.defaultVisibility} onChange={(event) => setConstitutionDraft({ ...constitutionDraft, defaultVisibility: event.target.value as CanonConstitution['defaultVisibility'] })}><option value="gm_only">Keep accepted passages GM-only</option><option value="campaign">Share accepted passages with the party</option></select>
+                  <label htmlFor="constitution-guidance">Table-specific guidance</label><textarea id="constitution-guidance" value={constitutionDraft.guidance} onChange={(event) => setConstitutionDraft({ ...constitutionDraft, guidance: event.target.value })} maxLength={1_000} placeholder="Names, rituals, or edge cases this table uses when deciding canon…" />
+                  <div className="canon-actions"><button className="primary-action" onClick={() => void saveConstitution()} disabled={pending === 'constitution'}>{pending === 'constitution' ? 'Saving…' : 'Save constitution'}</button><button className="folio-button" onClick={() => { setEditingConstitution(false); setConstitutionDraft(null) }}>Cancel</button></div>
+                </div> : <div className="canon-constitution-summary"><p>{constitution.canonThreshold === 'explicit_only' ? 'Explicit statements, commitments, and rulings can become canon.' : constitution.canonThreshold === 'table_consensus' ? 'Clear table consensus can become canon.' : 'Facts established through play can become canon.'}</p><span>World declarations: {constitution.playerDeclarations === 'require_confirmation' ? 'confirmation required' : 'stand unless challenged'} · OOC: {constitution.oocPolicy === 'exclude' ? 'excluded' : 'corrections only'} · Corrections: {constitution.correctionPolicy === 'latest_explicit' ? 'latest wins' : 'flag conflicts'}</span>{constitution.guidance && <q>{constitution.guidance}</q>}<small>Revision {constitution.revision}{constitution.updatedByName ? ` · ${constitution.updatedByName}` : ''}</small></div>}
+              </section>}
               {isGm && <section className="canon-section" aria-labelledby="canon-proposals-heading">
                 <div className="canon-section-title"><h3 id="canon-proposals-heading">Awaiting review</h3><div><span>{pendingProposals.length}</span><button className="folio-small-action" onClick={() => void extractCanon()} disabled={extracting || !coverage?.unscannedCount}>{extracting ? 'Reading…' : coverage?.unscannedCount ? 'Find passages' : 'Up to date'}</button></div></div>
                 {coverage && <p className="canon-coverage">{coverage.unscannedCount > 0 ? `${coverage.unscannedCount} new transcript ${coverage.unscannedCount === 1 ? 'message' : 'messages'} ready to scan.` : coverage.latestSequence > 0 ? 'The transcript is scanned through its latest message.' : 'The transcript has no messages to scan yet.'}</p>}
@@ -689,7 +737,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
                     ) : <><h4>{proposal.title}</h4><p>{proposal.claim}</p></>}
                     <div className="canon-citations" aria-label="Transcript citations">{proposal.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span><q>{source.excerpt ?? source.text}</q></button>)}</div>
                     <div className="canon-actions">
-                      {editing?.id === proposal.id ? <><button className="primary-action" disabled={!editTitle.trim() || !editClaim.trim() || pending === proposal.id} onClick={() => void decide(proposal, 'edit_accept', undefined, editVisibility)}>{pending === proposal.id ? 'Recording…' : editVisibility === 'campaign' ? 'Edit and share' : 'Keep edited passage private'}</button><button className="folio-button" onClick={() => setEditing(null)}>Cancel</button></> : <><button className="primary-action" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'accept', undefined, 'campaign')}>Share with party</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'accept', undefined, 'gm_only')}>Keep GM-only</button><button className="folio-button" onClick={() => beginEditing(proposal)}>Edit first</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'dispute', 'incorrect')}>Incorrect</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'reject', 'secret_leak')}>Secret leak</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'reject', 'not_useful')}>Not useful</button></>}
+                      {editing?.id === proposal.id ? <><button className="primary-action" disabled={!editTitle.trim() || !editClaim.trim() || pending === proposal.id} onClick={() => void decide(proposal, 'edit_accept', undefined, editVisibility)}>{pending === proposal.id ? 'Recording…' : editVisibility === 'campaign' ? 'Edit and share' : 'Keep edited passage private'}</button><button className="folio-button" onClick={() => setEditing(null)}>Cancel</button></> : <><button className="primary-action" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'accept', undefined, constitution?.defaultVisibility ?? 'gm_only')}>{constitution?.defaultVisibility === 'campaign' ? 'Share with party' : 'Keep GM-only'}</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'accept', undefined, constitution?.defaultVisibility === 'campaign' ? 'gm_only' : 'campaign')}>{constitution?.defaultVisibility === 'campaign' ? 'Keep GM-only' : 'Share with party'}</button><button className="folio-button" onClick={() => beginEditing(proposal)}>Edit first</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'dispute', 'incorrect')}>Incorrect</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'reject', 'secret_leak')}>Secret leak</button><button className="folio-button" disabled={pending === proposal.id} onClick={() => void decide(proposal, 'reject', 'not_useful')}>Not useful</button></>}
                     </div>
                   </article>
                 ))}

@@ -83,6 +83,18 @@ export type CanonKind = 'fact' | 'character' | 'relationship' | 'promise' | 'eve
 export type CanonVisibility = 'campaign' | 'gm_only'
 export type CanonProposalStatus = 'proposed' | 'accepted' | 'disputed' | 'rejected'
 
+export type CanonConstitution = {
+  canonThreshold: 'explicit_only' | 'table_consensus' | 'played_as_true'
+  playerDeclarations: 'require_confirmation' | 'stand_unless_challenged'
+  oocPolicy: 'exclude' | 'explicit_corrections_only'
+  correctionPolicy: 'latest_explicit' | 'flag_conflicts'
+  defaultVisibility: CanonVisibility
+  guidance: string
+  revision: number
+  updatedAt: string
+  updatedByName: string | null
+}
+
 export type CanonProposalSource = {
   messageId: Id
   roomId: Id

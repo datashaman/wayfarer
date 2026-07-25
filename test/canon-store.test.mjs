@@ -31,6 +31,38 @@ test('canon scan coverage advances through transcript messages without skipping 
   store.close()
 })
 
+test('canon constitutions keep immutable revision numbers and reject stale edits', () => {
+  const { store, owner } = seededStore()
+  const initial = store.getCanonConstitution(owner.campaign.id)
+  assert.deepEqual({
+    canonThreshold: initial.canonThreshold,
+    playerDeclarations: initial.playerDeclarations,
+    oocPolicy: initial.oocPolicy,
+    correctionPolicy: initial.correctionPolicy,
+    defaultVisibility: initial.defaultVisibility,
+    guidance: initial.guidance,
+    revision: initial.revision,
+  }, {
+    canonThreshold: 'explicit_only', playerDeclarations: 'require_confirmation', oocPolicy: 'exclude',
+    correctionPolicy: 'latest_explicit', defaultVisibility: 'gm_only', guidance: '', revision: 0,
+  })
+  const saved = store.updateCanonConstitution(owner.campaign.id, owner.player.id, {
+    canonThreshold: 'table_consensus', playerDeclarations: 'stand_unless_challenged',
+    oocPolicy: 'explicit_corrections_only', correctionPolicy: 'flag_conflicts',
+    defaultVisibility: 'campaign', guidance: 'Promises spoken in character count.',
+  }, 0)
+  assert.equal(saved.conflict, false)
+  assert.equal(saved.constitution.revision, 1)
+  assert.equal(saved.constitution.updatedByName, 'Mara')
+  const stale = store.updateCanonConstitution(owner.campaign.id, owner.player.id, {
+    canonThreshold: 'played_as_true', playerDeclarations: 'stand_unless_challenged',
+    oocPolicy: 'exclude', correctionPolicy: 'latest_explicit', defaultVisibility: 'gm_only', guidance: '',
+  }, 0)
+  assert.equal(stale.conflict, true)
+  assert.equal(stale.constitution.guidance, 'Promises spoken in character count.')
+  store.close()
+})
+
 test('canon proposals retain campaign-scoped transcript citations', () => {
   const { store, owner, first, second } = seededStore()
   const other = store.createCampaign('The Glass Sea', 'Orin')

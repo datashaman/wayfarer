@@ -132,6 +132,20 @@ function publicCanonRevision(row) {
   }
 }
 
+function publicCanonConstitution(row) {
+  return {
+    canonThreshold: row.canon_threshold,
+    playerDeclarations: row.player_declarations,
+    oocPolicy: row.ooc_policy,
+    correctionPolicy: row.correction_policy,
+    defaultVisibility: row.default_visibility,
+    guidance: row.guidance,
+    revision: row.revision,
+    updatedAt: row.created_at,
+    updatedByName: row.updated_by_name ?? null,
+  }
+}
+
 function publicContinuityBrief(row, threads = []) {
   return {
     id: row.id,
@@ -273,6 +287,19 @@ export function createStore(databasePath) {
       updated_by_player_id TEXT NOT NULL REFERENCES players(id),
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS canon_constitution_revisions (
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      revision INTEGER NOT NULL,
+      canon_threshold TEXT NOT NULL CHECK(canon_threshold IN ('explicit_only', 'table_consensus', 'played_as_true')),
+      player_declarations TEXT NOT NULL CHECK(player_declarations IN ('require_confirmation', 'stand_unless_challenged')),
+      ooc_policy TEXT NOT NULL CHECK(ooc_policy IN ('exclude', 'explicit_corrections_only')),
+      correction_policy TEXT NOT NULL CHECK(correction_policy IN ('latest_explicit', 'flag_conflicts')),
+      default_visibility TEXT NOT NULL CHECK(default_visibility IN ('campaign', 'gm_only')),
+      guidance TEXT NOT NULL DEFAULT '',
+      player_id TEXT REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (campaign_id, revision)
+    );
     CREATE TABLE IF NOT EXISTS canon_proposal_matches (
       id TEXT PRIMARY KEY,
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
@@ -382,6 +409,14 @@ export function createStore(databasePath) {
   `)
   database.exec("INSERT OR IGNORE INTO campaign_notes (campaign_id) SELECT id FROM campaigns")
   database.exec(`
+    INSERT OR IGNORE INTO canon_constitution_revisions (
+      campaign_id, revision, canon_threshold, player_declarations, ooc_policy,
+      correction_policy, default_visibility, guidance, player_id, created_at
+    ) SELECT id, 0, 'explicit_only', 'require_confirmation', 'exclude',
+             'latest_explicit', 'gm_only', '', NULL, created_at
+      FROM campaigns
+  `)
+  database.exec(`
     DELETE FROM messages
     WHERE client_message_id IS NOT NULL
       AND rowid NOT IN (
@@ -436,6 +471,12 @@ export function createStore(databasePath) {
     WHERE messages.player_id = ? AND messages.client_message_id = ?
   `)
   const insertCampaignNote = database.prepare('INSERT INTO campaign_notes (campaign_id) VALUES (?)')
+  const insertDefaultCanonConstitution = database.prepare(`
+    INSERT INTO canon_constitution_revisions (
+      campaign_id, revision, canon_threshold, player_declarations, ooc_policy,
+      correction_policy, default_visibility, guidance, player_id, created_at
+    ) VALUES (?, 0, 'explicit_only', 'require_confirmation', 'exclude', 'latest_explicit', 'gm_only', '', ?, ?)
+  `)
   const campaignNote = database.prepare(`
     SELECT campaign_notes.*, players.name AS updated_by_name
     FROM campaign_notes LEFT JOIN players ON players.id = campaign_notes.updated_by_player_id
@@ -444,6 +485,19 @@ export function createStore(databasePath) {
   const updateCampaignNote = database.prepare(`
     UPDATE campaign_notes SET body = ?, revision = ?, updated_by_player_id = ?, updated_at = ?
     WHERE campaign_id = ?
+  `)
+  const latestCanonConstitution = database.prepare(`
+    SELECT canon_constitution_revisions.*, players.name AS updated_by_name
+    FROM canon_constitution_revisions
+    LEFT JOIN players ON players.id = canon_constitution_revisions.player_id
+    WHERE canon_constitution_revisions.campaign_id = ?
+    ORDER BY canon_constitution_revisions.revision DESC LIMIT 1
+  `)
+  const insertCanonConstitutionRevision = database.prepare(`
+    INSERT INTO canon_constitution_revisions (
+      campaign_id, revision, canon_threshold, player_declarations, ooc_policy,
+      correction_policy, default_visibility, guidance, player_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const latestMessagesForRoom = database.prepare(`
     SELECT * FROM (
@@ -806,6 +860,7 @@ export function createStore(databasePath) {
         defaultRooms.forEach(([slug, name, description], position) => insertRoom.run(randomUUID(), campaign.id, slug, name, description, position))
         const { recoveryCode, ...player } = createPlayer(campaign.id, playerName, 'owner')
         insertCampaignNote.run(campaign.id)
+        insertDefaultCanonConstitution.run(campaign.id, player.id, new Date().toISOString())
         database.exec('COMMIT')
         return { campaign: publicCampaign(campaignById.get(campaign.id), roomsByCampaign.all(campaign.id)), player, recoveryCode }
       } catch (error) {
@@ -1022,6 +1077,22 @@ export function createStore(databasePath) {
       if (!current || current.revision !== expectedRevision) return { conflict: true, note: this.getCampaignNote(campaignId) }
       updateCampaignNote.run(body, current.revision + 1, playerId, new Date().toISOString(), campaignId)
       return { conflict: false, note: this.getCampaignNote(campaignId) }
+    },
+
+    getCanonConstitution(campaignId) {
+      const row = latestCanonConstitution.get(campaignId)
+      return row ? publicCanonConstitution(row) : null
+    },
+
+    updateCanonConstitution(campaignId, playerId, constitution, expectedRevision) {
+      const current = latestCanonConstitution.get(campaignId)
+      if (!current || current.revision !== expectedRevision) return { conflict: true, constitution: current ? publicCanonConstitution(current) : null }
+      insertCanonConstitutionRevision.run(
+        campaignId, expectedRevision + 1, constitution.canonThreshold, constitution.playerDeclarations,
+        constitution.oocPolicy, constitution.correctionPolicy, constitution.defaultVisibility,
+        constitution.guidance, playerId, new Date().toISOString(),
+      )
+      return { conflict: false, constitution: this.getCanonConstitution(campaignId) }
     },
 
     createCanonProposal({ campaignId, playerId = null, kind, title, claim, visibility, confidence = null, extractorVersion, sources }) {

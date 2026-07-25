@@ -952,6 +952,46 @@ test('campaign members share durable notes with revision protection', async (t) 
   assert.equal((await noteUpdated).payload.note.body, 'The lighthouse opens at moonrise.')
 })
 
+test('GMs share a private revision-safe canon constitution', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-constitution-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+  t.after(async () => {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, { method: 'POST', body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }) })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, { method: 'POST', body: JSON.stringify({ playerName: 'Theo' }) })
+  const ownerAuthorization = { authorization: `Bearer ${created.body.player.token}` }
+  const memberAuthorization = { authorization: `Bearer ${joined.body.player.token}` }
+
+  assert.equal((await json(`${origin}/api/campaign/canon/constitution`, { headers: memberAuthorization })).status, 403)
+  const initial = await json(`${origin}/api/campaign/canon/constitution`, { headers: ownerAuthorization })
+  assert.equal(initial.body.constitution.revision, 0)
+  await json(`${origin}/api/campaign/players/${joined.body.player.id}/knowledge-role`, {
+    method: 'PATCH', headers: ownerAuthorization, body: JSON.stringify({ knowledgeRole: 'gm' }),
+  })
+  const saved = await json(`${origin}/api/campaign/canon/constitution`, {
+    method: 'PUT', headers: memberAuthorization,
+    body: JSON.stringify({
+      canonThreshold: 'table_consensus', playerDeclarations: 'stand_unless_challenged',
+      oocPolicy: 'explicit_corrections_only', correctionPolicy: 'flag_conflicts',
+      defaultVisibility: 'campaign', guidance: 'Promises spoken in character count.', revision: 0,
+    }),
+  })
+  assert.equal(saved.status, 200)
+  assert.equal(saved.body.constitution.revision, 1)
+  assert.equal(saved.body.constitution.updatedByName, 'Theo')
+  const stale = await json(`${origin}/api/campaign/canon/constitution`, {
+    method: 'PUT', headers: ownerAuthorization,
+    body: JSON.stringify({ ...saved.body.constitution, guidance: 'Overwrite it.', revision: 0 }),
+  })
+  assert.equal(stale.status, 409)
+  assert.equal(stale.body.constitution.guidance, 'Promises spoken in character count.')
+})
+
 test('canon proposals require cited campaign messages and owner review', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-canon-'))
   const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
@@ -1140,6 +1180,14 @@ test('the owner manually extracts idempotent GM-only canon suggestions', async (
   })
   assert.equal(memberAttempt.status, 403)
   const authorization = { authorization: `Bearer ${created.body.player.token}` }
+  await json(`${origin}/api/campaign/canon/constitution`, {
+    method: 'PUT', headers: authorization,
+    body: JSON.stringify({
+      canonThreshold: 'played_as_true', playerDeclarations: 'stand_unless_challenged',
+      oocPolicy: 'exclude', correctionPolicy: 'latest_explicit', defaultVisibility: 'gm_only',
+      guidance: 'Promises spoken in character count.', revision: 0,
+    }),
+  })
   const first = await json(`${origin}/api/campaign/canon/extract`, { method: 'POST', headers: authorization })
   const repeated = await json(`${origin}/api/campaign/canon/extract`, { method: 'POST', headers: authorization })
 
@@ -1152,6 +1200,7 @@ test('the owner manually extracts idempotent GM-only canon suggestions', async (
   assert.equal(extractedInputs.length, 1)
   assert.equal(extractedInputs[0].messages[0].text, 'We promised to return before moonrise.')
   assert.deepEqual(extractedInputs[0].existingCanon, [])
+  assert.equal(extractedInputs[0].constitution.guidance, 'Promises spoken in character count.')
 
   const rejected = await json(`${origin}/api/campaign/canon/proposals/${first.body.proposals[0].id}/decisions`, {
     method: 'POST', headers: authorization, body: JSON.stringify({ action: 'reject', reason: 'not_useful' }),

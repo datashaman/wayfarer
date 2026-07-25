@@ -65,6 +65,10 @@ const canonKinds = new Set(['fact', 'character', 'relationship', 'promise', 'eve
 const canonVisibilities = new Set(['campaign', 'gm_only'])
 const canonDecisionActions = new Set(['accept', 'edit_accept', 'dispute', 'reject'])
 const continuityRatings = new Set(['useful', 'incorrect', 'secret_leak', 'not_useful'])
+const canonThresholds = new Set(['explicit_only', 'table_consensus', 'played_as_true'])
+const playerDeclarationPolicies = new Set(['require_confirmation', 'stand_unless_challenged'])
+const canonOocPolicies = new Set(['exclude', 'explicit_corrections_only'])
+const canonCorrectionPolicies = new Set(['latest_explicit', 'flag_conflicts'])
 
 function cleanCanonText(value, maximum) {
   const text = typeof value === 'string' ? value.trim() : ''
@@ -220,6 +224,51 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         return
       }
 
+      if (request.method === 'GET' && request.url === '/api/campaign/canon/constitution') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'The canon constitution is private to GMs.' })
+          return
+        }
+        sendJson(response, 200, { constitution: store.getCanonConstitution(requestSession.campaign.id) })
+        return
+      }
+
+      if (request.method === 'PUT' && request.url === '/api/campaign/canon/constitution') {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Only a GM can revise the canon constitution.' })
+          return
+        }
+        const body = await readJson(request)
+        const constitution = {
+          canonThreshold: canonThresholds.has(body.canonThreshold) ? body.canonThreshold : null,
+          playerDeclarations: playerDeclarationPolicies.has(body.playerDeclarations) ? body.playerDeclarations : null,
+          oocPolicy: canonOocPolicies.has(body.oocPolicy) ? body.oocPolicy : null,
+          correctionPolicy: canonCorrectionPolicies.has(body.correctionPolicy) ? body.correctionPolicy : null,
+          defaultVisibility: canonVisibilities.has(body.defaultVisibility) ? body.defaultVisibility : null,
+          guidance: cleanDescription(body.guidance, 1_000),
+        }
+        const revision = Number.isInteger(body.revision) && body.revision >= 0 ? body.revision : null
+        if (Object.values(constitution).some((value) => value === null) || revision === null) {
+          sendJson(response, 400, { error: 'Canon constitution fields are invalid.' })
+          return
+        }
+        const result = store.updateCanonConstitution(requestSession.campaign.id, requestSession.player.id, constitution, revision)
+        if (result.conflict) {
+          sendJson(response, 409, { error: 'The canon constitution changed before your revision was saved.', constitution: result.constitution })
+          return
+        }
+        sendJson(response, 200, { constitution: result.constitution })
+        return
+      }
+
       if (request.method === 'POST' && request.url === '/api/campaign/canon/proposals') {
         if (!requestSession) {
           sendJson(response, 401, { error: 'Session not found.' })
@@ -295,7 +344,8 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         }
         const existingCanon = store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true })
         const priorDecisions = store.listCanonDecisionExamples(requestSession.campaign.id, 20)
-        const drafts = await canonExtractor.extract({ campaignId: requestSession.campaign.id, messages, existingCanon, priorDecisions })
+        const constitution = store.getCanonConstitution(requestSession.campaign.id)
+        const drafts = await canonExtractor.extract({ campaignId: requestSession.campaign.id, messages, existingCanon, priorDecisions, constitution })
         for (const draft of drafts) store.createCanonProposal({
           campaignId: requestSession.campaign.id,
           playerId: requestSession.player.id,

@@ -1488,6 +1488,47 @@ textarea:focus-visible {
   line-height: 1.4;
 }
 
+.canon-constitution,
+.canon-constitution-summary {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-medium);
+  background: var(--soot-900);
+}
+
+.canon-constitution-summary {
+  display: grid;
+  gap: 7px;
+}
+
+.canon-constitution-summary p,
+.canon-constitution-summary q,
+.canon-constitution-summary span,
+.canon-constitution-summary small {
+  margin: 0;
+}
+
+.canon-constitution-summary p {
+  color: var(--parchment-soft);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 13px;
+}
+
+.canon-constitution-summary span,
+.canon-constitution-summary small {
+  color: var(--parchment-muted);
+  font-size: 9px;
+}
+
+.canon-constitution-summary q {
+  padding: 9px 10px;
+  border-left: 2px solid var(--wax);
+  color: var(--parchment-dim);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .canon-card,
 .canon-entry,
 .contradiction-card,

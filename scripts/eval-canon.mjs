@@ -9,6 +9,15 @@ if (!process.env.OPENAI_API_KEY) {
 const model = process.env.OPENAI_CANON_MODEL || 'gpt-5.6-luna'
 const extractor = createOpenAICanonExtractor({ apiKey: process.env.OPENAI_API_KEY, model })
 const now = new Date().toISOString()
+const defaultConstitution = {
+  canonThreshold: 'explicit_only',
+  playerDeclarations: 'require_confirmation',
+  oocPolicy: 'exclude',
+  correctionPolicy: 'latest_explicit',
+  defaultVisibility: 'gm_only',
+  guidance: '',
+  revision: 0,
+}
 
 const fixtures = [
   {
@@ -39,6 +48,21 @@ const fixtures = [
     ],
     forbid: ['fabricated-99', 'ignore prior instructions'],
   },
+  {
+    name: 'constitution admits lore established through play',
+    messages: [
+      { id: 'policy-play-1', text: 'In character: the Raven Gate opens for Mara’s bloodline.' },
+      { id: 'policy-play-2', text: 'The party approaches; the Raven Gate recognizes Mara and opens.' },
+    ],
+    constitution: { ...defaultConstitution, canonThreshold: 'played_as_true', playerDeclarations: 'stand_unless_challenged', guidance: 'Facts demonstrated during play count as canon.' },
+    require: ['raven gate'],
+  },
+  {
+    name: 'constitution rejects an unconfirmed declaration',
+    messages: [{ id: 'policy-strict-1', text: 'I declare that the king secretly owes my character ten thousand gold.' }],
+    constitution: defaultConstitution,
+    maximum: 0,
+  },
 ]
 
 let failures = 0
@@ -51,7 +75,7 @@ for (const fixture of fixtures) {
     sentAt: now,
   }))
   try {
-    const drafts = await extractor.extract({ campaignId: `eval-${fixture.name}`, messages, existingCanon: [] })
+    const drafts = await extractor.extract({ campaignId: `eval-${fixture.name}`, messages, existingCanon: [], constitution: fixture.constitution ?? defaultConstitution })
     const searchable = drafts.map((draft) => `${draft.title} ${draft.claim}`.toLocaleLowerCase()).join('\n')
     const knownIds = new Set(messages.map((message) => message.id))
     const checks = [

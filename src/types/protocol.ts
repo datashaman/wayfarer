@@ -33,6 +33,7 @@ export type PlayerSession = {
   campaignId: Id
   name: string
   role: 'owner' | 'member'
+  knowledgeRole: 'gm' | 'player'
   token: string
 }
 
@@ -220,6 +221,7 @@ export type ClientEvent =
 
 export type ServerEvent =
   | Envelope<'session.revoked', { reason: 'removed' | 'recovered' }>
+  | Envelope<'session.updated', { player: PlayerSession }>
   | Envelope<'campaign.updated', { campaign: Campaign }>
   | Envelope<'campaign.note_updated', { note: CampaignNote }>
   | Envelope<'campaign.canon_updated', CanonLedger>

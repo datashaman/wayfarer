@@ -1,0 +1,40 @@
+import { expect, test } from '@playwright/test'
+
+test('the campaign owner grants and revokes live GM knowledge access', async ({ browser, page }) => {
+  await page.goto('/')
+  await page.getByLabel('Campaign name').fill('The Lantern Road')
+  await page.getByLabel('Your name').fill('Mara')
+  await page.getByRole('button', { name: 'Open the table' }).click()
+  await page.getByRole('button', { name: 'I saved my seat key' }).click()
+  await page.getByRole('button', { name: 'Invite players' }).click()
+  const invitation = page.getByRole('dialog', { name: 'The Lantern Road' })
+  const inviteUrl = await invitation.locator('.invite-link code').innerText()
+
+  const guestContext = await browser.newContext()
+  const guest = await guestContext.newPage()
+  await guest.goto(inviteUrl)
+  await guest.getByLabel('Your name').fill('Rowan')
+  await guest.getByRole('button', { name: 'Join the table' }).click()
+  await guest.getByRole('button', { name: 'I saved my seat key' }).click()
+
+  await invitation.getByRole('complementary').getByLabel('Close invitation').click()
+  await page.getByRole('button', { name: 'Open campaign folio' }).click()
+  const folio = page.getByRole('dialog', { name: 'Campaign folio' })
+  await folio.getByRole('button', { name: 'Grant GM access for Rowan' }).click()
+  await folio.getByRole('button', { name: 'Confirm grant GM access for Rowan' }).click()
+  await expect(folio.getByText('GM', { exact: true })).toBeVisible()
+
+  await guest.getByRole('button', { name: 'Canon' }).click()
+  const gmLedger = guest.getByRole('dialog', { name: 'Living canon ledger' })
+  await expect(gmLedger.getByRole('heading', { name: 'Awaiting review' })).toBeVisible()
+  await expect(gmLedger.getByRole('heading', { name: 'Contradiction watch' })).toBeVisible()
+
+  await folio.getByRole('button', { name: 'Revoke GM access for Rowan' }).click()
+  await folio.getByRole('button', { name: 'Confirm revoke GM access for Rowan' }).click()
+  await expect(gmLedger).toHaveCount(0)
+  await guest.getByRole('button', { name: 'Canon' }).click()
+  const playerLedger = guest.getByRole('dialog', { name: 'Living canon ledger' })
+  await expect(playerLedger.getByRole('heading', { name: 'Awaiting review' })).toHaveCount(0)
+  await expect(playerLedger.getByRole('heading', { name: 'Contradiction watch' })).toHaveCount(0)
+  await guestContext.close()
+})

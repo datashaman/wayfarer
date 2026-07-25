@@ -46,6 +46,7 @@ function publicPlayer(row, token) {
     campaignId: row.campaign_id,
     name: row.name,
     role: row.role,
+    knowledgeRole: row.knowledge_role,
     ...(token ? { token } : {}),
   }
 }
@@ -168,6 +169,7 @@ export function createStore(databasePath) {
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('owner', 'member')),
+      knowledge_role TEXT NOT NULL DEFAULT 'player' CHECK(knowledge_role IN ('gm', 'player')),
       token_hash TEXT NOT NULL UNIQUE,
       recovery_key_hash TEXT,
       removed_at TEXT,
@@ -332,6 +334,10 @@ export function createStore(databasePath) {
   }
   if (!playerColumns.some((column) => column.name === 'removed_at')) database.exec('ALTER TABLE players ADD COLUMN removed_at TEXT')
   if (!playerColumns.some((column) => column.name === 'recovery_key_hash')) database.exec('ALTER TABLE players ADD COLUMN recovery_key_hash TEXT')
+  if (!playerColumns.some((column) => column.name === 'knowledge_role')) {
+    database.exec("ALTER TABLE players ADD COLUMN knowledge_role TEXT NOT NULL DEFAULT 'player' CHECK(knowledge_role IN ('gm', 'player'))")
+    database.exec("UPDATE players SET knowledge_role = 'gm' WHERE role = 'owner'")
+  }
   const roomColumns = database.prepare('PRAGMA table_info(rooms)').all()
   if (!roomColumns.some((column) => column.name === 'position')) {
     database.exec('ALTER TABLE rooms ADD COLUMN position INTEGER NOT NULL DEFAULT 0')
@@ -389,13 +395,14 @@ export function createStore(databasePath) {
   const insertCampaign = database.prepare('INSERT INTO campaigns (id, name, invite_code, created_at) VALUES (?, ?, ?, ?)')
   const updateInvitation = database.prepare('UPDATE campaigns SET invite_code = ? WHERE id = ?')
   const insertRoom = database.prepare('INSERT INTO rooms (id, campaign_id, slug, name, description, position) VALUES (?, ?, ?, ?, ?, ?)')
-  const insertPlayer = database.prepare('INSERT INTO players (id, campaign_id, name, role, token_hash, recovery_key_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+  const insertPlayer = database.prepare('INSERT INTO players (id, campaign_id, name, role, knowledge_role, token_hash, recovery_key_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
   const playersByCampaign = database.prepare('SELECT * FROM players WHERE campaign_id = ? AND removed_at IS NULL ORDER BY rowid')
   const activePlayerByName = database.prepare('SELECT * FROM players WHERE campaign_id = ? AND name = ? COLLATE NOCASE AND removed_at IS NULL')
   const playerForCampaign = database.prepare('SELECT * FROM players WHERE id = ? AND campaign_id = ? AND removed_at IS NULL')
   const removePlayer = database.prepare('UPDATE players SET removed_at = ? WHERE id = ?')
   const updatePlayerCredentials = database.prepare('UPDATE players SET token_hash = ?, recovery_key_hash = ? WHERE id = ?')
   const updateRecoveryKey = database.prepare('UPDATE players SET recovery_key_hash = ? WHERE id = ?')
+  const updateKnowledgeRole = database.prepare("UPDATE players SET knowledge_role = ? WHERE id = ? AND campaign_id = ? AND role != 'owner' AND removed_at IS NULL")
   const playerByToken = database.prepare(`
     SELECT players.*, campaigns.name AS campaign_name, campaigns.invite_code
     FROM players JOIN campaigns ON campaigns.id = players.campaign_id
@@ -709,8 +716,9 @@ export function createStore(databasePath) {
   function createPlayer(campaignId, name, role = 'member') {
     const token = randomBytes(32).toString('base64url')
     const recoveryCode = createRecoveryCode()
-    const player = { id: randomUUID(), campaignId, name, role, token, recoveryCode }
-    insertPlayer.run(player.id, campaignId, name, role, tokenHash(token), recoveryHash(recoveryCode), new Date().toISOString())
+    const knowledgeRole = role === 'owner' ? 'gm' : 'player'
+    const player = { id: randomUUID(), campaignId, name, role, knowledgeRole, token, recoveryCode }
+    insertPlayer.run(player.id, campaignId, name, role, knowledgeRole, tokenHash(token), recoveryHash(recoveryCode), new Date().toISOString())
     initializePlayerReads.run(new Date().toISOString())
     return player
   }
@@ -779,6 +787,14 @@ export function createStore(databasePath) {
 
     getCampaignManagement(campaignId) {
       return { players: playersByCampaign.all(campaignId).map((row) => publicPlayer(row)) }
+    },
+
+    setPlayerKnowledgeRole(campaignId, playerId, knowledgeRole) {
+      const player = playerForCampaign.get(playerId, campaignId)
+      if (!player) return { outcome: 'not_found' }
+      if (player.role === 'owner') return { outcome: 'owner' }
+      updateKnowledgeRole.run(knowledgeRole, playerId, campaignId)
+      return { outcome: 'updated', management: this.getCampaignManagement(campaignId) }
     },
 
     rotateInvitation(campaignId) {

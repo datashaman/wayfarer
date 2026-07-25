@@ -346,6 +346,8 @@ test('only the campaign owner can open campaign management', async (t) => {
 
   assert.equal(created.body.player.role, 'owner')
   assert.equal(joined.body.player.role, 'member')
+  assert.equal(created.body.player.knowledgeRole, 'gm')
+  assert.equal(joined.body.player.knowledgeRole, 'player')
 
   const ownerView = await json(`${origin}/api/campaign/manage`, {
     headers: { authorization: `Bearer ${created.body.player.token}` },
@@ -355,11 +357,63 @@ test('only the campaign owner can open campaign management', async (t) => {
   })
 
   assert.equal(ownerView.status, 200)
-  assert.deepEqual(ownerView.body.players.map(({ name, role }) => ({ name, role })), [
-    { name: 'Mara', role: 'owner' },
-    { name: 'Theo', role: 'member' },
+  assert.deepEqual(ownerView.body.players.map(({ name, role, knowledgeRole }) => ({ name, role, knowledgeRole })), [
+    { name: 'Mara', role: 'owner', knowledgeRole: 'gm' },
+    { name: 'Theo', role: 'member', knowledgeRole: 'player' },
   ])
   assert.equal(memberView.status, 403)
+})
+
+test('the owner grants and revokes GM knowledge without transferring campaign ownership', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'wayfarer-gm-role-'))
+  const app = createRoomServer({ databasePath: join(directory, 'table.sqlite') })
+  const port = await app.listen(0)
+  const origin = `http://127.0.0.1:${port}`
+  let memberSocket
+  t.after(async () => {
+    memberSocket?.close()
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  const created = await json(`${origin}/api/campaigns`, { method: 'POST', body: JSON.stringify({ campaignName: 'The Ashen Coast', playerName: 'Mara' }) })
+  const joined = await json(`${origin}/api/invitations/${created.body.campaign.inviteCode}/join`, { method: 'POST', body: JSON.stringify({ playerName: 'Theo' }) })
+  const ownerAuthorization = { authorization: `Bearer ${created.body.player.token}` }
+  const memberAuthorization = { authorization: `Bearer ${joined.body.player.token}` }
+  const message = app.store.addMessage({
+    roomId: created.body.campaign.rooms[0].id, playerId: created.body.player.id,
+    clientMessageId: 'gm-role-message', text: 'The western archive contains a sealed map.',
+  }).message
+  app.store.createCanonProposal({
+    campaignId: created.body.campaign.id, playerId: created.body.player.id, kind: 'fact', title: 'The sealed map',
+    claim: 'The western archive contains a sealed map.', visibility: 'gm_only', extractorVersion: 'fixture-v1', sources: [{ messageId: message.id }],
+  })
+  assert.equal((await json(`${origin}/api/campaign/canon`, { headers: memberAuthorization })).body.proposals.length, 0)
+
+  memberSocket = await openSocket(`ws://127.0.0.1:${port}/ws?token=${joined.body.player.token}`)
+  const promotedEvent = nextEvent(memberSocket, 'session.updated')
+  const promoted = await json(`${origin}/api/campaign/players/${joined.body.player.id}/knowledge-role`, {
+    method: 'PATCH', headers: ownerAuthorization, body: JSON.stringify({ knowledgeRole: 'gm' }),
+  })
+  assert.equal(promoted.status, 200)
+  assert.equal(promoted.body.players.find((player) => player.id === joined.body.player.id).role, 'member')
+  assert.equal(promoted.body.players.find((player) => player.id === joined.body.player.id).knowledgeRole, 'gm')
+  assert.equal((await promotedEvent).payload.player.knowledgeRole, 'gm')
+  assert.equal((await json(`${origin}/api/campaign/canon`, { headers: memberAuthorization })).body.proposals[0].title, 'The sealed map')
+
+  const revokedEvent = nextEvent(memberSocket, 'session.updated')
+  const revoked = await json(`${origin}/api/campaign/players/${joined.body.player.id}/knowledge-role`, {
+    method: 'PATCH', headers: ownerAuthorization, body: JSON.stringify({ knowledgeRole: 'player' }),
+  })
+  assert.equal(revoked.status, 200)
+  assert.equal((await revokedEvent).payload.player.knowledgeRole, 'player')
+  assert.equal((await json(`${origin}/api/campaign/canon`, { headers: memberAuthorization })).body.proposals.length, 0)
+  assert.equal((await json(`${origin}/api/campaign/players/${created.body.player.id}/knowledge-role`, {
+    method: 'PATCH', headers: ownerAuthorization, body: JSON.stringify({ knowledgeRole: 'player' }),
+  })).status, 400)
+  assert.equal((await json(`${origin}/api/campaign/players/${joined.body.player.id}/knowledge-role`, {
+    method: 'PATCH', headers: memberAuthorization, body: JSON.stringify({ knowledgeRole: 'gm' }),
+  })).status, 403)
 })
 
 test('the owner can replace an invitation and the old link stops working', async (t) => {

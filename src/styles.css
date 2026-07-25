@@ -429,6 +429,11 @@ textarea:focus-visible {
   text-align: left;
 }
 
+.knowledge-action--confirm {
+  border-color: color-mix(in srgb, var(--wax) 45%, transparent) !important;
+  color: var(--wax-bright) !important;
+}
+
 .campaign-menu-seat:hover,
 .campaign-menu-new:hover {
   background: rgb(233 223 202 / 0.06);

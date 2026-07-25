@@ -68,6 +68,7 @@ type SavedSeat = {
   playerId: string
   playerName: string
   role: 'owner' | 'member'
+  knowledgeRole: 'gm' | 'player'
   token: string
 }
 
@@ -82,6 +83,7 @@ function readSavedSeats(): SavedSeat[] {
       && typeof seat.playerId === 'string'
       && typeof seat.playerName === 'string'
       && (seat.role === 'owner' || seat.role === 'member')
+      && (seat.knowledgeRole === 'gm' || seat.knowledgeRole === 'player')
       && typeof seat.token === 'string')
   } catch {
     return []
@@ -96,6 +98,7 @@ function saveSeat(session: TableSession) {
     playerId: session.player.id,
     playerName: session.player.name,
     role: session.player.role,
+    knowledgeRole: session.player.knowledgeRole,
     token: session.player.token,
   }
   const seats = [seat, ...readSavedSeats().filter((saved) => saved.campaignId !== seat.campaignId)]
@@ -108,6 +111,14 @@ function forgetSeat(campaignId: string) {
   const seats = readSavedSeats().filter((seat) => seat.campaignId !== campaignId)
   localStorage.setItem(savedSeatsKey, JSON.stringify(seats))
   if (localStorage.getItem(activeCampaignKey) === campaignId) localStorage.removeItem(activeCampaignKey)
+  return seats
+}
+
+function updateSavedPlayer(player: TableSession['player']) {
+  const seats = readSavedSeats().map((seat) => seat.campaignId === player.campaignId
+    ? { ...seat, playerName: player.name, role: player.role, knowledgeRole: player.knowledgeRole, token: player.token }
+    : seat)
+  localStorage.setItem(savedSeatsKey, JSON.stringify(seats))
   return seats
 }
 
@@ -484,6 +495,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
   const [contradictionsPending, setContradictionsPending] = useState(false)
   const [error, setError] = useState('')
   const authorization = { authorization: `Bearer ${session.player.token}` }
+  const isGm = session.player.knowledgeRole === 'gm'
 
   useEffect(() => {
     void api<CanonLedger>('/api/campaign/canon', { headers: { authorization: `Bearer ${session.player.token}` } })
@@ -492,20 +504,20 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
   }, [onLedger, session.player.token])
 
   useEffect(() => {
-    if (session.player.role !== 'owner' || continuityLoaded) return
+    if (!isGm || continuityLoaded) return
     void api<{ brief: ContinuityBrief | null }>('/api/campaign/continuity', { headers: { authorization: `Bearer ${session.player.token}` } })
       .then(({ brief }) => setContinuityBrief(brief))
       .catch((reason) => setError(reason instanceof Error ? reason.message : 'The continuity brief could not be opened.'))
       .finally(() => setContinuityLoaded(true))
-  }, [continuityLoaded, session.player.role, session.player.token])
+  }, [continuityLoaded, isGm, session.player.token])
 
   useEffect(() => {
-    if (session.player.role !== 'owner' || contradictionsLoaded) return
+    if (!isGm || contradictionsLoaded) return
     void api<{ report: ContradictionReport | null }>('/api/campaign/contradictions', { headers: { authorization: `Bearer ${session.player.token}` } })
       .then(({ report }) => setContradictionReport(report))
       .catch((reason) => setError(reason instanceof Error ? reason.message : 'The contradiction report could not be opened.'))
       .finally(() => setContradictionsLoaded(true))
-  }, [contradictionsLoaded, session.player.role, session.player.token])
+  }, [contradictionsLoaded, isGm, session.player.token])
 
   useEffect(() => {
     const closeOnEscape = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') onClose() }
@@ -657,11 +669,11 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
       <aside className="canon-ledger">
         <div className="drawer-heading"><span id="canon-ledger-heading">Living canon ledger</span><button className="icon-button" onClick={onClose} aria-label="Close canon ledger"><X size={18} /></button></div>
         <div className="canon-body">
-          <header className="canon-heading"><span className="eyebrow">Human-kept truth</span><h2>The story as the table remembers it</h2><p>Suggested passages remain proposals until the campaign owner accepts them. Every entry keeps its transcript trail.</p></header>
+          <header className="canon-heading"><span className="eyebrow">Human-kept truth</span><h2>The story as the table remembers it</h2><p>Suggested passages remain proposals until a GM accepts them. Every entry keeps its transcript trail.</p></header>
           {error && <div className="entry-error" role="alert">{error}</div>}
           {!ledger ? <span className="folio-loading">Reading the canon ledger…</span> : (
             <>
-              {session.player.role === 'owner' && <section className="canon-section" aria-labelledby="canon-proposals-heading">
+              {isGm && <section className="canon-section" aria-labelledby="canon-proposals-heading">
                 <div className="canon-section-title"><h3 id="canon-proposals-heading">Awaiting review</h3><div><span>{pendingProposals.length}</span><button className="folio-small-action" onClick={() => void extractCanon()} disabled={extracting || !coverage?.unscannedCount}>{extracting ? 'Reading…' : coverage?.unscannedCount ? 'Find passages' : 'Up to date'}</button></div></div>
                 {coverage && <p className="canon-coverage">{coverage.unscannedCount > 0 ? `${coverage.unscannedCount} new transcript ${coverage.unscannedCount === 1 ? 'message' : 'messages'} ready to scan.` : coverage.latestSequence > 0 ? 'The transcript is scanned through its latest message.' : 'The transcript has no messages to scan yet.'}</p>}
                 {!pendingProposals.length && <div className="canon-empty"><Check size={18} /><span>No passages await a ruling.</span></div>}
@@ -694,23 +706,23 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
                     <div className="canon-actions"><button className={entryMode.action === 'retract' ? 'folio-button folio-button--danger' : 'primary-action'} disabled={pending === entry.id || !entryTitle.trim() || !entryClaim.trim() || (entryMode.action !== 'revise' && !entryReason.trim())} onClick={() => void saveEntryAction()}>{pending === entry.id ? 'Recording…' : entryMode.action === 'retract' ? 'Confirm retraction' : entryMode.action === 'supersede' ? 'Record new version' : 'Save revision'}</button><button className="folio-button" onClick={() => setEntryMode(null)}>Cancel</button></div>
                   </div> : <><h4>{entry.title}</h4><p>{entry.claim}</p></>}
                   <div className="canon-citations">{entry.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span></button>)}</div>
-                  <small>Accepted by {entry.createdByName ?? 'the campaign owner'}</small>
-                  <div className="canon-actions"><button className="folio-button" onClick={() => void toggleHistory(entry)}>{entryHistory[entry.id] ? 'Hide history' : 'History'}</button>{session.player.role === 'owner' && <><button className="folio-button" onClick={() => beginEntryAction(entry, 'revise')}>Edit</button><button className="folio-button" onClick={() => beginEntryAction(entry, 'supersede')}>Supersede</button><button className="folio-button" onClick={() => beginEntryAction(entry, 'retract')}>Retract</button></>}</div>
+                  <small>Accepted by {entry.createdByName ?? 'a GM'}</small>
+                  <div className="canon-actions"><button className="folio-button" onClick={() => void toggleHistory(entry)}>{entryHistory[entry.id] ? 'Hide history' : 'History'}</button>{isGm && <><button className="folio-button" onClick={() => beginEntryAction(entry, 'revise')}>Edit</button><button className="folio-button" onClick={() => beginEntryAction(entry, 'supersede')}>Supersede</button><button className="folio-button" onClick={() => beginEntryAction(entry, 'retract')}>Retract</button></>}</div>
                   {entryHistory[entry.id] && <ol className="canon-history">{entryHistory[entry.id].map((revision) => <li key={revision.id}><span>Revision {revision.revision} · {revision.action}</span><strong>{revision.title}</strong><p>{revision.claim}</p><small>{revision.createdByName}{revision.reason ? ` · ${revision.reason}` : ''}</small></li>)}</ol>}
                 </article>)}
               </section>
-              {session.player.role === 'owner' && <section className="canon-section" aria-labelledby="contradictions-heading">
+              {isGm && <section className="canon-section" aria-labelledby="contradictions-heading">
                 <div className="canon-section-title"><h3 id="contradictions-heading">Contradiction watch</h3><button className="folio-small-action" onClick={() => void checkContradictions()} disabled={contradictionsPending || !ledger.entries.length}>{contradictionsPending ? 'Checking…' : contradictionReport ? 'Check again' : 'Check transcript'}</button></div>
-                {!ledger.entries.length ? <div className="canon-empty"><BookMarked size={18} /><span>Accept canon before checking it against the transcript.</span></div> : !contradictionReport && contradictionsLoaded ? <div className="canon-empty"><BookMarked size={18} /><span>No private contradiction check has been prepared.</span></div> : contradictionReport && <><p className="continuity-note">Private to the campaign owner · checked {new Date(contradictionReport.createdAt).toLocaleString()}</p>{!contradictionReport.findings.length && <div className="canon-empty"><Check size={18} /><span>No well-supported contradictions were found.</span></div>}{contradictionReport.findings.map((finding) => <article className="contradiction-card" key={finding.id}>
+                {!ledger.entries.length ? <div className="canon-empty"><BookMarked size={18} /><span>Accept canon before checking it against the transcript.</span></div> : !contradictionReport && contradictionsLoaded ? <div className="canon-empty"><BookMarked size={18} /><span>No private contradiction check has been prepared.</span></div> : contradictionReport && <><p className="continuity-note">Private to GMs · checked {new Date(contradictionReport.createdAt).toLocaleString()}</p>{!contradictionReport.findings.length && <div className="canon-empty"><Check size={18} /><span>No well-supported contradictions were found.</span></div>}{contradictionReport.findings.map((finding) => <article className="contradiction-card" key={finding.id}>
                   <div className="canon-card-meta"><span>Private check</span><span>Read only</span></div><h4>{finding.title}</h4><p>{finding.explanation}</p>
                   <div className="contradiction-canon"><strong>Canon under question</strong><span>{finding.canonTitle}</span><q>{finding.canonClaim}</q></div>
                   <div className="canon-citations">{finding.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open contradiction citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span><q>{source.excerpt ?? source.text}</q></button>)}</div>
                 </article>)}</>}
               </section>}
-              {session.player.role === 'owner' && <section className="canon-section" aria-labelledby="continuity-heading">
+              {isGm && <section className="canon-section" aria-labelledby="continuity-heading">
                 <div className="canon-section-title"><h3 id="continuity-heading">Session continuity</h3><button className="folio-small-action" onClick={() => void prepareContinuityBrief()} disabled={continuityPending}>{continuityPending ? 'Reading…' : continuityBrief ? 'Refresh brief' : 'Prepare brief'}</button></div>
                 {!continuityBrief && continuityLoaded && <div className="canon-empty"><BookMarked size={18} /><span>No private continuity brief has been prepared.</span></div>}
-                {continuityBrief && <><p className="continuity-note">Private to the campaign owner · prepared {new Date(continuityBrief.createdAt).toLocaleString()}</p>{!continuityBrief.threads.length && <div className="canon-empty"><Check size={18} /><span>No well-supported loose threads were found.</span></div>}{continuityBrief.threads.map((thread) => <article className="continuity-card" key={thread.id}>
+                {continuityBrief && <><p className="continuity-note">Private to GMs · prepared {new Date(continuityBrief.createdAt).toLocaleString()}</p>{!continuityBrief.threads.length && <div className="canon-empty"><Check size={18} /><span>No well-supported loose threads were found.</span></div>}{continuityBrief.threads.map((thread) => <article className="continuity-card" key={thread.id}>
                   <div className="canon-card-meta"><span>GM only</span><span>{Math.round(thread.confidence * 100)}% confidence</span></div><h4>{thread.title}</h4><p>{thread.summary}</p><strong>Why it matters</strong><p>{thread.whyItMatters}</p>
                   <div className="canon-citations">{thread.sources.map((source) => <button key={source.messageId} onClick={() => { onOpenSource(source); onClose() }} aria-label={`Open continuity citation from ${source.senderName} in ${source.roomName}`}><Hash size={11} /><span>{source.roomName} · {source.senderName}</span><q>{source.excerpt ?? source.text}</q></button>)}</div>
                   <div className="canon-actions" aria-label={`Feedback for ${thread.title}`}><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'useful')}>Useful</button><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'incorrect')}>Incorrect</button><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'secret_leak')}>Secret leak</button><button className="folio-button" disabled={pending === thread.id} onClick={() => void rateContinuityThread(thread.id, 'not_useful')}>Not useful</button>{thread.feedback && <span className="continuity-feedback">Recorded: {thread.feedback.rating.replace('_', ' ')}</span>}</div>
@@ -803,7 +815,7 @@ function EntryGate({ inviteCode, recoverySeed, pendingEntry, savedSeats, switchi
         {!inviteCode && savedSeats.length > 0 && <div className="saved-seat-list">
           <span>Or return to a saved campaign</span>
           {savedSeats.map((seat) => <button key={seat.campaignId} type="button" onClick={() => onSelectSaved(seat)} disabled={Boolean(switchingCampaign)}>
-            <span><strong>{seat.campaignName}</strong><small>{seat.playerName}{seat.role === 'owner' ? ' · Owner' : ''}</small></span>
+            <span><strong>{seat.campaignName}</strong><small>{seat.playerName}{seat.role === 'owner' ? ' · Owner · GM' : seat.knowledgeRole === 'gm' ? ' · GM' : ''}</small></span>
             {switchingCampaign === seat.campaignId ? <RefreshCw className="spinning" size={14} /> : <BookOpen size={14} />}
           </button>)}
         </div>}
@@ -1113,6 +1125,19 @@ function CampaignFolio({
     })
   }
 
+  const changeKnowledgeRole = (player: CampaignManagement['players'][number]) => {
+    const knowledgeRole = player.knowledgeRole === 'gm' ? 'player' : 'gm'
+    const key = `knowledge-${player.id}-${knowledgeRole}`
+    if (confirming !== key) { setConfirming(key); return }
+    void run(key, async () => {
+      const result = await api<CampaignManagement>(`/api/campaign/players/${player.id}/knowledge-role`, {
+        method: 'PATCH', headers: authorization, body: JSON.stringify({ knowledgeRole }),
+      })
+      setManagement(result)
+      setConfirming('')
+    })
+  }
+
   return (
     <div className="campaign-folio-layer" role="dialog" aria-modal="true" aria-label="Campaign folio">
       <button className="drawer-scrim" onClick={onClose} aria-label="Close campaign folio" />
@@ -1146,7 +1171,7 @@ function CampaignFolio({
             <div className="folio-section-heading"><div><span className="eyebrow">Seats</span><h2 id="folio-party-heading">Party</h2></div></div>
             {!management ? <span className="folio-loading">Reading the ledger…</span> : <div className="folio-player-list">{management.players.map((player) => (
               <div className="folio-player-entry" key={player.id}>
-                <div className="folio-player"><Avatar participant={{ playerId: player.id, name: player.name, muted: false }} size="small" /><span><strong>{player.name}</strong><small>{player.role === 'owner' ? 'Campaign owner' : 'Player'}</small></span><div className="folio-row-actions"><button className={confirming === `recovery-${player.id}` ? 'danger-action' : ''} onClick={() => resetRecovery(player.id, player.name)} disabled={pending === `recovery-${player.id}`} aria-label={confirming === `recovery-${player.id}` ? `Confirm reset seat key for ${player.name}` : `Reset seat key for ${player.name}`}><KeyRound size={15} /></button>{player.role !== 'owner' && <button className={confirming === `remove-${player.id}` ? 'danger-action' : ''} onClick={() => removePlayer(player.id)} disabled={pending === `remove-${player.id}`} aria-label={confirming === `remove-${player.id}` ? `Confirm remove ${player.name}` : `Remove ${player.name}`}><UserMinus size={15} /></button>}</div></div>
+                <div className="folio-player"><Avatar participant={{ playerId: player.id, name: player.name, muted: false }} size="small" /><span><strong>{player.name}</strong><small>{player.role === 'owner' ? 'Campaign owner · GM' : player.knowledgeRole === 'gm' ? 'GM' : 'Player'}</small></span><div className="folio-row-actions">{player.role !== 'owner' && <button className={confirming === `knowledge-${player.id}-${player.knowledgeRole === 'gm' ? 'player' : 'gm'}` ? 'knowledge-action--confirm' : ''} onClick={() => changeKnowledgeRole(player)} disabled={pending.startsWith(`knowledge-${player.id}-`)} aria-label={confirming === `knowledge-${player.id}-${player.knowledgeRole === 'gm' ? 'player' : 'gm'}` ? `Confirm ${player.knowledgeRole === 'gm' ? 'revoke' : 'grant'} GM access for ${player.name}` : `${player.knowledgeRole === 'gm' ? 'Revoke' : 'Grant'} GM access for ${player.name}`}><BookMarked size={15} /></button>}<button className={confirming === `recovery-${player.id}` ? 'danger-action' : ''} onClick={() => resetRecovery(player.id, player.name)} disabled={pending === `recovery-${player.id}`} aria-label={confirming === `recovery-${player.id}` ? `Confirm reset seat key for ${player.name}` : `Reset seat key for ${player.name}`}><KeyRound size={15} /></button>{player.role !== 'owner' && <button className={confirming === `remove-${player.id}` ? 'danger-action' : ''} onClick={() => removePlayer(player.id)} disabled={pending === `remove-${player.id}`} aria-label={confirming === `remove-${player.id}` ? `Confirm remove ${player.name}` : `Remove ${player.name}`}><UserMinus size={15} /></button>}</div></div>
                 {issuedRecovery?.playerId === player.id && <SeatKeyPanel compact inviteCode={session.campaign.inviteCode} playerName={issuedRecovery.playerName} recoveryCode={issuedRecovery.recoveryCode} onDone={() => setIssuedRecovery(null)} />}
               </div>
             ))}</div>}
@@ -1382,6 +1407,13 @@ function App() {
         setActiveRoom('')
         setUnreadRooms({})
         activeRoomRef.current = ''
+        return
+      }
+      if (event.type === 'session.updated') {
+        setSavedSeats(updateSavedPlayer(event.payload.player))
+        setSession((current) => current ? { ...current, player: event.payload.player } : current)
+        setCampaignCanon(null)
+        setCanonLedger(false)
         return
       }
       if (event.type === 'campaign.updated') {
@@ -1700,7 +1732,7 @@ function App() {
               <span className="campaign-menu-label">Your campaigns</span>
               {campaignSwitchError && <span className="campaign-menu-error" role="alert">{campaignSwitchError}</span>}
               {savedSeats.map((seat) => <button key={seat.campaignId} type="button" role="menuitem" className="campaign-menu-seat" onClick={() => void switchCampaign(seat)} disabled={Boolean(switchingCampaign)}>
-                <span><strong>{seat.campaignName}</strong><small>{seat.playerName}{seat.role === 'owner' ? ' · Owner' : ''}</small></span>
+                <span><strong>{seat.campaignName}</strong><small>{seat.playerName}{seat.role === 'owner' ? ' · Owner · GM' : seat.knowledgeRole === 'gm' ? ' · GM' : ''}</small></span>
                 {seat.campaignId === session.campaign.id ? <Check size={15} /> : switchingCampaign === seat.campaignId ? <RefreshCw className="spinning" size={14} /> : null}
               </button>)}
               <button type="button" role="menuitem" className="campaign-menu-new" onClick={openNewCampaign}><Plus size={15} />Open new campaign</button>

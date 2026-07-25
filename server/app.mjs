@@ -133,6 +133,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
 
       const token = request.headers.authorization?.replace(/^Bearer\s+/i, '') ?? ''
       const requestSession = token ? store.getSession(token) : null
+      const hasGmKnowledge = requestSession?.player.knowledgeRole === 'gm'
 
       if (request.method === 'GET' && request.url === '/api/config') {
         sendJson(response, requestSession ? 200 : 401, requestSession ? { iceServers } : { error: 'Session not found.' })
@@ -149,6 +150,40 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           return
         }
         sendJson(response, 200, store.getCampaignManagement(requestSession.campaign.id))
+        return
+      }
+
+      const knowledgeRoleMutation = request.url?.match(/^\/api\/campaign\/players\/([^/]+)\/knowledge-role$/)
+      if (request.method === 'PATCH' && knowledgeRoleMutation) {
+        if (!requestSession) {
+          sendJson(response, 401, { error: 'Session not found.' })
+          return
+        }
+        if (requestSession.player.role !== 'owner') {
+          sendJson(response, 403, { error: 'Only the campaign owner can assign GM access.' })
+          return
+        }
+        const body = await readJson(request)
+        const knowledgeRole = body.knowledgeRole === 'gm' || body.knowledgeRole === 'player' ? body.knowledgeRole : null
+        if (!knowledgeRole) {
+          sendJson(response, 400, { error: 'Knowledge role is invalid.' })
+          return
+        }
+        const result = store.setPlayerKnowledgeRole(requestSession.campaign.id, knowledgeRoleMutation[1], knowledgeRole)
+        if (result.outcome === 'not_found') {
+          sendJson(response, 404, { error: 'Player not found.' })
+          return
+        }
+        if (result.outcome === 'owner') {
+          sendJson(response, 400, { error: 'The campaign owner always has GM access.' })
+          return
+        }
+        for (const [socket, client] of clients) {
+          if (client.player.id !== knowledgeRoleMutation[1]) continue
+          client.player = { ...client.player, knowledgeRole }
+          send(socket, envelope('session.updated', client.campaign.id, { player: client.player }))
+        }
+        sendJson(response, 200, result.management)
         return
       }
 
@@ -180,7 +215,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 401, { error: 'Session not found.' })
           return
         }
-        const includeGmOnly = requestSession.player.role === 'owner'
+        const includeGmOnly = hasGmKnowledge
         sendJson(response, 200, canonLedger(requestSession.campaign.id, { includeGmOnly }))
         return
       }
@@ -190,8 +225,8 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 401, { error: 'Session not found.' })
           return
         }
-        if (requestSession.player.role !== 'owner') {
-          sendJson(response, 403, { error: 'Only the campaign owner can propose canon.' })
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Only a GM can propose canon.' })
           return
         }
         const body = await readJson(request)
@@ -238,8 +273,8 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 401, { error: 'Session not found.' })
           return
         }
-        if (requestSession.player.role !== 'owner') {
-          sendJson(response, 403, { error: 'Only the campaign owner can ask for canon suggestions.' })
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Only a GM can ask for canon suggestions.' })
           return
         }
         if (!canonExtractor) {
@@ -275,8 +310,8 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 401, { error: 'Session not found.' })
           return
         }
-        if (requestSession.player.role !== 'owner') {
-          sendJson(response, 403, { error: 'Only the campaign owner can decide canon.' })
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Only a GM can decide canon.' })
           return
         }
         const body = await readJson(request)
@@ -313,7 +348,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 401, { error: 'Session not found.' })
           return
         }
-        const history = store.listCanonEntryHistory(requestSession.campaign.id, canonEntryHistory[1], { includeGmOnly: requestSession.player.role === 'owner' })
+        const history = store.listCanonEntryHistory(requestSession.campaign.id, canonEntryHistory[1], { includeGmOnly: hasGmKnowledge })
         sendJson(response, history ? 200 : 404, history ?? { error: 'Canon entry not found.' })
         return
       }
@@ -324,8 +359,8 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 401, { error: 'Session not found.' })
           return
         }
-        if (requestSession.player.role !== 'owner') {
-          sendJson(response, 403, { error: 'Only the campaign owner can revise canon.' })
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Only a GM can revise canon.' })
           return
         }
         const body = await readJson(request)
@@ -362,8 +397,8 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 401, { error: 'Session not found.' })
           return
         }
-        if (requestSession.player.role !== 'owner') {
-          sendJson(response, 403, { error: 'Only the campaign owner can retract canon.' })
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Only a GM can retract canon.' })
           return
         }
         const body = await readJson(request)
@@ -395,8 +430,8 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 401, { error: 'Session not found.' })
           return
         }
-        if (requestSession.player.role !== 'owner') {
-          sendJson(response, 403, { error: 'The continuity brief is private to the campaign owner.' })
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'The continuity brief is private to GMs.' })
           return
         }
         sendJson(response, 200, { brief: store.getLatestContinuityBrief(requestSession.campaign.id) })
@@ -408,8 +443,8 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 401, { error: 'Session not found.' })
           return
         }
-        if (requestSession.player.role !== 'owner') {
-          sendJson(response, 403, { error: 'Contradiction reports are private to the campaign owner.' })
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Contradiction reports are private to GMs.' })
           return
         }
         sendJson(response, 200, { report: store.getLatestContradictionReport(requestSession.campaign.id) })
@@ -421,8 +456,8 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 401, { error: 'Session not found.' })
           return
         }
-        if (requestSession.player.role !== 'owner') {
-          sendJson(response, 403, { error: 'Only the campaign owner can check contradictions.' })
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Only a GM can check contradictions.' })
           return
         }
         if (!contradictionRadar) {
@@ -459,8 +494,8 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 401, { error: 'Session not found.' })
           return
         }
-        if (requestSession.player.role !== 'owner') {
-          sendJson(response, 403, { error: 'Only the campaign owner can prepare a continuity brief.' })
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'Only a GM can prepare a continuity brief.' })
           return
         }
         if (!continuityGenerator) {
@@ -501,8 +536,8 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 401, { error: 'Session not found.' })
           return
         }
-        if (requestSession.player.role !== 'owner') {
-          sendJson(response, 403, { error: 'The continuity brief is private to the campaign owner.' })
+        if (!hasGmKnowledge) {
+          sendJson(response, 403, { error: 'The continuity brief is private to GMs.' })
           return
         }
         const body = await readJson(request)
@@ -855,7 +890,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
   function broadcastCanon(campaignId) {
     for (const [socket, client] of clients) {
       if (client.campaign.id !== campaignId) continue
-      const includeGmOnly = client.player.role === 'owner'
+      const includeGmOnly = client.player.knowledgeRole === 'gm'
       send(socket, envelope('campaign.canon_updated', campaignId, canonLedger(campaignId, { includeGmOnly })))
     }
   }

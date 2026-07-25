@@ -40,17 +40,23 @@ test('characters are player-owned, campaign-grounded, and keep secrets sealed', 
 
   const guestView = store.getCharacterCreationContext(owner.campaign.id, guest.player.id)
   assert.equal(guestView.characters[0].secret, null)
+  assert.deepEqual(guestView.characters[0].revisions, [])
   const gmView = store.getCharacterCreationContext(owner.campaign.id, owner.player.id, { includeAllSecrets: true })
   assert.equal(gmView.characters[0].secret, 'She rang the bell once before.')
+  assert.equal(gmView.characters[0].revisions.length, 1)
 
   const invalid = store.saveCharacter(owner.campaign.id, guest.player.id, character(guestView, { factionId: 'from-another-world' }))
   assert.equal(invalid.outcome, 'invalid_connection')
 
   const stale = store.saveCharacter(owner.campaign.id, owner.player.id, character(ownerContext, { expectedRevision: 9 }))
   assert.equal(stale.outcome, 'conflict')
-  const updated = store.saveCharacter(owner.campaign.id, owner.player.id, character(ownerContext, { name: 'Iria Vale', expectedRevision: 0 }))
+  const updated = store.saveCharacter(owner.campaign.id, owner.player.id, character(ownerContext, { name: 'Iria Vale', reason: 'She gave up the Voss name.', expectedRevision: 0 }))
   assert.equal(updated.outcome, 'updated')
   assert.equal(updated.character.revision, 1)
+  assert.equal(updated.character.revisions[0].reason, 'She gave up the Voss name.')
+  assert.deepEqual(updated.character.revisions[0].changedFields, ['name'])
+  assert.equal(updated.character.revisions[1].revision, 0)
+  assert.equal(store.saveCharacter(owner.campaign.id, owner.player.id, character(ownerContext, { name: 'Iria Vale', reason: 'Nothing actually changed.', expectedRevision: 1 })).outcome, 'no_change')
   store.close()
 })
 

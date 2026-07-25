@@ -143,6 +143,12 @@ Its signature is the threshold marker inside the `in-character` transcript: pair
 
 The active folio reads as framing → pressure → cast → outcome. Resolution requires a concrete statement of what became true; it never disappears on close and never resolves automatically. Beginning or resolving a scene returns the GM to the in-character room so the transcript remains the play surface.
 
+### Character aftermath
+
+Aftermath lives inside the existing character folio, above the editable public face. It is reflection, not advancement machinery: ask what happened to the character, offer only resolved scenes they witnessed, and require the player’s reason before keeping any revision. Do not introduce XP, levels, skill trees, unlocks, rewards, completion meters, or inferred personality changes.
+
+The revision trail is a vertical sequence of folio leaves marked by small wax circles and one brass hairline. Each leaf leads with revision and date, then the player’s authored reason, linked scene when present, and a quiet list of changed fields. Creation is revision 0. The current character remains visually dominant; history explains how they arrived there without becoming an audit dashboard. Sealed fields follow the same owner-and-GM visibility boundary in every snapshot.
+
 ### Session transcript
 
 Messages are avatar-and-copy rows, never speech bubbles. Sender, timestamp, delivery state, and literary body text form the hierarchy. System events sit between hairline rules. Keep transcript measure near 760px for readability.

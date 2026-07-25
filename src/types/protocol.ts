@@ -140,6 +140,19 @@ export type Character = {
   revision: number
   createdAt: string
   updatedAt: string
+  revisions: CharacterRevision[]
+  aftermathScenes: Array<{ id: Id; title: string; outcome: string; resolvedAt: string }>
+}
+
+export type CharacterRevision = {
+  id: Id
+  revision: number
+  reason: string
+  changedFields: string[]
+  snapshot: Record<string, unknown>
+  scene: { id: Id; title: string } | null
+  createdAt: string
+  createdByName: string
 }
 
 export type CharacterCreationContext = {

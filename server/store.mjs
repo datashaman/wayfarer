@@ -144,6 +144,19 @@ function publicScene(row, characters = []) {
   }
 }
 
+function publicCharacterRevision(row) {
+  return {
+    id: row.id,
+    revision: row.revision,
+    reason: row.reason,
+    changedFields: JSON.parse(row.changed_fields),
+    snapshot: JSON.parse(row.snapshot),
+    scene: row.scene_id ? { id: row.scene_id, title: row.scene_title } : null,
+    createdAt: row.created_at,
+    createdByName: row.created_by_name,
+  }
+}
+
 function publicCanonProposal(row, sources = []) {
   return {
     id: row.id,
@@ -463,6 +476,18 @@ export function createStore(databasePath) {
       scene_id TEXT NOT NULL REFERENCES campaign_scenes(id) ON DELETE CASCADE,
       character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE RESTRICT,
       PRIMARY KEY (scene_id, character_id)
+    );
+    CREATE TABLE IF NOT EXISTS character_revisions (
+      id TEXT PRIMARY KEY,
+      character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+      revision INTEGER NOT NULL,
+      scene_id TEXT REFERENCES campaign_scenes(id) ON DELETE SET NULL,
+      reason TEXT NOT NULL,
+      changed_fields TEXT NOT NULL,
+      snapshot TEXT NOT NULL,
+      created_by_player_id TEXT NOT NULL REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      UNIQUE(character_id, revision)
     );
     CREATE TABLE IF NOT EXISTS campaign_sessions (
       id TEXT PRIMARY KEY,
@@ -1096,6 +1121,7 @@ export function createStore(databasePath) {
     LEFT JOIN characters AS connected ON connected.id = characters.connected_character_id
   `
   const charactersByCampaign = database.prepare(`${characterSelect} WHERE characters.campaign_id = ? ORDER BY characters.rowid`)
+  const allCharacters = database.prepare(`${characterSelect} ORDER BY characters.rowid`)
   const characterByPlayer = database.prepare(`${characterSelect} WHERE characters.player_id = ? AND characters.campaign_id = ?`)
   const characterById = database.prepare(`${characterSelect} WHERE characters.id = ? AND characters.campaign_id = ?`)
   const insertCharacter = database.prepare(`
@@ -1113,6 +1139,27 @@ export function createStore(databasePath) {
       connected_character_id = ?, character_connection = ?, generator_version = ?,
       revision = revision + 1, updated_at = ?
     WHERE id = ? AND campaign_id = ? AND player_id = ? AND revision = ?
+  `)
+  const insertCharacterRevision = database.prepare('INSERT INTO character_revisions (id, character_id, revision, scene_id, reason, changed_fields, snapshot, created_by_player_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+  const characterRevisions = database.prepare(`
+    SELECT character_revisions.*, campaign_scenes.title AS scene_title, players.name AS created_by_name
+    FROM character_revisions
+    LEFT JOIN campaign_scenes ON campaign_scenes.id = character_revisions.scene_id
+    JOIN players ON players.id = character_revisions.created_by_player_id
+    WHERE character_revisions.character_id = ? ORDER BY character_revisions.revision DESC
+  `)
+  const resolvedScenesForCharacter = database.prepare(`
+    SELECT campaign_scenes.id, campaign_scenes.title, campaign_scenes.outcome, campaign_scenes.resolved_at
+    FROM campaign_scene_characters
+    JOIN campaign_scenes ON campaign_scenes.id = campaign_scene_characters.scene_id
+    WHERE campaign_scene_characters.character_id = ? AND campaign_scenes.status = 'resolved'
+    ORDER BY campaign_scenes.rowid DESC
+  `)
+  const resolvedSceneForCharacter = database.prepare(`
+    SELECT campaign_scenes.id FROM campaign_scene_characters
+    JOIN campaign_scenes ON campaign_scenes.id = campaign_scene_characters.scene_id
+    WHERE campaign_scene_characters.character_id = ? AND campaign_scenes.id = ?
+      AND campaign_scenes.campaign_id = ? AND campaign_scenes.status = 'resolved'
   `)
   const messageCharacter = database.prepare(`
     SELECT CASE WHEN rooms.slug = 'in-character' THEN characters.name ELSE NULL END AS character_name
@@ -1756,6 +1803,27 @@ export function createStore(databasePath) {
     world.hooks.forEach((item, position) => insertCampaignWorldHook.run(item.id ?? randomUUID(), campaignId, position, item.title, item.situation))
   }
 
+  function characterSnapshot(row) {
+    const character = publicCharacter(row, { includeSecret: true })
+    const { id, campaignId, playerId, playerName, revision, createdAt, updatedAt, ...snapshot } = character
+    return snapshot
+  }
+
+  function privateCharacter(row) {
+    if (!row) return null
+    return {
+      ...publicCharacter(row, { includeSecret: true }),
+      revisions: characterRevisions.all(row.id).map(publicCharacterRevision),
+      aftermathScenes: resolvedScenesForCharacter.all(row.id).map((scene) => ({ id: scene.id, title: scene.title, outcome: scene.outcome, resolvedAt: scene.resolved_at })),
+    }
+  }
+
+  for (const row of allCharacters.all()) {
+    if (characterRevisions.get(row.id)) continue
+    const snapshot = characterSnapshot(row)
+    insertCharacterRevision.run(randomUUID(), row.id, row.revision, null, 'Character history began.', JSON.stringify(Object.keys(snapshot)), JSON.stringify(snapshot), row.player_id, row.updated_at)
+  }
+
   return {
     health() {
       return database.prepare('SELECT 1 AS healthy').get().healthy === 1
@@ -1842,7 +1910,10 @@ export function createStore(databasePath) {
           locations: world.locations.map(({ id, name, description }) => ({ id, name, description })),
           npcs: world.npcs.map(({ id, name, role }) => ({ id, name, role })),
         } : null,
-        characters: rows.map((row) => publicCharacter(row, { includeSecret: includeAllSecrets || row.player_id === playerId })),
+        characters: rows.map((row) => {
+          const canReadPrivate = includeAllSecrets || row.player_id === playerId
+          return canReadPrivate ? privateCharacter(row) : { ...publicCharacter(row), revisions: [], aftermathScenes: [] }
+        }),
       }
     },
 
@@ -1866,27 +1937,54 @@ export function createStore(databasePath) {
       const now = new Date().toISOString()
       if (!current) {
         const id = randomUUID()
-        insertCharacter.run(
-          id, campaignId, playerId, character.name.trim(), character.concept.trim(), character.appearance.trim(),
-          character.drive.trim(), character.capability.trim(), character.complication.trim(), character.possession.trim(),
-          character.belief.trim(), character.secret.trim(), character.factionId, character.factionConnection.trim(),
-          character.locationId, character.locationConnection.trim(), character.npcId, character.npcConnection.trim(),
-          character.connectedCharacterId ?? null, character.characterConnection?.trim() || null,
-          character.generatorVersion ?? null, now, now,
-        )
-        return { outcome: 'created', character: publicCharacter(characterById.get(id, campaignId), { includeSecret: true }) }
+        database.exec('BEGIN IMMEDIATE')
+        try {
+          insertCharacter.run(
+            id, campaignId, playerId, character.name.trim(), character.concept.trim(), character.appearance.trim(),
+            character.drive.trim(), character.capability.trim(), character.complication.trim(), character.possession.trim(),
+            character.belief.trim(), character.secret.trim(), character.factionId, character.factionConnection.trim(),
+            character.locationId, character.locationConnection.trim(), character.npcId, character.npcConnection.trim(),
+            character.connectedCharacterId ?? null, character.characterConnection?.trim() || null,
+            character.generatorVersion ?? null, now, now,
+          )
+          const created = characterById.get(id, campaignId)
+          const snapshot = characterSnapshot(created)
+          insertCharacterRevision.run(randomUUID(), id, 0, null, 'Character took a seat.', JSON.stringify(Object.keys(snapshot)), JSON.stringify(snapshot), playerId, now)
+          database.exec('COMMIT')
+        } catch (error) {
+          database.exec('ROLLBACK')
+          throw error
+        }
+        return { outcome: 'created', character: privateCharacter(characterById.get(id, campaignId)) }
       }
-      if (character.expectedRevision !== current.revision) return { outcome: 'conflict', character: publicCharacter(current, { includeSecret: true }) }
-      const changed = updateCharacter.run(
-        character.name.trim(), character.concept.trim(), character.appearance.trim(), character.drive.trim(),
-        character.capability.trim(), character.complication.trim(), character.possession.trim(), character.belief.trim(),
-        character.secret.trim(), character.factionId, character.factionConnection.trim(), character.locationId,
-        character.locationConnection.trim(), character.npcId, character.npcConnection.trim(),
-        character.connectedCharacterId ?? null, character.characterConnection?.trim() || null,
-        character.generatorVersion ?? current.generator_version, now, current.id, campaignId, playerId, character.expectedRevision,
-      ).changes
-      if (changed !== 1) return { outcome: 'conflict', character: publicCharacter(characterByPlayer.get(playerId, campaignId), { includeSecret: true }) }
-      return { outcome: 'updated', character: publicCharacter(characterByPlayer.get(playerId, campaignId), { includeSecret: true }) }
+      if (character.expectedRevision !== current.revision) return { outcome: 'conflict', character: privateCharacter(current) }
+      if (typeof character.reason !== 'string' || !character.reason.trim()) return { outcome: 'reason_required' }
+      if (character.sceneId && !resolvedSceneForCharacter.get(current.id, character.sceneId, campaignId)) return { outcome: 'invalid_scene' }
+      const before = characterSnapshot(current)
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        const changed = updateCharacter.run(
+          character.name.trim(), character.concept.trim(), character.appearance.trim(), character.drive.trim(),
+          character.capability.trim(), character.complication.trim(), character.possession.trim(), character.belief.trim(),
+          character.secret.trim(), character.factionId, character.factionConnection.trim(), character.locationId,
+          character.locationConnection.trim(), character.npcId, character.npcConnection.trim(),
+          character.connectedCharacterId ?? null, character.characterConnection?.trim() || null,
+          character.generatorVersion ?? current.generator_version, now, current.id, campaignId, playerId, character.expectedRevision,
+        ).changes
+        if (changed !== 1) throw new Error('character_conflict')
+        const updated = characterByPlayer.get(playerId, campaignId)
+        const snapshot = characterSnapshot(updated)
+        const changedFields = Object.keys(snapshot).filter((field) => JSON.stringify(snapshot[field]) !== JSON.stringify(before[field]))
+        if (!changedFields.length) throw new Error('character_unchanged')
+        insertCharacterRevision.run(randomUUID(), current.id, updated.revision, character.sceneId ?? null, character.reason.trim(), JSON.stringify(changedFields), JSON.stringify(snapshot), playerId, now)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        if (error.message === 'character_unchanged') return { outcome: 'no_change', character: privateCharacter(current) }
+        if (error.message === 'character_conflict') return { outcome: 'conflict', character: privateCharacter(characterByPlayer.get(playerId, campaignId)) }
+        throw error
+      }
+      return { outcome: 'updated', character: privateCharacter(characterByPlayer.get(playerId, campaignId)) }
     },
 
     getSceneContext(campaignId) {

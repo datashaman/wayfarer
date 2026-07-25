@@ -53,6 +53,10 @@ function complete(draft: Draft) {
   ].every((value) => value.trim()) && (!draft.connectedCharacterId || draft.characterConnection.trim())
 }
 
+function changedFieldLabel(field: string) {
+  return ({ character: 'party connection', generatorVersion: 'origin', npc: 'NPC connection', faction: 'faction connection', location: 'location connection' } as Record<string, string>)[field] ?? field
+}
+
 function ChoiceField({ legend, items, selected, onSelect }: {
   legend: string
   items: Array<{ id: string; name: string; detail: string }>
@@ -78,6 +82,8 @@ export function CharacterFolio({ session, context: suppliedContext, onContext, o
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [concepts, setConcepts] = useState<Draft[]>([])
+  const [reason, setReason] = useState('')
+  const [sceneId, setSceneId] = useState('')
   const mine = context?.characters.find((character) => character.playerId === session.player.id) ?? null
   const companions = context?.characters.filter((character) => character.playerId !== session.player.id) ?? []
 
@@ -100,11 +106,12 @@ export function CharacterFolio({ session, context: suppliedContext, onContext, o
     setPending('save'); setError(''); setNotice('')
     void api<{ character: Character }>('/api/campaign/characters/mine', {
       method: mine ? 'PUT' : 'POST', headers: authorization,
-      body: JSON.stringify({ ...draft, connectedCharacterId: draft.connectedCharacterId || null }),
+      body: JSON.stringify({ ...draft, connectedCharacterId: draft.connectedCharacterId || null, reason: mine ? reason : undefined, sceneId: sceneId || null }),
     }).then(({ character }) => {
       const next = context ? { ...context, characters: [...context.characters.filter((item) => item.playerId !== character.playerId), character] } : null
       if (next) { setContext(next); onContext(next) }
       setDraft(draftFrom(character))
+      setReason(''); setSceneId('')
       setNotice(mine ? `Revision ${character.revision} is now at the table.` : `${character.name} has taken a seat at the table.`)
     }).catch((reason) => setError(reason instanceof Error ? reason.message : 'The character could not be kept.'))
       .finally(() => setPending(''))
@@ -132,6 +139,8 @@ export function CharacterFolio({ session, context: suppliedContext, onContext, o
 
           {concepts.length > 0 && !mine && <section className="character-concepts" aria-labelledby="character-concepts-heading"><div className="character-section-heading"><span>Editable possibilities</span><h3 id="character-concepts-heading">Three lives already in motion</h3></div><p>Choose one to bring into the folio. Nothing is saved until you take your seat.</p><div>{concepts.map((concept) => <button type="button" key={`${concept.name}-${concept.concept}`} onClick={() => { setDraft(concept); setConcepts([]) }}><strong>{concept.name}</strong><span>{concept.concept}</span><small>{concept.drive}</small></button>)}</div></section>}
 
+          {mine && <section className="character-aftermath" aria-labelledby="character-aftermath-heading"><div className="character-section-heading"><span>Keep the change</span><h3 id="character-aftermath-heading">What has happened to {mine.name}?</h3></div><p>Edit the folio below, then name why the character is different. Link the change to a scene when it belongs to one.</p>{mine.aftermathScenes.length > 0 && <fieldset><legend>After which scene?</legend><div>{mine.aftermathScenes.map((scene) => <button type="button" key={scene.id} className={sceneId === scene.id ? 'is-chosen' : ''} aria-pressed={sceneId === scene.id} onClick={() => setSceneId(sceneId === scene.id ? '' : scene.id)}><strong>{scene.title}</strong><span>{scene.outcome}</span></button>)}</div></fieldset>}<label htmlFor="character-change-reason">Why is the character different?</label><textarea id="character-change-reason" value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1_000} placeholder="The cracked bell answered in her brother’s voice, so Iria can no longer pretend he is dead…" /></section>}
+
           <section className="character-half" aria-labelledby="character-public-heading"><div className="character-section-heading"><span>What the table knows</span><h3 id="character-public-heading">The face you show</h3></div>
             <label htmlFor="character-name">Name</label><input id="character-name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} maxLength={80} autoFocus />
             <label htmlFor="character-concept">In one breath</label><textarea id="character-concept" value={draft.concept} onChange={(event) => setDraft({ ...draft, concept: event.target.value })} maxLength={240} placeholder="A disgraced ferryman who can hear the drowned town calling" />
@@ -152,7 +161,8 @@ export function CharacterFolio({ session, context: suppliedContext, onContext, o
           </section>
 
           <section className="character-sealed" aria-labelledby="character-secret-heading"><LockKeyhole size={19} /><div><span>Sealed from the party</span><h3 id="character-secret-heading">The truth you are carrying</h3><p>Only you and the campaign’s GMs can read this.</p></div><label htmlFor="character-secret">Private secret</label><textarea id="character-secret" value={draft.secret} onChange={(event) => setDraft({ ...draft, secret: event.target.value })} maxLength={1_000} /></section>
-          <footer className="character-actions"><div><strong>{mine ? `Revision ${mine.revision}` : 'Not yet at the table'}</strong><span>Your secret stays sealed. Everything else becomes part of the party’s shared starting point.</span></div><button className="primary-action" disabled={!complete(draft) || pending === 'save'}>{pending === 'save' ? 'Taking your seat…' : mine ? 'Keep this revision' : 'Take your seat'}</button></footer>
+          {mine && mine.revisions.length > 0 && <section className="character-history" aria-labelledby="character-history-heading"><div className="character-section-heading"><span>Leaves already turned</span><h3 id="character-history-heading">How the character has changed</h3></div>{mine.revisions.map((revision) => <article key={revision.id}><div><strong>Revision {revision.revision}</strong><time>{new Date(revision.createdAt).toLocaleDateString()}</time></div><p>{revision.reason}</p>{revision.scene && <span>After “{revision.scene.title}”</span>}<small>{revision.revision === 0 ? 'Character established' : revision.changedFields.map(changedFieldLabel).join(' · ')}</small></article>)}</section>}
+          <footer className="character-actions"><div><strong>{mine ? `Revision ${mine.revision}` : 'Not yet at the table'}</strong><span>{mine ? 'Every kept change becomes another leaf in this character’s history.' : 'Your secret stays sealed. Everything else becomes part of the party’s shared starting point.'}</span></div><button className="primary-action" disabled={!complete(draft) || (Boolean(mine) && !reason.trim()) || pending === 'save'}>{pending === 'save' ? 'Keeping the change…' : mine ? 'Keep this revision' : 'Take your seat'}</button></footer>
         </form>}
       </div>
     </aside>

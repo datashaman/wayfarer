@@ -8,6 +8,7 @@ Wayfarer is a human-kept campaign memory system, not an autonomous storyteller. 
 - Creative generation may draft a campaign opening from a GM premise, but the draft establishes no world truth until a GM edits and saves the complete foundation.
 - Character concepts are private editable options grounded only in the saved campaign foundation; only the player creates or revises their character.
 - A scene becomes active only when a GM establishes its framing, stakes, first choice, and present characters; resolving it records what changed without inventing an outcome.
+- Character growth is a player-authored revision, never inferred advancement; scene links are permitted only when that character witnessed the resolved scene.
 - Campaign ownership governs administration. GM knowledge access governs private lore.
 - Every AI artifact identifies the exact session range that produced it and retains transcript citations.
 - Campaign, GM-only, and named-character audiences are authorization boundaries, not presentation hints.
@@ -25,6 +26,7 @@ Wayfarer is a human-kept campaign memory system, not an autonomous storyteller. 
 - **Campaign foundation**: GM-kept playable starting material—premise, pitch, truths, factions, locations, NPCs, hooks, and opening crisis—with durable typed identities and revision protection.
 - **Character folio**: one player-owned character per seat, split between table-readable identity and a secret readable only by that player and GMs, with durable world and party connections.
 - **Campaign scene**: one GM-established active moment with present characters, pressure, and a first choice; its opening and human-recorded resolution are immutable in-character transcript markers.
+- **Character revision**: immutable snapshot of a player-authored character change with its reason, changed fields, and optional provenance from a resolved scene the character witnessed.
 - **Canon constitution**: versioned table-specific policy for what counts as canon.
 - **Canon proposal**: cited AI suggestion awaiting a GM ruling.
 - **Canon entry**: human-accepted truth with revision and audience history.

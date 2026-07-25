@@ -36,5 +36,13 @@ test('a scene crosses from saved preparation into the in-character transcript an
   assert.equal(resolved.context.activeScene, null)
   assert.equal(resolved.context.scenes[0].outcome, 'Iria cuts the rope and the bell cracks.')
   assert.equal(store.resolveScene(owner.campaign.id, owner.player.id, started.context.activeScene.id, 'Again.').outcome, 'not_found')
+  const changed = store.saveCharacter(owner.campaign.id, owner.player.id, {
+    name: 'Iria Voss', concept: 'A ferryman who hears the drowned.', appearance: 'A salt-white coat.', drive: 'Find her brother.', capability: 'Knows every crossing.', complication: 'The bell knows her oath.', possession: 'A wet iron key.', belief: 'Every broken thing can answer.', secret: 'She rang the bell before.',
+    factionId: characterContext.world.factions[0].id, factionConnection: 'They paid for silence.', locationId: characterContext.world.locations[0].id, locationConnection: 'She drowned there.', npcId: characterContext.world.npcs[0].id, npcConnection: 'They know what she did.', connectedCharacterId: null, characterConnection: '', generatorVersion: 'manual:character-v1',
+    expectedRevision: 0, reason: 'The cracked bell answered in her brother’s voice.', sceneId: started.context.activeScene.id,
+  })
+  assert.equal(changed.outcome, 'updated')
+  assert.equal(changed.character.revisions[0].scene.title, 'The first toll')
+  assert.deepEqual(changed.character.revisions[0].changedFields, ['belief'])
   store.close()
 })

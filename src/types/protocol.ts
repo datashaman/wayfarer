@@ -263,7 +263,7 @@ export type SessionRecapRevision = {
 export type AiReadiness = {
   eligible: boolean
   mode: 'prepare_only'
-  checks: Array<{ id: string; label: string; passed: boolean; value: number | null }>
+  checks: Array<{ id: string; label: string; passed: boolean; value: number | null; remaining: number; target: 'canon' | 'continuity' }>
   metrics: AiFeedbackMetrics
 }
 

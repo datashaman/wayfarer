@@ -1842,10 +1842,15 @@ textarea:focus-visible {
 
 .evaluation-gate {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
   gap: 8px;
   padding: 9px 10px;
   border-bottom: 1px solid var(--border-soft);
+}
+
+.evaluation-gate > .folio-small-action {
+  min-height: 25px;
 }
 
 .evaluation-gate:last-child,
@@ -3041,6 +3046,46 @@ textarea:focus-visible {
 .eligibility-note span {
   color: var(--parchment-muted);
   font-size: 9px;
+}
+
+.evidence-path {
+  display: grid;
+  gap: 0;
+  margin: 0 0 12px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-medium);
+  background: var(--soot-900);
+  list-style: none;
+}
+
+.evidence-path li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.evidence-path li:last-child {
+  border-bottom: 0;
+}
+
+.evidence-path li > div {
+  display: grid;
+  gap: 2px;
+}
+
+.evidence-path strong {
+  color: var(--parchment-soft);
+  font-size: 10px;
+}
+
+.evidence-path small {
+  color: var(--parchment-muted);
+  font-size: 8px;
+  line-height: 1.4;
 }
 
 .preparation-controls {

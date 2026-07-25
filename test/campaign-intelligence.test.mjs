@@ -3,6 +3,23 @@ import test from 'node:test'
 import { createCampaignIntelligence, CampaignIntelligenceError } from '../server/campaign-intelligence.mjs'
 import { createStore } from '../server/store.mjs'
 
+const campaignSeed = {
+  title: 'The Drowned Bell', pitch: 'A drowned town resurfaces for one moonless week.',
+  truths: ['The bell remembers every oath.', 'The streets flood at dawn.', 'No map agrees with the town.'],
+  factions: [
+    { name: 'The Salvagers', goal: 'Raise the bell.', opposition: 'The bell exposes their broken oaths.' },
+    { name: 'The Tidebound', goal: 'Sink the town forever.', opposition: 'The resurfacing frees their enemies.' },
+  ],
+  locations: [
+    { name: 'Bell Square', description: 'A plaza under black water.', danger: 'The bell tolls when someone lies.' },
+    { name: 'The Tilted Inn', description: 'A refuge balanced against a tower.', danger: 'Its foundations move with the tide.' },
+    { name: 'Salt Archive', description: 'Records pressed into salt tablets.', danger: 'Reading a name wakes its owner.' },
+  ],
+  npcs: Array.from({ length: 5 }, (_, index) => ({ name: `Witness ${index + 1}`, role: 'Keeper of a lost oath', want: 'Recover a true name.', leverage: 'Knows one safe street.' })),
+  hooks: Array.from({ length: 4 }, (_, index) => ({ title: `Trouble ${index + 1}`, situation: 'Someone offers a dangerous bargain.' })),
+  openingCrisis: { title: 'The first toll', situation: 'The bell rings before anyone touches it.', stakes: 'At the seventh toll, the town sinks.' },
+}
+
 test('campaign intelligence validates citations, private voice drafts, and clock bounds', async () => {
   const intelligence = createCampaignIntelligence({
     version: 'fixture-v1',
@@ -10,11 +27,13 @@ test('campaign intelligence validates citations, private voice drafts, and clock
     generateIntentDrafts: async () => ({ drafts: ['I raise the lantern.', 'Let the lantern answer.'] }),
     generateFactionProposal: async () => ({ summary: 'The moth court advances.', assumptions: 'The archive remains sealed.', proposedProgress: 3, citations: ['message-1'] }),
     generateHouseRule: async () => ({ title: 'Lantern test', sourceRule: 'Core test rule.', interpretation: 'Bright light helps.', ruling: 'Gain advantage.', citations: ['message-1'] }),
+    generateCampaignSeed: async () => campaignSeed,
   })
   assert.deepEqual(await intelligence.answerKnowledge({ question: 'Who keeps the light?', canon: [{ id: 'canon-1' }] }), { answer: 'Ilyra keeps the light.', citations: ['canon-1'] })
   assert.equal((await intelligence.draftIntent({ intent: 'signal', messages: [], canon: [] })).length, 2)
   assert.equal((await intelligence.proposeFaction({ clock: { segments: 6 }, messages: [{ id: 'message-1' }], canon: [] })).proposedProgress, 3)
   assert.equal((await intelligence.compileHouseRule({ messages: [{ id: 'message-1' }] })).citations[0], 'message-1')
+  assert.equal((await intelligence.draftCampaignSeed({ premise: 'A drowned town returns.' })).npcs.length, 5)
 
   const leaking = createCampaignIntelligence({
     version: 'fixture-v1',
@@ -22,11 +41,13 @@ test('campaign intelligence validates citations, private voice drafts, and clock
     generateIntentDrafts: async () => ({ drafts: [] }),
     generateFactionProposal: async () => ({ summary: 'Too far.', assumptions: 'None.', proposedProgress: 9, citations: ['hidden'] }),
     generateHouseRule: async () => ({ title: 'Hidden', sourceRule: 'Rule', interpretation: 'Guess', ruling: 'Do it', citations: ['hidden'] }),
+    generateCampaignSeed: async () => ({ ...campaignSeed, hooks: [] }),
   })
   await assert.rejects(() => leaking.answerKnowledge({ question: 'Secret?', canon: [{ id: 'visible' }] }), (error) => error instanceof CampaignIntelligenceError && error.code === 'invalid_knowledge_answer')
   await assert.rejects(() => leaking.draftIntent({ intent: 'speak', messages: [], canon: [] }), /invalid drafts/i)
   await assert.rejects(() => leaking.proposeFaction({ clock: { segments: 6 }, messages: [], canon: [] }), /clock boundary/i)
   await assert.rejects(() => leaking.compileHouseRule({ messages: [{ id: 'visible' }] }), /selected transcript/i)
+  await assert.rejects(() => leaking.draftCampaignSeed({ premise: 'Anything.' }), /complete playable opening/i)
 })
 
 test('campaign intelligence records reversible rulings, proposals, consent, and preparation', () => {

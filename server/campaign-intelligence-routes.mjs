@@ -20,6 +20,31 @@ function clean(value, maximum) {
   return result && result.length <= maximum ? result : null
 }
 
+function cleanWorldItems(value, length, fields) {
+  if (!Array.isArray(value) || value.length !== length) return null
+  const items = value.map((item) => ({
+    ...(typeof item?.id === 'string' && item.id.length <= 100 ? { id: item.id } : {}),
+    ...Object.fromEntries(Object.entries(fields).map(([field, maximum]) => [field, clean(item?.[field], maximum)])),
+  }))
+  return items.some((item) => Object.entries(fields).some(([field]) => !item[field])) ? null : items
+}
+
+function cleanCampaignWorld(body, { updating = false } = {}) {
+  const title = clean(body?.title, 120)
+  const premise = clean(body?.premise, 1_000)
+  const pitch = clean(body?.pitch, 1_000)
+  const openingCrisis = cleanWorldItems([body?.openingCrisis], 1, { title: 120, situation: 1_200, stakes: 800 })?.[0]
+  const truths = cleanWorldItems(body?.truths, 3, { text: 500 })
+  const factions = cleanWorldItems(body?.factions, 2, { name: 120, goal: 500, opposition: 500 })
+  const locations = cleanWorldItems(body?.locations, 3, { name: 120, description: 1_000, danger: 500 })
+  const npcs = cleanWorldItems(body?.npcs, 5, { name: 120, role: 200, want: 500, leverage: 500 })
+  const hooks = cleanWorldItems(body?.hooks, 4, { title: 120, situation: 500 })
+  const generatorVersion = updating ? null : clean(body?.generatorVersion, 200)
+  const expectedRevision = updating && Number.isInteger(body?.expectedRevision) && body.expectedRevision >= 0 ? body.expectedRevision : null
+  if (!title || !premise || !pitch || !openingCrisis || !truths || !factions || !locations || !npcs || !hooks || (!updating && !generatorVersion) || (updating && expectedRevision == null)) return null
+  return { title, premise, pitch, openingCrisis, truths, factions, locations, npcs, hooks, ...(updating ? { expectedRevision } : { generatorVersion }) }
+}
+
 export function createCampaignIntelligenceRoutes({ store, intelligence = null, canonExtractor = null, continuityGenerator = null, recapGenerator = null, onPreparationUpdated = () => {} }) {
   const preparationWorker = createPreparationWorker({ store, canonExtractor, continuityGenerator, recapGenerator, onUpdated: onPreparationUpdated })
 
@@ -63,7 +88,7 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
     },
 
     async handle(request, response, requestSession) {
-      if (!request.url?.startsWith('/api/campaign/intelligence')) return false
+      if (!request.url?.startsWith('/api/campaign/intelligence') && !request.url?.startsWith('/api/campaign/world')) return false
       if (!requestSession) {
         sendJson(response, 401, { error: 'Session not found.' })
         return true
@@ -71,6 +96,37 @@ export function createCampaignIntelligenceRoutes({ store, intelligence = null, c
       const campaignId = requestSession.campaign.id
       const playerId = requestSession.player.id
       const isGm = requestSession.player.knowledgeRole === 'gm'
+
+      if (request.method === 'GET' && request.url === '/api/campaign/world') {
+        sendJson(response, isGm ? 200 : 403, isGm ? { world: store.getCampaignWorld(campaignId) } : { error: 'Campaign creation is private to GMs.' })
+        return true
+      }
+      if (request.method === 'POST' && request.url === '/api/campaign/world/draft') {
+        if (!isGm) { sendJson(response, 403, { error: 'Only a GM can create the campaign opening.' }); return true }
+        if (!intelligence) { sendJson(response, 503, { error: 'Campaign creation is not configured.' }); return true }
+        const body = await readJson(request)
+        const premise = clean(body.premise, 1_000)
+        if (!premise) { sendJson(response, 400, { error: 'Give the campaign a premise to build from.' }); return true }
+        sendJson(response, 200, { draft: await intelligence.draftCampaignSeed({ campaignId, premise }) })
+        return true
+      }
+      if (request.method === 'POST' && request.url === '/api/campaign/world') {
+        if (!isGm) { sendJson(response, 403, { error: 'Only a GM can establish the campaign opening.' }); return true }
+        const body = cleanCampaignWorld(await readJson(request))
+        if (!body) { sendJson(response, 400, { error: 'The campaign opening is incomplete.' }); return true }
+        const result = store.createCampaignWorld(campaignId, playerId, body)
+        sendJson(response, result.outcome === 'created' ? 201 : 409, result.outcome === 'created' ? { world: result.world } : { error: 'This campaign already has an opening.', world: result.world })
+        return true
+      }
+      if (request.method === 'PUT' && request.url === '/api/campaign/world') {
+        if (!isGm) { sendJson(response, 403, { error: 'Only a GM can revise the campaign opening.' }); return true }
+        const body = cleanCampaignWorld(await readJson(request), { updating: true })
+        if (!body) { sendJson(response, 400, { error: 'The campaign opening is incomplete.' }); return true }
+        const result = store.updateCampaignWorld(campaignId, playerId, body)
+        const status = result.outcome === 'updated' ? 200 : result.outcome === 'conflict' ? 409 : 404
+        sendJson(response, status, result.outcome === 'updated' ? { world: result.world } : { error: result.outcome === 'conflict' ? 'The campaign opening changed while you were editing it.' : 'Campaign opening not found.', world: result.world ?? null })
+        return true
+      }
 
       if (request.method === 'GET' && request.url === '/api/campaign/intelligence') {
         sendJson(response, isGm ? 200 : 403, isGm ? overview(campaignId) : { error: 'Campaign intelligence controls are private to GMs.' })

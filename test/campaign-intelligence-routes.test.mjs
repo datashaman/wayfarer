@@ -19,6 +19,7 @@ test('campaign intelligence keeps preparation, memory, rules, factions, spotligh
     async draftIntent() { return ['I lift the brass lantern.', 'Let the old light answer us.'] },
     async proposeFaction({ clock, messages }) { return { summary: 'The Moth Court finds another route.', assumptions: 'The western gate remains open.', proposedProgress: Math.min(clock.segments, clock.progress + 1), citations: [messages[0].id] } },
     async compileHouseRule({ messages }) { return { title: 'Gate test', sourceRule: 'Core test rule.', interpretation: 'The open gate grants leverage.', ruling: 'Gate searches gain advantage.', citations: [messages[0].id] } },
+    async draftCampaignSeed({ premise }) { return { title: 'The Drowned Bell', premise, pitch: 'A drowned town returns for seven nights.', truths: [{ text: 'The bell remembers every oath.' }, { text: 'The streets flood at dawn.' }, { text: 'No map agrees.' }], factions: [{ name: 'Salvagers', goal: 'Raise the bell.', opposition: 'Their oaths will surface.' }, { name: 'Tidebound', goal: 'Sink the town.', opposition: 'The town frees their enemies.' }], locations: [{ name: 'Bell Square', description: 'A flooded plaza.', danger: 'The bell punishes lies.' }, { name: 'Tilted Inn', description: 'A leaning refuge.', danger: 'The foundations move.' }, { name: 'Salt Archive', description: 'A library of salt.', danger: 'Names wake their owners.' }], npcs: Array.from({ length: 5 }, (_, index) => ({ name: `Witness ${index + 1}`, role: 'Keeper', want: 'A true name.', leverage: 'A safe route.' })), hooks: Array.from({ length: 4 }, (_, index) => ({ title: `Trouble ${index + 1}`, situation: 'A dangerous bargain.' })), openingCrisis: { title: 'The first toll', situation: 'The bell rings untouched.', stakes: 'The town sinks at the seventh toll.' }, generatorVersion: this.version } },
   }
   const canonExtractor = { version: 'fixture:canon-v1', async extract({ messages }) { return [{ kind: 'fact', title: 'Prepared fact', claim: 'The western gate is open.', visibility: 'gm_only', confidence: 0.9, sources: [{ messageId: messages[0].id, excerpt: 'western gate' }] }] } }
   const continuityGenerator = { version: 'fixture:continuity-v1', async generate({ messages }) { return [{ title: 'Western gate', summary: 'The gate remains open.', whyItMatters: 'The Moth Court may pass.', confidence: 0.8, sources: [{ messageId: messages[0].id, excerpt: 'western gate' }] }] } }
@@ -34,6 +35,17 @@ test('campaign intelligence keeps preparation, memory, rules, factions, spotligh
   const guestHeaders = { authorization: `Bearer ${joined.body.player.token}` }
   const campaignId = created.body.campaign.id
   const roomId = created.body.campaign.rooms[0].id
+  assert.equal((await json(`${origin}/api/campaign/world`, { headers: guestHeaders })).status, 403)
+  const worldDraft = await json(`${origin}/api/campaign/world/draft`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify({ premise: 'A drowned town returns for seven nights.' }) })
+  assert.equal(worldDraft.status, 200)
+  assert.equal(worldDraft.body.draft.npcs.length, 5)
+  const savedWorld = await json(`${origin}/api/campaign/world`, { method: 'POST', headers: ownerHeaders, body: JSON.stringify(worldDraft.body.draft) })
+  assert.equal(savedWorld.status, 201)
+  assert.equal(savedWorld.body.world.openingCrisis.title, 'The first toll')
+  const revisedWorld = await json(`${origin}/api/campaign/world`, { method: 'PUT', headers: ownerHeaders, body: JSON.stringify({ ...savedWorld.body.world, pitch: 'The seventh toll is tonight.', expectedRevision: 0 }) })
+  assert.equal(revisedWorld.status, 200)
+  assert.equal(revisedWorld.body.world.revision, 1)
+  assert.equal((await json(`${origin}/api/campaign/world`, { method: 'PUT', headers: ownerHeaders, body: JSON.stringify({ ...savedWorld.body.world, expectedRevision: 0 }) })).status, 409)
   const messages = []
   for (let index = 0; index < 20; index += 1) messages.push(app.store.addMessage({ roomId, playerId: created.body.player.id, clientMessageId: `evidence-${index}`, text: `The western gate fact ${index} is established.` }).message)
   const closed = app.store.closeCampaignSession(campaignId, created.body.player.id, 'The western gate').sessions[0]

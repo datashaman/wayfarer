@@ -41,6 +41,32 @@ function publicCampaign(row, rooms) {
   }
 }
 
+function publicCampaignWorld(row, collections = {}) {
+  if (!row) return null
+  const { truths = [], factions = [], locations = [], npcs = [], hooks = [] } = collections
+  return {
+    campaignId: row.campaign_id,
+    title: row.title,
+    premise: row.premise,
+    pitch: row.pitch,
+    openingCrisis: {
+      title: row.opening_crisis_title,
+      situation: row.opening_crisis_situation,
+      stakes: row.opening_crisis_stakes,
+    },
+    truths: truths.map((item) => ({ id: item.id, text: item.text })),
+    factions: factions.map((item) => ({ id: item.id, name: item.name, goal: item.goal, opposition: item.opposition })),
+    locations: locations.map((item) => ({ id: item.id, name: item.name, description: item.description, danger: item.danger })),
+    npcs: npcs.map((item) => ({ id: item.id, name: item.name, role: item.role, want: item.want, leverage: item.leverage })),
+    hooks: hooks.map((item) => ({ id: item.id, title: item.title, situation: item.situation })),
+    generatorVersion: row.generator_version,
+    revision: row.revision,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    updatedByName: row.updated_by_name ?? null,
+  }
+}
+
 function publicPlayer(row, token) {
   return {
     id: row.id,
@@ -277,6 +303,64 @@ export function createStore(databasePath) {
       revision INTEGER NOT NULL DEFAULT 0,
       updated_by_player_id TEXT REFERENCES players(id),
       updated_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS campaign_worlds (
+      campaign_id TEXT PRIMARY KEY REFERENCES campaigns(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      premise TEXT NOT NULL,
+      pitch TEXT NOT NULL,
+      opening_crisis_title TEXT NOT NULL,
+      opening_crisis_situation TEXT NOT NULL,
+      opening_crisis_stakes TEXT NOT NULL,
+      generator_version TEXT NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 0,
+      created_by_player_id TEXT NOT NULL REFERENCES players(id),
+      updated_by_player_id TEXT NOT NULL REFERENCES players(id),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS campaign_world_truths (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaign_worlds(campaign_id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      text TEXT NOT NULL,
+      UNIQUE(campaign_id, position)
+    );
+    CREATE TABLE IF NOT EXISTS campaign_world_factions (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaign_worlds(campaign_id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      goal TEXT NOT NULL,
+      opposition TEXT NOT NULL,
+      UNIQUE(campaign_id, position)
+    );
+    CREATE TABLE IF NOT EXISTS campaign_world_locations (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaign_worlds(campaign_id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      danger TEXT NOT NULL,
+      UNIQUE(campaign_id, position)
+    );
+    CREATE TABLE IF NOT EXISTS campaign_world_npcs (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaign_worlds(campaign_id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL,
+      want TEXT NOT NULL,
+      leverage TEXT NOT NULL,
+      UNIQUE(campaign_id, position)
+    );
+    CREATE TABLE IF NOT EXISTS campaign_world_hooks (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES campaign_worlds(campaign_id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      situation TEXT NOT NULL,
+      UNIQUE(campaign_id, position)
     );
     CREATE TABLE IF NOT EXISTS campaign_sessions (
       id TEXT PRIMARY KEY,
@@ -857,6 +941,40 @@ export function createStore(databasePath) {
     UPDATE campaign_notes SET body = ?, revision = ?, updated_by_player_id = ?, updated_at = ?
     WHERE campaign_id = ?
   `)
+  const campaignWorld = database.prepare(`
+    SELECT campaign_worlds.*, players.name AS updated_by_name
+    FROM campaign_worlds
+    LEFT JOIN players ON players.id = campaign_worlds.updated_by_player_id
+    WHERE campaign_worlds.campaign_id = ?
+  `)
+  const campaignWorldTruths = database.prepare('SELECT * FROM campaign_world_truths WHERE campaign_id = ? ORDER BY position')
+  const campaignWorldFactions = database.prepare('SELECT * FROM campaign_world_factions WHERE campaign_id = ? ORDER BY position')
+  const campaignWorldLocations = database.prepare('SELECT * FROM campaign_world_locations WHERE campaign_id = ? ORDER BY position')
+  const campaignWorldNpcs = database.prepare('SELECT * FROM campaign_world_npcs WHERE campaign_id = ? ORDER BY position')
+  const campaignWorldHooks = database.prepare('SELECT * FROM campaign_world_hooks WHERE campaign_id = ? ORDER BY position')
+  const insertCampaignWorld = database.prepare(`
+    INSERT INTO campaign_worlds (
+      campaign_id, title, premise, pitch, opening_crisis_title, opening_crisis_situation,
+      opening_crisis_stakes, generator_version, revision, created_by_player_id,
+      updated_by_player_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+  `)
+  const updateCampaignWorld = database.prepare(`
+    UPDATE campaign_worlds SET
+      title = ?, premise = ?, pitch = ?, opening_crisis_title = ?, opening_crisis_situation = ?,
+      opening_crisis_stakes = ?, revision = revision + 1, updated_by_player_id = ?, updated_at = ?
+    WHERE campaign_id = ? AND revision = ?
+  `)
+  const clearCampaignWorldTruths = database.prepare('DELETE FROM campaign_world_truths WHERE campaign_id = ?')
+  const clearCampaignWorldFactions = database.prepare('DELETE FROM campaign_world_factions WHERE campaign_id = ?')
+  const clearCampaignWorldLocations = database.prepare('DELETE FROM campaign_world_locations WHERE campaign_id = ?')
+  const clearCampaignWorldNpcs = database.prepare('DELETE FROM campaign_world_npcs WHERE campaign_id = ?')
+  const clearCampaignWorldHooks = database.prepare('DELETE FROM campaign_world_hooks WHERE campaign_id = ?')
+  const insertCampaignWorldTruth = database.prepare('INSERT INTO campaign_world_truths (id, campaign_id, position, text) VALUES (?, ?, ?, ?)')
+  const insertCampaignWorldFaction = database.prepare('INSERT INTO campaign_world_factions (id, campaign_id, position, name, goal, opposition) VALUES (?, ?, ?, ?, ?, ?)')
+  const insertCampaignWorldLocation = database.prepare('INSERT INTO campaign_world_locations (id, campaign_id, position, name, description, danger) VALUES (?, ?, ?, ?, ?, ?)')
+  const insertCampaignWorldNpc = database.prepare('INSERT INTO campaign_world_npcs (id, campaign_id, position, name, role, want, leverage) VALUES (?, ?, ?, ?, ?, ?, ?)')
+  const insertCampaignWorldHook = database.prepare('INSERT INTO campaign_world_hooks (id, campaign_id, position, title, situation) VALUES (?, ?, ?, ?, ?)')
   const closedCampaignSessions = database.prepare(`
     SELECT campaign_sessions.*, players.name AS closed_by_name
     FROM campaign_sessions JOIN players ON players.id = campaign_sessions.closed_by_player_id
@@ -1459,6 +1577,29 @@ export function createStore(databasePath) {
     return player
   }
 
+  function campaignWorldCollections(campaignId) {
+    return {
+      truths: campaignWorldTruths.all(campaignId),
+      factions: campaignWorldFactions.all(campaignId),
+      locations: campaignWorldLocations.all(campaignId),
+      npcs: campaignWorldNpcs.all(campaignId),
+      hooks: campaignWorldHooks.all(campaignId),
+    }
+  }
+
+  function replaceCampaignWorldCollections(campaignId, world) {
+    clearCampaignWorldTruths.run(campaignId)
+    clearCampaignWorldFactions.run(campaignId)
+    clearCampaignWorldLocations.run(campaignId)
+    clearCampaignWorldNpcs.run(campaignId)
+    clearCampaignWorldHooks.run(campaignId)
+    world.truths.forEach((item, position) => insertCampaignWorldTruth.run(item.id ?? randomUUID(), campaignId, position, item.text))
+    world.factions.forEach((item, position) => insertCampaignWorldFaction.run(item.id ?? randomUUID(), campaignId, position, item.name, item.goal, item.opposition))
+    world.locations.forEach((item, position) => insertCampaignWorldLocation.run(item.id ?? randomUUID(), campaignId, position, item.name, item.description, item.danger))
+    world.npcs.forEach((item, position) => insertCampaignWorldNpc.run(item.id ?? randomUUID(), campaignId, position, item.name, item.role, item.want, item.leverage))
+    world.hooks.forEach((item, position) => insertCampaignWorldHook.run(item.id ?? randomUUID(), campaignId, position, item.title, item.situation))
+  }
+
   return {
     health() {
       return database.prepare('SELECT 1 AS healthy').get().healthy === 1
@@ -1525,6 +1666,51 @@ export function createStore(databasePath) {
 
     getCampaignManagement(campaignId) {
       return { players: playersByCampaign.all(campaignId).map((row) => publicPlayer(row)) }
+    },
+
+    getCampaignWorld(campaignId) {
+      const row = campaignWorld.get(campaignId)
+      return publicCampaignWorld(row, row ? campaignWorldCollections(campaignId) : {})
+    },
+
+    createCampaignWorld(campaignId, playerId, world) {
+      if (!campaignById.get(campaignId) || campaignWorld.get(campaignId)) return { outcome: 'conflict', world: this.getCampaignWorld(campaignId) }
+      const now = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        insertCampaignWorld.run(
+          campaignId, world.title, world.premise, world.pitch, world.openingCrisis.title,
+          world.openingCrisis.situation, world.openingCrisis.stakes, world.generatorVersion,
+          playerId, playerId, now, now,
+        )
+        replaceCampaignWorldCollections(campaignId, world)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return { outcome: 'created', world: this.getCampaignWorld(campaignId) }
+    },
+
+    updateCampaignWorld(campaignId, playerId, world) {
+      const current = campaignWorld.get(campaignId)
+      if (!current) return { outcome: 'not_found' }
+      if (current.revision !== world.expectedRevision) return { outcome: 'conflict', world: this.getCampaignWorld(campaignId) }
+      const now = new Date().toISOString()
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        if (updateCampaignWorld.run(
+          world.title, world.premise, world.pitch, world.openingCrisis.title,
+          world.openingCrisis.situation, world.openingCrisis.stakes, playerId, now,
+          campaignId, world.expectedRevision,
+        ).changes !== 1) throw new Error('campaign_world_conflict')
+        replaceCampaignWorldCollections(campaignId, world)
+        database.exec('COMMIT')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      }
+      return { outcome: 'updated', world: this.getCampaignWorld(campaignId) }
     },
 
     listCampaignMembers(campaignId) {

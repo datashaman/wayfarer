@@ -12,14 +12,17 @@ export function createPreparationWorker({ store, canonExtractor = null, continui
       const priorDecisions = store.listCanonDecisionExamples(run.campaignId, 20)
       const constitution = store.getCanonConstitution(run.campaignId)
       let proposed = 0
+      const artifactIds = []
       for (const messages of chunkSessionMessages(context.messages)) {
         const drafts = await canonExtractor.extract({ campaignId: run.campaignId, messages, existingCanon: acceptedCanon, priorDecisions, constitution })
         for (const draft of drafts) {
-          if (store.createCanonProposal({ campaignId: run.campaignId, playerId: run.requestedByPlayerId, extractorVersion: canonExtractor.version, ...draft }).outcome === 'created') proposed += 1
+          const stored = store.createCanonProposal({ campaignId: run.campaignId, playerId: run.requestedByPlayerId, extractorVersion: canonExtractor.version, ...draft })
+          if (stored.proposal?.id) artifactIds.push(stored.proposal.id)
+          if (stored.outcome === 'created') proposed += 1
         }
       }
       store.markCanonScanned(run.campaignId, run.requestedByPlayerId, context.session.endSequence)
-      return { proposed }
+      return { proposed, artifactIds: [...new Set(artifactIds)] }
     }
 
     if (task === 'continuity') {

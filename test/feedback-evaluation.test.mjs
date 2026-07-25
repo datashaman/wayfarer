@@ -20,6 +20,11 @@ test('feedback evaluation reports outcomes overall and by generator version', ()
       { generatorVersion: 'knowledge-v1', feedback: { rating: 'useful' } },
       { generatorVersion: 'knowledge-v1', feedback: { rating: 'incomplete' } },
     ],
+    houseRules: [
+      { generatorVersion: 'rules-v1', decision: { action: 'accept' } },
+      { generatorVersion: 'rules-v1', decision: { action: 'edit_accept' } },
+      { generatorVersion: 'rules-v2', decision: { action: 'reject' } },
+    ],
   })
 
   assert.equal(evaluation.schemaVersion, feedbackEvaluationSchemaVersion)
@@ -35,6 +40,9 @@ test('feedback evaluation reports outcomes overall and by generator version', ()
   assert.equal(evaluation.metrics.byGeneratorVersion.continuity['continuity-v2'].incorrectRate, 0.5)
   assert.equal(evaluation.metrics.knowledge.byGeneratorVersion['knowledge-v1'].usefulRate, 0.5)
   assert.equal(evaluation.fixtures.knowledge.length, 2)
+  assert.equal(evaluation.metrics.houseRules.acceptanceRate, 0.6667)
+  assert.equal(evaluation.metrics.houseRules.byGeneratorVersion['rules-v1'].editRate, 0.5)
+  assert.equal(evaluation.fixtures.houseRules.length, 3)
   assert.deepEqual(evaluation.metrics.deduplication, [])
 })
 

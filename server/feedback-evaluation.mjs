@@ -1,6 +1,6 @@
 import { AI_SURFACES } from './ai-surfaces.mjs'
 
-export const feedbackEvaluationSchemaVersion = 'wayfarer.ai-feedback.v1'
+export const feedbackEvaluationSchemaVersion = 'wayfarer.ai-feedback.v2'
 
 function ratio(numerator, denominator) {
   return denominator === 0 ? null : Number((numerator / denominator).toFixed(4))
@@ -27,6 +27,22 @@ function calculateKnowledgeMetrics(knowledge = []) {
     versions.set(fixture.generatorVersion, metrics)
   }
   const finish = (metrics) => ({ ...metrics, usefulRate: ratio(metrics.useful, metrics.total) })
+  return { ...finish(overall), byGeneratorVersion: Object.fromEntries([...versions].sort().map(([version, metrics]) => [version, finish(metrics)])) }
+}
+
+function calculateHouseRuleMetrics(houseRules = []) {
+  const overall = { total: 0, accepted: 0, edited: 0, rejected: 0 }
+  const versions = new Map()
+  for (const fixture of houseRules) {
+    const metrics = versions.get(fixture.generatorVersion) ?? { total: 0, accepted: 0, edited: 0, rejected: 0 }
+    const outcome = fixture.decision.action === 'accept' ? 'accepted' : fixture.decision.action === 'edit_accept' ? 'edited' : 'rejected'
+    metrics.total += 1
+    metrics[outcome] += 1
+    overall.total += 1
+    overall[outcome] += 1
+    versions.set(fixture.generatorVersion, metrics)
+  }
+  const finish = (metrics) => ({ ...metrics, acceptanceRate: ratio(metrics.accepted + metrics.edited, metrics.total), editRate: ratio(metrics.edited, metrics.total), rejectionRate: ratio(metrics.rejected, metrics.total) })
   return { ...finish(overall), byGeneratorVersion: Object.fromEntries([...versions].sort().map(([version, metrics]) => [version, finish(metrics)])) }
 }
 
@@ -93,6 +109,7 @@ export function createFeedbackEvaluationExport(feedback) {
   const canon = feedback.canon ?? []
   const continuity = feedback.continuity ?? []
   const knowledge = feedback.knowledge ?? []
+  const houseRules = feedback.houseRules ?? []
   const deduplication = feedback.deduplication ?? []
   return {
     schemaVersion: feedbackEvaluationSchemaVersion,
@@ -101,8 +118,8 @@ export function createFeedbackEvaluationExport(feedback) {
       containsCampaignText: true,
       playerAndCampaignNamesExcluded: true,
     },
-    fixtures: { canon, continuity, knowledge },
-    metrics: { ...calculateFeedbackMetrics({ canon, continuity }), knowledge: calculateKnowledgeMetrics(knowledge), deduplication },
+    fixtures: { canon, continuity, knowledge, houseRules },
+    metrics: { ...calculateFeedbackMetrics({ canon, continuity }), knowledge: calculateKnowledgeMetrics(knowledge), houseRules: calculateHouseRuleMetrics(houseRules), deduplication },
   }
 }
 

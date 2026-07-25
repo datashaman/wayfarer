@@ -52,6 +52,32 @@ test('campaign intelligence records reversible rulings, proposals, consent, and 
   assert.equal(completedRun.status, 'complete')
   assert.deepEqual(completedRun.tasks.find((task) => task.name === 'canon').result, { proposed: 2 })
 
+  const ruleProposal = store.createHouseRuleProposal(owner.campaign.id, owner.player.id, {
+    sessionId: session.id, generatorVersion: 'fixture-v1', title: 'Lantern advantage', sourceRule: 'Core test rule',
+    interpretation: 'Bright light reveals the mark.', ruling: 'The first search gains advantage.', sources: [{ messageId: firstMessage.id }],
+  })
+  assert.equal(ruleProposal.status, 'proposed')
+  assert.equal(ruleProposal.generatorVersion, 'fixture-v1')
+  const acceptedProposal = store.decideHouseRuleProposal(owner.campaign.id, owner.player.id, ruleProposal.id, {
+    action: 'accept', reason: 'Clarified before recording.', title: ruleProposal.original.title, sourceRule: ruleProposal.original.sourceRule,
+    interpretation: ruleProposal.original.interpretation, ruling: 'Every careful search gains advantage.',
+  })
+  assert.equal(acceptedProposal.outcome, 'accepted')
+  assert.equal(acceptedProposal.proposal.decision.action, 'edit_accept')
+  assert.deepEqual(acceptedProposal.proposal.decision.editedFields, ['ruling'])
+  assert.equal(acceptedProposal.proposal.original.ruling, 'The first search gains advantage.')
+  assert.equal(acceptedProposal.rule.ruling, 'Every careful search gains advantage.')
+  const rejectedProposal = store.createHouseRuleProposal(owner.campaign.id, owner.player.id, {
+    sessionId: session.id, generatorVersion: 'fixture-v2', title: 'Noisy ruling', sourceRule: 'A source',
+    interpretation: 'An interpretation', ruling: 'An unwanted ruling', sources: [{ messageId: firstMessage.id }],
+  })
+  assert.equal(store.decideHouseRuleProposal(owner.campaign.id, owner.player.id, rejectedProposal.id, { action: 'reject', reason: 'Not how this table plays.' }).proposal.decision.action, 'reject')
+  assert.equal(store.decideHouseRuleProposal(owner.campaign.id, owner.player.id, rejectedProposal.id, { action: 'reject', reason: 'Again.' }).outcome, 'conflict')
+  const ruleFeedback = store.exportAiFeedback(owner.campaign.id).houseRules
+  assert.deepEqual(ruleFeedback.map((fixture) => fixture.decision.action), ['edit_accept', 'reject'])
+  assert.equal(ruleFeedback[0].proposal.ruling, 'The first search gains advantage.')
+  assert.equal(ruleFeedback[0].decision.accepted.ruling, 'Every careful search gains advantage.')
+
   const rule = store.createHouseRule(owner.campaign.id, owner.player.id, {
     title: 'Lantern advantage', sourceRule: 'Core test rule', interpretation: 'Bright light reveals the mark.',
     ruling: 'The first search gains advantage.', reason: 'Agreed at the table.',

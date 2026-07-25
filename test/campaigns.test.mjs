@@ -1098,6 +1098,11 @@ test('the owner manually extracts idempotent GM-only canon suggestions', async (
   assert.equal(extractedInputs[0].messages[0].text, 'We promised to return before moonrise.')
   assert.deepEqual(extractedInputs[0].existingCanon, [])
 
+  const rejected = await json(`${origin}/api/campaign/canon/proposals/${first.body.proposals[0].id}/decisions`, {
+    method: 'POST', headers: authorization, body: JSON.stringify({ action: 'reject', reason: 'not_useful' }),
+  })
+  assert.equal(rejected.status, 200)
+
   const secondMessageEvent = nextEvent(ownerSocket, 'chat.message')
   ownerSocket.send(JSON.stringify({
     type: 'chat.send', id: crypto.randomUUID(), roomId, sentAt: new Date().toISOString(),
@@ -1111,6 +1116,7 @@ test('the owner manually extracts idempotent GM-only canon suggestions', async (
   assert.equal(third.body.coverage.unscannedCount, 0)
   assert.equal(extractedInputs.length, 2)
   assert.deepEqual(extractedInputs[1].messages.map((message) => message.text), ['We also promised to return the compass.'])
+  assert.equal(extractedInputs[1].priorDecisions[0].reason, 'not_useful')
 })
 
 test('continuity briefs are owner-private, canon-aware, cited, and rateable', async (t) => {

@@ -255,7 +255,8 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           return
         }
         const existingCanon = store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true })
-        const drafts = await canonExtractor.extract({ campaignId: requestSession.campaign.id, messages, existingCanon })
+        const priorDecisions = store.listCanonDecisionExamples(requestSession.campaign.id, 20)
+        const drafts = await canonExtractor.extract({ campaignId: requestSession.campaign.id, messages, existingCanon, priorDecisions })
         for (const draft of drafts) store.createCanonProposal({
           campaignId: requestSession.campaign.id,
           playerId: requestSession.player.id,

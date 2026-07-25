@@ -99,6 +99,10 @@ test('canon review is append-only and acceptance creates a human-authored entry'
     visibility: 'campaign',
   })
   assert.equal(accepted.outcome, 'accepted')
+  assert.deepEqual(store.listCanonDecisionExamples(owner.campaign.id).map((decision) => ({ action: decision.action, accepted: decision.accepted })), [{
+    action: 'edit_accept',
+    accepted: { title: 'Ilyra, lighthouse keeper', claim: 'Ilyra keeps the lighthouse on the Salt Road.', visibility: 'campaign' },
+  }])
   assert.equal(store.decideCanonProposal(owner.campaign.id, owner.player.id, created.proposal.id, { action: 'reject' }).outcome, 'already_decided')
   assert.deepEqual(store.listCanonEntries(owner.campaign.id).map((entry) => ({ title: entry.title, claim: entry.claim, visibility: entry.visibility, revision: entry.revision })), [{
     title: 'Ilyra, lighthouse keeper',

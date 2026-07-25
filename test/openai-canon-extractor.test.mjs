@@ -20,6 +20,7 @@ test('the OpenAI extractor uses strict non-stored structured output', async () =
     campaignId: 'campaign-1',
     messages: [{ id: 'message-1', roomId: 'room-1', roomName: 'fireside', senderName: 'Mara', text: 'The lighthouse keeper is called Ilyra.', sentAt: new Date().toISOString() }],
     existingCanon: [],
+    priorDecisions: [{ proposal: { kind: 'fact', title: 'Moon cheese', claim: 'The moon is cheese.' }, action: 'reject', reason: 'not_useful', accepted: null, extractorVersion: 'test-v0', decidedAt: new Date().toISOString() }],
   })
 
   assert.equal(drafts[0].title, 'Ilyra')
@@ -29,4 +30,5 @@ test('the OpenAI extractor uses strict non-stored structured output', async () =
   assert.equal(request.text.format.type, 'json_schema')
   assert.equal(request.text.format.strict, true)
   assert.match(request.instructions, /untrusted quoted player content/)
+  assert.equal(JSON.parse(request.input).priorHumanRulings[0].reason, 'not_useful')
 })

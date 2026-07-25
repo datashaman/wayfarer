@@ -63,11 +63,11 @@ export function createCanonExtractor({ version, generate, maximumProposals = 5 }
 
   return {
     version: extractorVersion,
-    async extract({ campaignId, messages, existingCanon = [] }) {
-      if (typeof campaignId !== 'string' || !campaignId || !Array.isArray(messages) || !Array.isArray(existingCanon)) {
-        throw new CanonExtractionError('invalid_input', 'Campaign, transcript messages, and existing canon are required.')
+    async extract({ campaignId, messages, existingCanon = [], priorDecisions = [] }) {
+      if (typeof campaignId !== 'string' || !campaignId || !Array.isArray(messages) || !Array.isArray(existingCanon) || !Array.isArray(priorDecisions)) {
+        throw new CanonExtractionError('invalid_input', 'Campaign, transcript messages, existing canon, and prior rulings are required.')
       }
-      const rawDrafts = await generate({ campaignId, messages, existingCanon })
+      const rawDrafts = await generate({ campaignId, messages, existingCanon, priorDecisions })
       return validateCanonDrafts(rawDrafts, messages, { maximum: maximumProposals })
     },
   }

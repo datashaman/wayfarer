@@ -532,6 +532,16 @@ export function createStore(databasePath) {
       id, proposal_id, player_id, action, reason, accepted_title, accepted_claim, accepted_visibility, created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
+  const canonDecisionExamples = database.prepare(`
+    SELECT canon_proposals.kind, canon_proposals.title, canon_proposals.claim,
+           canon_proposals.extractor_version, canon_decisions.action, canon_decisions.reason,
+           canon_decisions.accepted_title, canon_decisions.accepted_claim,
+           canon_decisions.accepted_visibility, canon_decisions.created_at
+    FROM canon_decisions
+    JOIN canon_proposals ON canon_proposals.id = canon_decisions.proposal_id
+    WHERE canon_proposals.campaign_id = ?
+    ORDER BY canon_decisions.rowid DESC LIMIT ?
+  `)
   const insertCanonEntry = database.prepare(`
     INSERT INTO canon_entries (
       id, proposal_id, campaign_id, kind, title, claim, visibility, revision,
@@ -925,6 +935,21 @@ export function createStore(databasePath) {
         throw error
       }
       return { outcome: nextStatus, proposal: this.getCanonProposal(campaignId, proposalId) }
+    },
+
+    listCanonDecisionExamples(campaignId, limit = 20) {
+      return canonDecisionExamples.all(campaignId, limit).reverse().map((row) => ({
+        proposal: { kind: row.kind, title: row.title, claim: row.claim },
+        action: row.action,
+        reason: row.reason,
+        accepted: row.accepted_title ? {
+          title: row.accepted_title,
+          claim: row.accepted_claim,
+          visibility: row.accepted_visibility,
+        } : null,
+        extractorVersion: row.extractor_version,
+        decidedAt: row.created_at,
+      }))
     },
 
     listCanonEntries(campaignId, { includeGmOnly = false } = {}) {

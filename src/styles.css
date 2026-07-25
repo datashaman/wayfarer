@@ -1476,6 +1476,13 @@ textarea:focus-visible {
   font-size: 10px;
 }
 
+.canon-coverage {
+  margin: 0 0 12px;
+  color: var(--parchment-muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
 .canon-card,
 .canon-entry,
 .continuity-card,

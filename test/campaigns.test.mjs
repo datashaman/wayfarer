@@ -1033,11 +1033,11 @@ test('canon proposals require cited campaign messages and owner review', async (
 
 test('the owner manually extracts idempotent GM-only canon suggestions', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'wayfarer-canon-extraction-'))
-  let extractedInput
+  const extractedInputs = []
   const canonExtractor = {
     version: 'fixture-extractor-v1',
     async extract(input) {
-      extractedInput = input
+      extractedInputs.push(input)
       return [{
         kind: 'promise',
         title: 'Return before moonrise',
@@ -1091,9 +1091,26 @@ test('the owner manually extracts idempotent GM-only canon suggestions', async (
   assert.equal(first.status, 200)
   assert.equal(first.body.proposals.length, 1)
   assert.equal(repeated.body.proposals.length, 1)
+  assert.equal(first.body.coverage.unscannedCount, 0)
+  assert.equal(repeated.body.coverage.unscannedCount, 0)
   assert.equal(first.body.proposals[0].visibility, 'gm_only')
-  assert.equal(extractedInput.messages[0].text, 'We promised to return before moonrise.')
-  assert.deepEqual(extractedInput.existingCanon, [])
+  assert.equal(extractedInputs.length, 1)
+  assert.equal(extractedInputs[0].messages[0].text, 'We promised to return before moonrise.')
+  assert.deepEqual(extractedInputs[0].existingCanon, [])
+
+  const secondMessageEvent = nextEvent(ownerSocket, 'chat.message')
+  ownerSocket.send(JSON.stringify({
+    type: 'chat.send', id: crypto.randomUUID(), roomId, sentAt: new Date().toISOString(),
+    payload: { clientMessageId: crypto.randomUUID(), text: 'We also promised to return the compass.' },
+  }))
+  await secondMessageEvent
+  const withNewTranscript = await json(`${origin}/api/campaign/canon`, { headers: authorization })
+  assert.equal(withNewTranscript.body.coverage.unscannedCount, 1)
+
+  const third = await json(`${origin}/api/campaign/canon/extract`, { method: 'POST', headers: authorization })
+  assert.equal(third.body.coverage.unscannedCount, 0)
+  assert.equal(extractedInputs.length, 2)
+  assert.deepEqual(extractedInputs[1].messages.map((message) => message.text), ['We also promised to return the compass.'])
 })
 
 test('continuity briefs are owner-private, canon-aware, cited, and rateable', async (t) => {

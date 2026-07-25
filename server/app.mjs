@@ -102,6 +102,14 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
     return true
   }
 
+  function canonLedger(campaignId, { includeGmOnly = false } = {}) {
+    return {
+      proposals: store.listCanonProposals(campaignId, { includeGmOnly }),
+      entries: store.listCanonEntries(campaignId, { includeGmOnly }),
+      coverage: store.getCanonCoverage(campaignId),
+    }
+  }
+
   const server = createServer(async (request, response) => {
     if (!requestOriginAllowed(request, originAllowlist)) {
       sendJson(response, 403, { error: 'Origin not allowed.' })
@@ -173,10 +181,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           return
         }
         const includeGmOnly = requestSession.player.role === 'owner'
-        sendJson(response, 200, {
-          proposals: store.listCanonProposals(requestSession.campaign.id, { includeGmOnly }),
-          entries: store.listCanonEntries(requestSession.campaign.id, { includeGmOnly }),
-        })
+        sendJson(response, 200, canonLedger(requestSession.campaign.id, { includeGmOnly }))
         return
       }
 
@@ -241,9 +246,12 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 503, { error: 'Canon extraction is not configured.' })
           return
         }
-        const messages = store.listRecentCampaignMessages(requestSession.campaign.id, 100)
+        const coverage = store.getCanonCoverage(requestSession.campaign.id)
+        const messages = store.listUnscannedCampaignMessages(requestSession.campaign.id, 100)
         if (!messages.length) {
-          sendJson(response, 400, { error: 'The transcript needs at least one message before canon can be suggested.' })
+          sendJson(response, coverage.latestSequence ? 200 : 400, coverage.latestSequence
+            ? canonLedger(requestSession.campaign.id, { includeGmOnly: true })
+            : { error: 'The transcript needs at least one message before canon can be suggested.' })
           return
         }
         const existingCanon = store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true })
@@ -254,11 +262,9 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           extractorVersion: canonExtractor.version,
           ...draft,
         })
+        store.markCanonScanned(requestSession.campaign.id, requestSession.player.id, messages.at(-1).sequence)
         broadcastCanon(requestSession.campaign.id)
-        sendJson(response, 200, {
-          proposals: store.listCanonProposals(requestSession.campaign.id, { includeGmOnly: true }),
-          entries: existingCanon,
-        })
+        sendJson(response, 200, canonLedger(requestSession.campaign.id, { includeGmOnly: true }))
         return
       }
 
@@ -296,7 +302,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           return
         }
         broadcastCanon(requestSession.campaign.id)
-        sendJson(response, 200, { proposal: result.proposal, entries: store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true }) })
+        sendJson(response, 200, { proposal: result.proposal, ...canonLedger(requestSession.campaign.id, { includeGmOnly: true }) })
         return
       }
 
@@ -345,8 +351,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         broadcastCanon(requestSession.campaign.id)
         sendJson(response, 200, {
           entry: result.entry,
-          proposals: store.listCanonProposals(requestSession.campaign.id, { includeGmOnly: true }),
-          entries: store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true }),
+          ...canonLedger(requestSession.campaign.id, { includeGmOnly: true }),
         })
         return
       }
@@ -379,8 +384,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
         broadcastCanon(requestSession.campaign.id)
         sendJson(response, 200, {
           entry: result.entry,
-          proposals: store.listCanonProposals(requestSession.campaign.id, { includeGmOnly: true }),
-          entries: store.listCanonEntries(requestSession.campaign.id, { includeGmOnly: true }),
+          ...canonLedger(requestSession.campaign.id, { includeGmOnly: true }),
         })
         return
       }
@@ -800,10 +804,7 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
     for (const [socket, client] of clients) {
       if (client.campaign.id !== campaignId) continue
       const includeGmOnly = client.player.role === 'owner'
-      send(socket, envelope('campaign.canon_updated', campaignId, {
-        proposals: store.listCanonProposals(campaignId, { includeGmOnly }),
-        entries: store.listCanonEntries(campaignId, { includeGmOnly }),
-      }))
+      send(socket, envelope('campaign.canon_updated', campaignId, canonLedger(campaignId, { includeGmOnly })))
     }
   }
 

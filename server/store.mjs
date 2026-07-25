@@ -253,6 +253,12 @@ export function createStore(databasePath) {
       created_at TEXT NOT NULL,
       UNIQUE(entry_id, revision)
     );
+    CREATE TABLE IF NOT EXISTS canon_scan_state (
+      campaign_id TEXT PRIMARY KEY REFERENCES campaigns(id) ON DELETE CASCADE,
+      last_scanned_sequence INTEGER NOT NULL DEFAULT 0,
+      updated_by_player_id TEXT NOT NULL REFERENCES players(id),
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS continuity_briefs (
       id TEXT PRIMARY KEY,
       campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
@@ -442,6 +448,34 @@ export function createStore(databasePath) {
       WHERE rooms.campaign_id = ?
       ORDER BY messages.rowid DESC LIMIT ?
     ) ORDER BY sequence ASC
+  `)
+  const messagesAfterSequenceForCampaign = database.prepare(`
+    SELECT messages.id, rooms.id AS room_id, rooms.name AS room_name,
+           players.name AS sender_name, messages.text, messages.sent_at,
+           messages.rowid AS sequence
+    FROM messages
+    JOIN rooms ON rooms.id = messages.room_id
+    JOIN players ON players.id = messages.player_id
+    WHERE rooms.campaign_id = ? AND messages.rowid > ?
+    ORDER BY messages.rowid ASC LIMIT ?
+  `)
+  const canonScanState = database.prepare(`
+    SELECT last_scanned_sequence, updated_at FROM canon_scan_state WHERE campaign_id = ?
+  `)
+  const campaignMessageCoverage = database.prepare(`
+    SELECT COALESCE(MAX(messages.rowid), 0) AS latest_sequence,
+           COUNT(CASE WHEN messages.rowid > ? THEN 1 END) AS unscanned_count
+    FROM messages
+    JOIN rooms ON rooms.id = messages.room_id
+    WHERE rooms.campaign_id = ?
+  `)
+  const upsertCanonScanState = database.prepare(`
+    INSERT INTO canon_scan_state (campaign_id, last_scanned_sequence, updated_by_player_id, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(campaign_id) DO UPDATE SET
+      last_scanned_sequence = MAX(canon_scan_state.last_scanned_sequence, excluded.last_scanned_sequence),
+      updated_by_player_id = excluded.updated_by_player_id,
+      updated_at = excluded.updated_at
   `)
   const messageForCampaign = database.prepare(`
     SELECT messages.id, messages.text, messages.sent_at, messages.rowid AS sequence,
@@ -778,6 +812,36 @@ export function createStore(databasePath) {
         sentAt: row.sent_at,
         sequence: row.sequence,
       }))
+    },
+
+    listUnscannedCampaignMessages(campaignId, limit = 100) {
+      const state = canonScanState.get(campaignId)
+      return messagesAfterSequenceForCampaign.all(campaignId, state?.last_scanned_sequence ?? 0, limit).map((row) => ({
+        id: row.id,
+        roomId: row.room_id,
+        roomName: row.room_name,
+        senderName: row.sender_name,
+        text: row.text,
+        sentAt: row.sent_at,
+        sequence: row.sequence,
+      }))
+    },
+
+    getCanonCoverage(campaignId) {
+      const state = canonScanState.get(campaignId)
+      const lastScannedSequence = state?.last_scanned_sequence ?? 0
+      const coverage = campaignMessageCoverage.get(lastScannedSequence, campaignId)
+      return {
+        lastScannedSequence,
+        latestSequence: coverage.latest_sequence,
+        unscannedCount: coverage.unscanned_count,
+        lastScannedAt: state?.updated_at ?? null,
+      }
+    },
+
+    markCanonScanned(campaignId, playerId, throughSequence) {
+      upsertCanonScanState.run(campaignId, throughSequence, playerId, new Date().toISOString())
+      return this.getCanonCoverage(campaignId)
     },
 
     getCampaignNote(campaignId) {

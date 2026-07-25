@@ -140,6 +140,12 @@ export type CanonEntryRevision = {
 export type CanonLedger = {
   proposals: CanonProposal[]
   entries: CanonEntry[]
+  coverage: {
+    lastScannedSequence: number
+    latestSequence: number
+    unscannedCount: number
+    lastScannedAt: string | null
+  }
 }
 
 export type ContinuityFeedbackRating = 'useful' | 'incorrect' | 'secret_leak' | 'not_useful'

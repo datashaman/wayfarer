@@ -11,6 +11,26 @@ function seededStore() {
   return { store, owner, first, second }
 }
 
+test('canon scan coverage advances through transcript messages without skipping new play', () => {
+  const { store, owner, first, second } = seededStore()
+
+  assert.deepEqual(store.getCanonCoverage(owner.campaign.id), {
+    lastScannedSequence: 0,
+    latestSequence: second.sequence,
+    unscannedCount: 2,
+    lastScannedAt: null,
+  })
+  assert.deepEqual(store.listUnscannedCampaignMessages(owner.campaign.id).map((message) => message.id), [first.id, second.id])
+
+  store.markCanonScanned(owner.campaign.id, owner.player.id, first.sequence)
+  assert.equal(store.getCanonCoverage(owner.campaign.id).unscannedCount, 1)
+  assert.deepEqual(store.listUnscannedCampaignMessages(owner.campaign.id).map((message) => message.id), [second.id])
+
+  store.markCanonScanned(owner.campaign.id, owner.player.id, second.sequence)
+  assert.equal(store.getCanonCoverage(owner.campaign.id).unscannedCount, 0)
+  store.close()
+})
+
 test('canon proposals retain campaign-scoped transcript citations', () => {
   const { store, owner, first, second } = seededStore()
   const other = store.createCampaign('The Glass Sea', 'Orin')

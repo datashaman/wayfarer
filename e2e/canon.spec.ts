@@ -28,6 +28,7 @@ test('the owner reviews a cited canon proposal and returns to its source', async
 
   await page.getByRole('button', { name: 'Canon' }).click()
   const ledger = page.getByRole('dialog', { name: 'Living canon ledger' })
+  await expect(ledger.getByText('1 new transcript message ready to scan.')).toBeVisible()
   const ledgerPanel = ledger.locator('.canon-ledger')
   const closeButton = ledgerPanel.getByRole('button', { name: 'Close canon ledger' })
   const [panelBox, closeBox] = await Promise.all([ledgerPanel.boundingBox(), closeButton.boundingBox()])

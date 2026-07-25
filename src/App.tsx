@@ -482,11 +482,10 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
   const authorization = { authorization: `Bearer ${session.player.token}` }
 
   useEffect(() => {
-    if (ledger) return
     void api<CanonLedger>('/api/campaign/canon', { headers: { authorization: `Bearer ${session.player.token}` } })
       .then(onLedger)
       .catch((reason) => setError(reason instanceof Error ? reason.message : 'The canon ledger could not be opened.'))
-  }, [ledger, onLedger, session.player.token])
+  }, [onLedger, session.player.token])
 
   useEffect(() => {
     if (session.player.role !== 'owner' || continuityLoaded) return
@@ -506,14 +505,15 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
     setPending(proposal.id)
     setError('')
     try {
-      const result = await api<{ proposal: CanonProposal; entries: CanonLedger['entries'] }>(`/api/campaign/canon/proposals/${proposal.id}/decisions`, {
+      const result = await api<CanonLedger & { proposal: CanonProposal }>(`/api/campaign/canon/proposals/${proposal.id}/decisions`, {
         method: 'POST',
         headers: authorization,
         body: JSON.stringify({ action, reason, visibility, ...(action === 'edit_accept' ? { title: editTitle, claim: editClaim } : {}) }),
       })
       onLedger({
-        proposals: ledger ? ledger.proposals.map((item) => item.id === proposal.id ? result.proposal : item) : [result.proposal],
+        proposals: result.proposals,
         entries: result.entries,
+        coverage: result.coverage,
       })
       setEditing(null)
     } catch (reason) {
@@ -563,7 +563,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
           ? { revision: entryMode.entry.revision, reason: entryReason }
           : { action: entryMode.action, title: entryTitle, claim: entryClaim, visibility: entryVisibility, revision: entryMode.entry.revision, reason: entryReason }),
       })
-      onLedger({ proposals: result.proposals, entries: result.entries })
+      onLedger({ proposals: result.proposals, entries: result.entries, coverage: result.coverage })
       setEntryMode(null)
       setEntryHistory((current) => {
         if (!(entryMode.entry.id in current)) return current
@@ -624,6 +624,7 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
   }
 
   const pendingProposals = ledger?.proposals.filter((proposal) => proposal.status === 'proposed') ?? []
+  const coverage = ledger?.coverage
 
   return (
     <div className="canon-layer" role="dialog" aria-modal="true" aria-labelledby="canon-ledger-heading">
@@ -636,7 +637,8 @@ function CanonLedgerSheet({ session, ledger, onLedger, onClose, onOpenSource }: 
           {!ledger ? <span className="folio-loading">Reading the canon ledger…</span> : (
             <>
               {session.player.role === 'owner' && <section className="canon-section" aria-labelledby="canon-proposals-heading">
-                <div className="canon-section-title"><h3 id="canon-proposals-heading">Awaiting review</h3><div><span>{pendingProposals.length}</span><button className="folio-small-action" onClick={() => void extractCanon()} disabled={extracting}>{extracting ? 'Reading…' : 'Find passages'}</button></div></div>
+                <div className="canon-section-title"><h3 id="canon-proposals-heading">Awaiting review</h3><div><span>{pendingProposals.length}</span><button className="folio-small-action" onClick={() => void extractCanon()} disabled={extracting || !coverage?.unscannedCount}>{extracting ? 'Reading…' : coverage?.unscannedCount ? 'Find passages' : 'Up to date'}</button></div></div>
+                {coverage && <p className="canon-coverage">{coverage.unscannedCount > 0 ? `${coverage.unscannedCount} new transcript ${coverage.unscannedCount === 1 ? 'message' : 'messages'} ready to scan.` : coverage.latestSequence > 0 ? 'The transcript is scanned through its latest message.' : 'The transcript has no messages to scan yet.'}</p>}
                 {!pendingProposals.length && <div className="canon-empty"><Check size={18} /><span>No passages await a ruling.</span></div>}
                 {pendingProposals.map((proposal) => (
                   <article className="canon-card" key={proposal.id}>

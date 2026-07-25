@@ -19,7 +19,7 @@ test('a player joins from the invitation sheet and receives broadcast text', asy
   const invitation = page.getByRole('dialog', { name: 'The Lantern Road' })
   await expect(invitation.getByRole('img', { name: 'QR code to join The Lantern Road' })).toBeVisible()
   const inviteUrl = await invitation.locator('.invite-link code').innerText()
-  expect(inviteUrl).toMatch(/^http:\/\/127\.0\.0\.1:5192\/\?campaign=[a-z0-9]{10}$/)
+  expect(inviteUrl).toMatch(/^http:\/\/127\.0\.0\.1:5192\/\?invite=[a-z0-9]{10}$/)
 
   const guestContext = await browser.newContext()
   const guest = await guestContext.newPage()

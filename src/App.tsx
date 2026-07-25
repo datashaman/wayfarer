@@ -156,7 +156,7 @@ function readRecoverySeed(): RecoverySeed | null {
 function recoveryUrl(inviteCode: string, seed: RecoverySeed) {
   const url = new URL(location.href)
   url.search = ''
-  url.searchParams.set('campaign', inviteCode)
+  url.searchParams.set('invite', inviteCode)
   url.hash = `recover=${encodeRecoverySeed(seed)}`
   return url.toString()
 }
@@ -164,9 +164,19 @@ function recoveryUrl(inviteCode: string, seed: RecoverySeed) {
 function campaignInviteUrl(inviteCode: string) {
   const url = new URL(location.href)
   url.search = ''
-  url.searchParams.set('campaign', inviteCode)
+  url.searchParams.set('invite', inviteCode)
   url.hash = ''
   return url.toString()
+}
+
+function readInvitationCode() {
+  return new URLSearchParams(location.search).get('invite')
+}
+
+function showInvitationInUrl(inviteCode: string) {
+  const url = new URL(location.href)
+  url.searchParams.set('invite', inviteCode)
+  history.replaceState({}, '', url)
 }
 
 function SeatKeyPanel({ inviteCode, playerName, recoveryCode, onDone, compact = false }: RecoverySeed & { inviteCode: string; onDone: () => void; compact?: boolean }) {
@@ -1048,7 +1058,7 @@ function CampaignFolio({
 }
 
 function App() {
-  const inviteCode = new URLSearchParams(location.search).get('campaign')
+  const [inviteCode, setInviteCode] = useState(readInvitationCode)
   const [recoverySeed] = useState(readRecoverySeed)
   const [pendingSeatEntry] = useState(readPendingSeatEntry)
   const [session, setSession] = useState<TableSession | null>(null)
@@ -1273,9 +1283,8 @@ function App() {
         const campaign = event.payload.campaign
         setSession((current) => current ? { ...current, campaign } : current)
         setUnreadRooms((current) => Object.fromEntries(Object.entries(current).filter(([roomId]) => campaign.rooms.some((room) => room.id === roomId))))
-        const url = new URL(location.href)
-        url.searchParams.set('campaign', campaign.inviteCode)
-        history.replaceState({}, '', url)
+        showInvitationInUrl(campaign.inviteCode)
+        setInviteCode(campaign.inviteCode)
         if (!campaign.rooms.some((room) => room.id === activeRoomRef.current)) {
           const roomId = campaign.rooms[0]?.id ?? ''
           activeRoomRef.current = roomId
@@ -1400,16 +1409,14 @@ function App() {
     setActiveRoom(roomId)
     setSession(entered)
     setEntryNotice('')
-    const url = new URL(location.href)
-    url.searchParams.set('campaign', entered.campaign.inviteCode)
-    history.replaceState({}, '', url)
+    showInvitationInUrl(entered.campaign.inviteCode)
+    setInviteCode(entered.campaign.inviteCode)
   }
 
   const updateCampaign = (campaign: Campaign) => {
     setSession((current) => current ? { ...current, campaign } : current)
-    const url = new URL(location.href)
-    url.searchParams.set('campaign', campaign.inviteCode)
-    history.replaceState({}, '', url)
+    showInvitationInUrl(campaign.inviteCode)
+    setInviteCode(campaign.inviteCode)
   }
 
   const leaveVoice = () => {

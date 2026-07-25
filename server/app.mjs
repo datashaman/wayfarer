@@ -319,12 +319,19 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           afterState: cleanCanonText(item?.afterState, 1_000),
           pressure: cleanCanonText(item?.pressure, 1_000),
         })) : null
+        const discoveries = Array.isArray(body.discoveries ?? []) && (body.discoveries ?? []).length <= 3 ? (body.discoveries ?? []).map((item) => ({
+          entityType: ['faction', 'location', 'npc', 'hook'].includes(item?.entityType) ? item.entityType : '',
+          name: cleanCanonText(item?.name, 120),
+          detail: cleanCanonText(item?.detail, item?.entityType === 'npc' ? 200 : item?.entityType === 'hook' || item?.entityType === 'faction' ? 500 : 1_000),
+          tension: item?.entityType === 'hook' ? null : cleanCanonText(item?.tension, 500),
+          leverage: item?.entityType === 'npc' ? cleanCanonText(item?.leverage, 500) : null,
+        })) : null
         const consequenceTargets = consequences?.map((item) => `${item.entityType}:${item.entityId}`) ?? []
-        if (!outcome || !consequences || consequences.some((item) => !item.entityType || !item.entityId || !item.afterState || !item.pressure) || consequenceTargets.length !== new Set(consequenceTargets).size) {
+        if (!outcome || !consequences || !discoveries || consequences.some((item) => !item.entityType || !item.entityId || !item.afterState || !item.pressure) || consequenceTargets.length !== new Set(consequenceTargets).size || discoveries.some((item) => !item.entityType || !item.name || !item.detail || (item.entityType !== 'hook' && !item.tension) || (item.entityType === 'npc' && !item.leverage))) {
           sendJson(response, 400, { error: 'Record what changed before resolving the scene.' })
           return
         }
-        const result = store.resolveScene(requestSession.campaign.id, requestSession.player.id, sceneResolution[1], outcome, consequences)
+        const result = store.resolveScene(requestSession.campaign.id, requestSession.player.id, sceneResolution[1], outcome, consequences, discoveries)
         if (result.outcome === 'not_found') {
           sendJson(response, 404, { error: 'Active scene not found.' })
           return
@@ -333,7 +340,12 @@ export function createRoomServer({ databasePath = join(root, 'data', 'wayfarer.s
           sendJson(response, 400, { error: 'Choose world material from this campaign.' })
           return
         }
+        if (result.outcome === 'invalid_discovery') {
+          sendJson(response, 400, { error: 'Give every discovery a new name and complete description.' })
+          return
+        }
         broadcastScene(requestSession.campaign.id, result)
+        if (discoveries.length) broadcastCharacters(requestSession.campaign.id)
         sendJson(response, 200, { context: result.context, roomId: result.roomId })
         return
       }

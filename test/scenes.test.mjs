@@ -31,14 +31,21 @@ test('a scene crosses from saved preparation into the in-character transcript an
   assert.equal(store.listMessages(inCharacter.id).messages[0].scene.title, 'The first toll')
 
   const bellSquare = characterContext.world.locations[0]
-  const resolved = store.resolveScene(owner.campaign.id, owner.player.id, started.context.activeScene.id, 'Iria cuts the rope and the bell cracks.', [{ entityType: 'location', entityId: bellSquare.id, afterState: 'Bell Square lies open to the drowned archive below.', pressure: 'The Salvagers will arrive before dawn.' }])
+  const resolved = store.resolveScene(owner.campaign.id, owner.player.id, started.context.activeScene.id, 'Iria cuts the rope and the bell cracks.', [{ entityType: 'location', entityId: bellSquare.id, afterState: 'Bell Square lies open to the drowned archive below.', pressure: 'The Salvagers will arrive before dawn.' }], [{ entityType: 'npc', name: 'Sister Corda', detail: 'Keeper of the submerged archive.', tension: 'Recover the name the sea took from her.', leverage: 'A dry road through the drowned streets.' }])
   assert.equal(resolved.outcome, 'resolved')
   assert.equal(resolved.message.kind, 'scene_end')
   assert.equal(resolved.context.activeScene, null)
   assert.equal(resolved.context.scenes[0].outcome, 'Iria cuts the rope and the bell cracks.')
   assert.equal(resolved.context.worldConsequences[0].entityName, 'Bell Square')
   assert.equal(resolved.context.worldConsequences[0].beforeState, 'A flooded plaza. Lies.')
-  assert.equal(store.getCampaignWorld(owner.campaign.id).consequences[0].pressure, 'The Salvagers will arrive before dawn.')
+  const discoveredWorld = store.getCampaignWorld(owner.campaign.id)
+  assert.equal(discoveredWorld.consequences[0].pressure, 'The Salvagers will arrive before dawn.')
+  assert.equal(discoveredWorld.npcs.length, 6)
+  assert.equal(discoveredWorld.discoveries[0].name, 'Sister Corda')
+  assert.equal(discoveredWorld.discoveries[0].sourceSceneTitle, 'The first toll')
+  const sisterCorda = discoveredWorld.npcs.find((npc) => npc.name === 'Sister Corda')
+  assert.ok(sisterCorda)
+  assert.equal(store.getCharacterCreationContext(owner.campaign.id, owner.player.id).world.npcs.some((npc) => npc.id === sisterCorda.id), true)
   assert.equal(store.resolveScene(owner.campaign.id, owner.player.id, started.context.activeScene.id, 'Again.').outcome, 'not_found')
   const changed = store.saveCharacter(owner.campaign.id, owner.player.id, {
     name: 'Iria Voss', concept: 'A ferryman who hears the drowned.', appearance: 'A salt-white coat.', drive: 'Find her brother.', capability: 'Knows every crossing.', complication: 'The bell knows her oath.', possession: 'A wet iron key.', belief: 'Every broken thing can answer.', secret: 'She rang the bell before.',
@@ -50,12 +57,13 @@ test('a scene crosses from saved preparation into the in-character transcript an
   assert.deepEqual(changed.character.revisions[0].changedFields, ['belief'])
 
   const next = store.startScene(owner.campaign.id, owner.player.id, { title: 'Before dawn', framing: 'Hooks scrape across the square.', stakes: 'The archive will be stripped bare.', question: 'Who claims it first?', characterIds: [saved.id] })
-  const changedAgain = store.resolveScene(owner.campaign.id, owner.player.id, next.context.activeScene.id, 'Iria seals the archive behind the flood.', [{ entityType: 'location', entityId: bellSquare.id, afterState: 'Bell Square is flooded and the archive is sealed.', pressure: 'Something below keeps knocking.' }])
-  assert.equal(changedAgain.context.worldConsequences.length, 1)
-  assert.equal(changedAgain.context.worldConsequences[0].beforeState, 'Bell Square lies open to the drowned archive below.')
+  assert.equal(next.context.worldEntities.some((entity) => entity.id === sisterCorda.id), true)
+  const changedAgain = store.resolveScene(owner.campaign.id, owner.player.id, next.context.activeScene.id, 'Iria seals the archive behind the flood.', [{ entityType: 'location', entityId: bellSquare.id, afterState: 'Bell Square is flooded and the archive is sealed.', pressure: 'Something below keeps knocking.' }, { entityType: 'npc', entityId: sisterCorda.id, afterState: 'Sister Corda is bound to the reopened archive.', pressure: 'She needs the party to recover her stolen name.' }])
+  assert.equal(changedAgain.context.worldConsequences.length, 2)
+  assert.equal(changedAgain.context.worldConsequences.find((item) => item.entityId === bellSquare.id).beforeState, 'Bell Square lies open to the drowned archive below.')
   const aftermath = store.getCampaignWorld(owner.campaign.id).consequences
-  assert.equal(aftermath.length, 2)
-  assert.equal(aftermath[1].status, 'resolved')
-  assert.equal(aftermath[1].resolvedSceneTitle, 'Before dawn')
+  assert.equal(aftermath.length, 3)
+  const firstBellChange = aftermath.find((item) => item.entityId === bellSquare.id && item.status === 'resolved')
+  assert.equal(firstBellChange.resolvedSceneTitle, 'Before dawn')
   store.close()
 })

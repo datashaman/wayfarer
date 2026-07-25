@@ -48,6 +48,19 @@ export type CampaignWorld = {
   updatedAt?: string
   updatedByName?: string | null
   consequences: WorldConsequence[]
+  discoveries: WorldDiscovery[]
+}
+
+export type WorldDiscovery = {
+  id: Id
+  sourceSceneId: Id
+  sourceSceneTitle: string
+  entityType: 'faction' | 'location' | 'npc' | 'hook'
+  entityId: Id
+  name: string
+  snapshot: Record<string, string>
+  createdByName: string | null
+  createdAt: string
 }
 
 export type WorldConsequence = {

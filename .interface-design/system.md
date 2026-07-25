@@ -157,6 +157,12 @@ An established World folio leads with **World in motion** before the original ca
 
 Use one wax left hairline for active leaves, moss only for continuing pressure or resolved meaning, inset soot fields, serif world state, sans provenance, and the existing borders-only 8px system. Avoid activity feeds, metrics, generic status cards, and automatic canon mutation.
 
+### World discoveries
+
+Discoveries enter through scene resolution, not an administrative add-item screen. Ask **What entered the story?**, then let the GM name a faction, location, NPC, or hook in its own domain language. Creation is human-authored, transactional with the scene outcome, and limited to three discoveries per resolution.
+
+The World folio keeps an immutable **Entered through play** leaf containing the original wording and “First entered the ledger in…” source-scene provenance. The ordinary faction, location, cast, or hook section holds the entity’s current editable state. A discovery becomes available immediately to later fallout targets and character connections. Use a moss hairline for something newly established, wax for type and provenance, serif fiction, sans mechanics, borders-only depth, and the 8px grid. Never present discoveries as an activity feed or AI expansion.
+
 ### Session transcript
 
 Messages are avatar-and-copy rows, never speech bubbles. Sender, timestamp, delivery state, and literary body text form the hierarchy. System events sit between hairline rules. Keep transcript measure near 760px for readability.
